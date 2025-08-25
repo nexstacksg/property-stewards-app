@@ -1,0 +1,27 @@
+{
+  "name": "property-stewards",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Property Stewards Application Suite",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter app-admin dev",
+    "dev:admin": "pnpm --filter app-admin dev",
+    "build": "pnpm -r build",
+    "build:admin": "pnpm --filter app-admin build",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "deploy:admin": "pnpm --filter app-admin deploy"
+  },
+  "devDependencies": {
+    "prettier": "^3.0.0",
+    "turbo": "latest"
+  },
+  "packageManager": "pnpm@8.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
