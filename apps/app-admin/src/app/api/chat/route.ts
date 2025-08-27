@@ -9,7 +9,8 @@ import {
   updateTaskStatus,
   addTaskPhoto,
   getWorkOrderProgress,
-  getInspectorByPhone
+  getInspectorByPhone,
+  updateWorkOrderDetails
 } from '@/lib/services/inspectorService';
 
 // Initialize OpenAI client
@@ -21,7 +22,7 @@ const openai = new OpenAI({
 const threadStore = new Map<string, string>();
 
 // Create assistant once and reuse - reset to null to force recreation with new formatting
-let assistantId: string | null = null; // Reset to null to force recreation with v0.2 formatting
+let assistantId: string | null = null; // Reset to force recreation with job confirmation flow
 
 async function getOrCreateAssistant() {
   if (assistantId) {
@@ -35,36 +36,50 @@ async function getOrCreateAssistant() {
 Key capabilities:
 - Show today's inspection jobs for an inspector
 - Help select and start specific inspection jobs
+- Allow job detail modifications before starting
 - Guide through room-by-room inspection workflow
 - Track task completion and progress
-- Provide helpful guidance throughout the inspection process
 
-IMPORTANT: Always use numbered brackets [1], [2], [3] format for ALL options and selections to make it easier for inspectors to choose by typing just the number.
+CONVERSATION FLOW GUIDELINES:
 
-When showing job listings, format them clearly with:
-- Use numbered brackets: [1], [2], [3] for job selection
-- Use emojis: 🏠 for property, ⏰ for time, ⭐ for priority
-- Structure each job with clear sections
-- Add proper line breaks between jobs
-- Always end with "Type the number to select a job"
+1. Showing Today's Jobs:
+   - Greet the inspector by name (e.g., "Hi Ken")
+   - Format each job clearly with emojis: 🏠 property, ⏰ time, ⭐ priority, 👤 customer
+   - Include address, postal code, customer name, status, and any notes
+   - Use separator lines (---) between jobs for clarity
+   - End with numbered selection options like [1], [2] for each property
 
-For room selections, use format:
-[1] Living Room
-[2] Kitchen
-[3] Master Bedroom
-etc.
+2. Job Selection and Confirmation:
+   - When user selects a job, use confirmJobSelection tool
+   - Display the destination details clearly
+   - Ask for confirmation with options: [1] Yes [2] No
+   - Be conversational: "Please confirm the destination" or similar
 
-For task selections within rooms, use format:
-[1] Check main door condition
-[2] Check windows and grilles
-[3] Check flooring condition
-etc.
+3. Handling Changes:
+   - If user says no or wants changes, be helpful
+   - Offer options to modify:
+     * Different job selection
+     * Customer name update
+     * Property address change
+     * Time rescheduling
+     * Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
+   - Use updateJobDetails tool to save changes
+   - Show updated job list after modifications
 
-For all option menus (emergency, no-show, etc.), use numbered brackets and end with "Type the number for your preferred option."
+4. Starting Inspection:
+   - Once confirmed, use startJob tool
+   - Update status to STARTED automatically
+   - Display available rooms/locations for inspection
+   - Guide through task completion workflow
 
-Always be friendly, professional, and helpful. Use the inspector's name when you know it. For testing, you can use inspector ID '550e8400-e29b-41d4-a716-446655440001' for Ken Ling.
+5. General Guidelines:
+   - Always use numbered brackets [1], [2], [3] for selections
+   - Be friendly and professional
+   - Adapt your language naturally while following the flow
+   - Remember context from previous messages
+   - Handle errors gracefully with helpful messages
 
-When users ask to see their jobs today, use the getTodayJobs function with inspectorId '550e8400-e29b-41d4-a716-446655440001'.`,
+For testing, use inspector ID 'cmeps0xtz0006m35wcrtr8wx9' for Ken.`,
     model: 'gpt-4o-mini',
     tools: assistantTools
   });
@@ -134,6 +149,27 @@ const assistantTools = [
   {
     type: 'function' as const,
     function: {
+      name: 'getTasksForLocation',
+      description: 'Get specific tasks for a location/room',
+      parameters: {
+        type: 'object',
+        properties: {
+          workOrderId: {
+            type: 'string',
+            description: 'The work order ID'
+          },
+          location: {
+            type: 'string',
+            description: 'The location/room name'
+          }
+        },
+        required: ['workOrderId', 'location']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'completeTask',
       description: 'Mark a specific inspection task as complete',
       parameters: {
@@ -153,6 +189,66 @@ const assistantTools = [
           }
         },
         required: ['taskId', 'workOrderId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'confirmJobSelection',
+      description: 'Get job details for confirmation before starting',
+      parameters: {
+        type: 'object',
+        properties: {
+          jobId: {
+            type: 'string',
+            description: 'The work order ID to confirm'
+          }
+        },
+        required: ['jobId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'startJob',
+      description: 'Start the confirmed job and update status to STARTED',
+      parameters: {
+        type: 'object',
+        properties: {
+          jobId: {
+            type: 'string',
+            description: 'The work order ID to start'
+          }
+        },
+        required: ['jobId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'updateJobDetails',
+      description: 'Update job details like customer, address, time, or status',
+      parameters: {
+        type: 'object',
+        properties: {
+          jobId: {
+            type: 'string',
+            description: 'The work order ID to update'
+          },
+          updateType: {
+            type: 'string',
+            description: 'Type of update: customer, address, time, status',
+            enum: ['customer', 'address', 'time', 'status']
+          },
+          newValue: {
+            type: 'string',
+            description: 'The new value to set'
+          }
+        },
+        required: ['jobId', 'updateType', 'newValue']
       }
     }
   }
@@ -215,25 +311,16 @@ async function executeTool(toolName: string, args: any) {
           });
         }
 
-        await updateWorkOrderStatus(jobId, 'in_progress');
-        const locations = await getDistinctLocationsForWorkOrder(jobId);
-        const progress = await getWorkOrderProgress(jobId);
-
+        // Don't start immediately, just return job details for confirmation
         return JSON.stringify({
           success: true,
-          message: `Job ${jobId} selected and started. Ready for inspection.`,
+          message: `Job ${jobId} selected. Please use confirmJobSelection to confirm.`,
           jobDetails: {
             id: jobId,
             property: workOrder.property_address,
             customer: workOrder.customer_name,
             type: workOrder.inspection_type,
-            locations: locations,
-            progress: {
-              total: progress.total_tasks,
-              completed: progress.completed_tasks,
-              pending: progress.pending_tasks,
-              in_progress: progress.in_progress_tasks
-            }
+            status: workOrder.status
           }
         });
       } catch (error) {
@@ -282,6 +369,29 @@ async function executeTool(toolName: string, args: any) {
         });
       }
 
+    case 'getTasksForLocation':
+      try {
+        const { workOrderId, location } = args;
+        const tasks = await getTasksByLocation(workOrderId, location);
+        
+        return JSON.stringify({
+          success: true,
+          location: location,
+          tasks: tasks.map((task, index) => ({
+            id: task.id, // Use the actual checklist item ID
+            number: index + 1,
+            description: task.action || `Check ${location.toLowerCase()} condition`,
+            status: task.status,
+            notes: task.notes
+          }))
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to fetch tasks for this location.',
+        });
+      }
+
     case 'completeTask':
       try {
         const { taskId, notes, workOrderId } = args;
@@ -313,6 +423,107 @@ async function executeTool(toolName: string, args: any) {
         return JSON.stringify({
           success: false,
           error: 'Failed to complete task. Please try again.',
+        });
+      }
+
+    case 'confirmJobSelection':
+      try {
+        const { jobId } = args;
+        const workOrder = await getWorkOrderById(jobId);
+        
+        if (!workOrder) {
+          return JSON.stringify({
+            success: false,
+            error: 'Job not found. Please check the job ID.',
+          });
+        }
+        
+        return JSON.stringify({
+          success: true,
+          message: 'Please confirm the destination',
+          jobDetails: {
+            id: jobId,
+            property: workOrder.property_address,
+            customer: workOrder.customer_name,
+            time: workOrder.scheduled_start.toLocaleTimeString('en-SG', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            }),
+            status: workOrder.status,
+            type: workOrder.inspection_type
+          }
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to get job details.',
+        });
+      }
+
+    case 'startJob':
+      try {
+        const { jobId } = args;
+        
+        // Update status to STARTED
+        await updateWorkOrderStatus(jobId, 'in_progress');
+        
+        // Get locations for the job
+        const locations = await getDistinctLocationsForWorkOrder(jobId);
+        const progress = await getWorkOrderProgress(jobId);
+        
+        return JSON.stringify({
+          success: true,
+          message: 'Job started successfully! Ready for inspection.',
+          locations: locations,
+          progress: {
+            total: progress.total_tasks,
+            completed: progress.completed_tasks,
+            pending: progress.pending_tasks
+          }
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to start job.',
+        });
+      }
+
+    case 'updateJobDetails':
+      try {
+        const { jobId, updateType, newValue } = args;
+        
+        const success = await updateWorkOrderDetails(jobId, updateType, newValue);
+        
+        if (!success) {
+          return JSON.stringify({
+            success: false,
+            error: `Failed to update ${updateType}.`,
+          });
+        }
+        
+        // Get updated job details
+        const updatedJob = await getWorkOrderById(jobId);
+        
+        return JSON.stringify({
+          success: true,
+          message: `Successfully updated ${updateType} to: ${newValue}`,
+          updatedJob: updatedJob ? {
+            id: jobId,
+            property: updatedJob.property_address,
+            customer: updatedJob.customer_name,
+            time: updatedJob.scheduled_start.toLocaleTimeString('en-SG', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            }),
+            status: updatedJob.status
+          } : null
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to update job details.',
         });
       }
 
