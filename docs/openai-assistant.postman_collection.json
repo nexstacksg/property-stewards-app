@@ -1,0 +1,1008 @@
+{
+  "info": {
+    "name": "OpenAI Assistant API - Property Stewards",
+    "description": "Complete OpenAI Assistant API integration for Property Inspector Assistant. Environment variables are configured server-side for security.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "property-stewards-openai-v2",
+    "version": "2.0.0"
+  },
+  "item": [
+    {
+      "name": "🚀 Quick Start - Property Assistant",
+      "item": [
+        {
+          "name": "Get Property Assistant Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=get-assistant&assistantId={{assistantId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "get-assistant"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}"
+                }
+              ]
+            },
+            "description": "Get current Property Inspector Assistant configuration"
+          }
+        },
+        {
+          "name": "Update Assistant Instructions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=update-assistant&assistantId={{assistantId}}&name=Property Inspector Assistant V2&instructions=Expert property inspection assistant for real estate analysis and inspection methodologies",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "update-assistant"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}"
+                },
+                {
+                  "key": "name",
+                  "value": "Property Inspector Assistant V2"
+                },
+                {
+                  "key": "instructions",
+                  "value": "Expert property inspection assistant for real estate analysis and inspection methodologies"
+                }
+              ]
+            },
+            "description": "Update the assistant's name, instructions, or model"
+          }
+        },
+        {
+          "name": "Quick Chat with Assistant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=quick-chat&assistantId={{assistantId}}&message=What are the key factors to consider when inspecting property?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "quick-chat"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}"
+                },
+                {
+                  "key": "message",
+                  "value": "What are the key factors to consider when inspecting property?"
+                }
+              ]
+            },
+            "description": "Send a quick message to the assistant and get a response (creates thread automatically)"
+          }
+        }
+      ],
+      "description": "Essential endpoints for working with the Property Inspector Assistant"
+    },
+    {
+      "name": "Assistant Management",
+      "item": [
+        {
+          "name": "Create Assistant (One-Time Setup)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.success && response.assistantId) {",
+                  "        pm.collectionVariables.set('assistantId', response.assistantId);",
+                  "        console.log('✅ Assistant created:', response.assistantId);",
+                  "        console.log('Assistant ID saved to collection variables');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=create-assistant&name=Property Inspector Assistant&model=gpt-3.5-turbo",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "create-assistant",
+                  "description": "Create a new assistant"
+                },
+                {
+                  "key": "name",
+                  "value": "Property Inspector Assistant",
+                  "description": "Name for your assistant"
+                },
+                {
+                  "key": "model",
+                  "value": "gpt-3.5-turbo",
+                  "description": "Model to use (gpt-4, gpt-3.5-turbo)"
+                },
+                {
+                  "key": "instructions",
+                  "value": "You are a helpful assistant specializing in property inspection and real estate",
+                  "description": "Optional: Custom instructions",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "One-time setup: Creates an assistant and saves the ID. You only need to run this once!"
+          }
+        },
+        {
+          "name": "List All Assistants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=list-assistants",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "list-assistants",
+                  "description": "List all your assistants"
+                }
+              ]
+            },
+            "description": "View all assistants in your OpenAI account"
+          }
+        },
+        {
+          "name": "Get Assistant Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=get-assistant&assistantId={{assistantId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "get-assistant",
+                  "description": "Get details of a specific assistant"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}",
+                  "description": "The assistant ID to retrieve"
+                }
+              ]
+            },
+            "description": "Retrieve detailed information about a specific assistant including name, model, instructions, and tools"
+          }
+        },
+        {
+          "name": "Update Assistant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=update-assistant&assistantId={{assistantId}}&name=Property Inspector Expert&instructions=You are an expert assistant specializing in property inspection, real estate valuation, market analysis, and property inspection. Provide detailed insights on property values, inspection methodologies, ROI calculations, and guide property inspectors through their work.&model=gpt-4",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "update-assistant",
+                  "description": "Update an existing assistant"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}",
+                  "description": "The assistant ID to update"
+                },
+                {
+                  "key": "name",
+                  "value": "Property Inspector Expert",
+                  "description": "New name for the assistant (optional)"
+                },
+                {
+                  "key": "instructions",
+                  "value": "You are an expert assistant specializing in property inspection, real estate valuation, market analysis, and property inspection. Provide detailed insights on property values, inspection methodologies, ROI calculations, and guide property inspectors through their work.",
+                  "description": "New instructions for the assistant (optional)"
+                },
+                {
+                  "key": "model",
+                  "value": "gpt-4",
+                  "description": "Model to use: gpt-3.5-turbo or gpt-4 (optional)"
+                }
+              ]
+            },
+            "description": "Update your assistant's configuration including name, instructions, model, and tools. All parameters except assistantId are optional."
+          }
+        }
+      ],
+      "description": "Manage your OpenAI assistants - create once, use forever!"
+    },
+    {
+      "name": "Recommended: Assistant API with Memory",
+      "item": [
+        {
+          "name": "Step 1: Create Thread",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.success && response.threadId) {",
+                  "        pm.collectionVariables.set('threadId', response.threadId);",
+                  "        console.log('✅ Thread created:', response.threadId);",
+                  "        console.log('Thread ID saved - ready for conversation!');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=create-thread",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "create-thread"
+                }
+              ]
+            },
+            "description": "Creates a persistent conversation thread. Thread is stored on OpenAI servers and remembers everything!"
+          }
+        },
+        {
+          "name": "Step 2: Send Message",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=What are the key factors for property inspection?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Auto-filled from Step 1"
+                },
+                {
+                  "key": "message",
+                  "value": "What are the key factors for property inspection?"
+                }
+              ]
+            },
+            "description": "Add your message to the thread"
+          }
+        },
+        {
+          "name": "Step 3: Run Assistant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=run-assistant&threadId={{threadId}}&assistantId={{assistantId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "run-assistant"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Auto-filled from Step 1"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}",
+                  "description": "Your assistant ID (already configured)"
+                }
+              ]
+            },
+            "description": "Get AI response with full conversation memory!"
+          }
+        },
+        {
+          "name": "View Conversation History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=list-messages&threadId={{threadId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "list-messages"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}"
+                }
+              ]
+            },
+            "description": "See all messages in the conversation"
+          }
+        }
+      ],
+      "description": "✅ BEST OPTION: Uses OpenAI threads for persistent memory. Assistant ID is already configured!"
+    },
+    {
+      "name": "Direct Chat (No Assistant Required)",
+      "item": [
+        {
+          "name": "Simple Chat",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=chat&message=What are the best property inspection strategies?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "chat",
+                  "description": "Use chat for direct OpenAI chat without assistant"
+                },
+                {
+                  "key": "message",
+                  "value": "What are the best property inspection strategies?",
+                  "description": "Your question or message"
+                },
+                {
+                  "key": "model",
+                  "value": "gpt-3.5-turbo",
+                  "description": "Optional: Choose model (gpt-4, gpt-3.5-turbo)",
+                  "disabled": true
+                },
+                {
+                  "key": "temperature",
+                  "value": "0.7",
+                  "description": "Optional: Creativity level (0-1)",
+                  "disabled": true
+                },
+                {
+                  "key": "max_tokens",
+                  "value": "1000",
+                  "description": "Optional: Max response length",
+                  "disabled": true
+                },
+                {
+                  "key": "systemPrompt",
+                  "value": "You are a property inspection expert",
+                  "description": "Optional: Custom system prompt",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Direct chat with OpenAI - no assistant ID required! Just ask your question."
+          }
+        },
+        {
+          "name": "Chat with GPT-4",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=chat&message=Analyze the Singapore property market trends&model=gpt-4",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "chat"
+                },
+                {
+                  "key": "message",
+                  "value": "Analyze the Singapore property market trends"
+                },
+                {
+                  "key": "model",
+                  "value": "gpt-4",
+                  "description": "Using GPT-4 model"
+                }
+              ]
+            },
+            "description": "Chat using GPT-4 model for more advanced analysis"
+          }
+        },
+        {
+          "name": "Chat with Custom Settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=chat&message=Give me a detailed property inspection plan&model=gpt-3.5-turbo&temperature=0.3&max_tokens=2000&systemPrompt=You are a senior property inspection advisor with 20 years experience",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "chat"
+                },
+                {
+                  "key": "message",
+                  "value": "Give me a detailed property inspection plan"
+                },
+                {
+                  "key": "model",
+                  "value": "gpt-3.5-turbo"
+                },
+                {
+                  "key": "temperature",
+                  "value": "0.3",
+                  "description": "Lower temperature for more focused responses"
+                },
+                {
+                  "key": "max_tokens",
+                  "value": "2000",
+                  "description": "Allow longer responses"
+                },
+                {
+                  "key": "systemPrompt",
+                  "value": "You are a senior property inspection advisor with 20 years experience"
+                }
+              ]
+            },
+            "description": "Example with all customizable parameters"
+          }
+        },
+        {
+          "name": "Chat with Context (Conversation)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=chat-with-context&message=What about commercial properties?&context=[{\"role\":\"user\",\"content\":\"What are good inspection options?\"},{\"role\":\"assistant\",\"content\":\"Residential properties are great for beginners.\"}]",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "chat-with-context",
+                  "description": "Use this for continuing conversations"
+                },
+                {
+                  "key": "message",
+                  "value": "What about commercial properties?"
+                },
+                {
+                  "key": "context",
+                  "value": "[{\"role\":\"user\",\"content\":\"What are good inspection options?\"},{\"role\":\"assistant\",\"content\":\"Residential properties are great for beginners.\"}]",
+                  "description": "Previous conversation as JSON array"
+                }
+              ]
+            },
+            "description": "Continue a conversation by providing context from previous messages"
+          }
+        }
+      ],
+      "description": "Direct chat endpoints that work immediately without creating an assistant"
+    },
+    {
+      "name": "Property Inspection Examples (Using Threads)",
+      "item": [
+        {
+          "name": "Inspector: Ask About Work Order",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=I need to start my inspection work order for today. What should I check first?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}"
+                },
+                {
+                  "key": "message",
+                  "value": "I need to start my inspection work order for today. What should I check first?"
+                }
+              ]
+            },
+            "description": "Send message, then run assistant to get response"
+          }
+        },
+        {
+          "name": "Run Assistant (Get Response)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=run-assistant&threadId={{threadId}}&assistantId={{assistantId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "run-assistant"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}"
+                }
+              ]
+            },
+            "description": "Run this after sending any message to get the AI response"
+          }
+        }
+      ],
+      "description": "Real-world property inspection scenarios from the PRD document"
+    },
+    {
+      "name": "Core Operations (Assistant API)",
+      "item": [
+        {
+          "name": "Create Thread",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.success && response.threadId) {",
+                  "        pm.collectionVariables.set('threadId', response.threadId);",
+                  "        console.log('Thread ID saved:', response.threadId);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=create-thread",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "create-thread",
+                  "description": "Action to create a new thread"
+                }
+              ]
+            },
+            "description": "Creates a new conversation thread and automatically saves the threadId to collection variables"
+          }
+        },
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=Tell me about property inspection strategies",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message",
+                  "description": "Action to send a message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Thread ID (auto-filled from Create Thread)"
+                },
+                {
+                  "key": "message",
+                  "value": "Tell me about property inspection strategies",
+                  "description": "Your message to the assistant"
+                }
+              ]
+            },
+            "description": "Sends a message to an existing thread"
+          }
+        },
+        {
+          "name": "Run Assistant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=run-assistant&threadId={{threadId}}&assistantId={{assistantId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "run-assistant",
+                  "description": "Action to run assistant"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Thread ID (auto-filled from Create Thread)"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}",
+                  "description": "Your OpenAI Assistant ID"
+                }
+              ]
+            },
+            "description": "Runs an assistant on the thread and waits for completion"
+          }
+        },
+        {
+          "name": "Get Thread Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=get-thread&threadId={{threadId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "get-thread",
+                  "description": "Action to get thread info"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Thread ID (auto-filled from Create Thread)"
+                }
+              ]
+            },
+            "description": "Retrieves information about a specific thread"
+          }
+        },
+        {
+          "name": "List Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=list-messages&threadId={{threadId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "list-messages",
+                  "description": "Action to list messages"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Thread ID (auto-filled from Create Thread)"
+                }
+              ]
+            },
+            "description": "Lists all messages in a thread chronologically"
+          }
+        },
+        {
+          "name": "Delete Thread",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=delete-thread&threadId={{threadId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "delete-thread",
+                  "description": "Action to delete thread"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Thread ID (auto-filled from Create Thread)"
+                }
+              ]
+            },
+            "description": "Deletes a thread and all its messages"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Complete Workflow",
+      "item": [
+        {
+          "name": "Step 1: Create New Thread",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.success && response.threadId) {",
+                  "        pm.collectionVariables.set('threadId', response.threadId);",
+                  "        console.log('✅ Thread created:', response.threadId);",
+                  "        console.log('Thread ID saved to collection variables');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=create-thread",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "create-thread"
+                }
+              ]
+            },
+            "description": "First step: Creates a new thread and saves the threadId automatically"
+          }
+        },
+        {
+          "name": "Step 2: Send User Message",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=What are the best property inspection strategies for beginners?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Uses the threadId from Step 1"
+                },
+                {
+                  "key": "message",
+                  "value": "What are the best property inspection strategies for beginners?"
+                }
+              ]
+            },
+            "description": "Second step: Send a message to the thread created in Step 1"
+          }
+        },
+        {
+          "name": "Step 3: Run Assistant",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=run-assistant&threadId={{threadId}}&assistantId={{assistantId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "run-assistant"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Uses the threadId from Step 1"
+                },
+                {
+                  "key": "assistantId",
+                  "value": "{{assistantId}}",
+                  "description": "Your Assistant ID"
+                }
+              ]
+            },
+            "description": "Third step: Run the assistant to get a response (requires valid assistantId)"
+          }
+        },
+        {
+          "name": "Step 4: View Conversation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=list-messages&threadId={{threadId}}",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "list-messages"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}",
+                  "description": "Uses the threadId from Step 1"
+                }
+              ]
+            },
+            "description": "Fourth step: View all messages in the conversation"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Property Investment Examples",
+      "item": [
+        {
+          "name": "Ask About ROI",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=How to calculate ROI for rental properties?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}"
+                },
+                {
+                  "key": "message",
+                  "value": "How to calculate ROI for rental properties?"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ask About Market Analysis",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=What factors should I consider when analyzing a property market?",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}"
+                },
+                {
+                  "key": "message",
+                  "value": "What factors should I consider when analyzing a property market?"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ask About Property Types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/openai?action=send-message&threadId={{threadId}}&message=Compare residential vs commercial property inspection",
+              "host": ["{{base_url}}"],
+              "path": ["openai"],
+              "query": [
+                {
+                  "key": "action",
+                  "value": "send-message"
+                },
+                {
+                  "key": "threadId",
+                  "value": "{{threadId}}"
+                },
+                {
+                  "key": "message",
+                  "value": "Compare residential vs commercial property inspection"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://faas-sgp1-18bc02ac.doserverless.co/api/v1/web/fn-33bf9903-4999-4c1f-b977-ff57fd5d1607/v1",
+      "type": "string",
+      "description": "DigitalOcean Functions base URL"
+    },
+    {
+      "key": "threadId",
+      "value": "",
+      "type": "string",
+      "description": "Thread ID - automatically set after creating a thread"
+    },
+    {
+      "key": "assistantId",
+      "value": "asst_jwaJ70vlBYEvMd3hSvUjwOSU",
+      "type": "string",
+      "description": "Property Inspector Assistant ID - Pre-configured"
+    },
+    {
+      "key": "lastRunId",
+      "value": "",
+      "type": "string",
+      "description": "Last run ID - automatically set after running assistant"
+    }
+  ]
+}

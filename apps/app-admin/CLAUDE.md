@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Property Stewards Admin System - A Next.js-based back office application for managing property inspections. The system handles customer management, inspector assignments, work orders, and report generation.
+Property Stewards Admin System - A Next.js-based back office application for managing property inspections. The system handles customer management, inspector assignments, work orders, and report generation through an admin portal and WhatsApp integration for inspectors.
 
 ## Development Commands
 
@@ -12,10 +12,10 @@ Property Stewards Admin System - A Next.js-based back office application for man
 # Install dependencies
 pnpm install
 
-# Run development server
+# Run development server (default port 3000, falls back to 3001 if occupied)
 pnpm dev
 
-# Build for production  
+# Build for production (includes Prisma client generation)
 pnpm build
 
 # Start production server
@@ -23,100 +23,136 @@ pnpm start
 
 # Run linting
 pnpm lint
+
+# Database commands
+pnpm db:migrate    # Run Prisma migrations
+pnpm db:push      # Push schema to database without migrations
+pnpm db:seed      # Seed database with initial data
+pnpm db:studio    # Open Prisma Studio GUI
 ```
 
-## Project Architecture
+## Architecture & Data Flow
 
-### Tech Stack
-- **Framework**: Next.js 15.5 with App Router
-- **Language**: TypeScript with strict mode
-- **UI Components**: shadcn/ui (to be implemented)
-- **Styling**: Tailwind CSS v4
-- **Database**: PostgreSQL (managed on DigitalOcean)
-- **Storage**: DigitalOcean Spaces for images/videos
-- **NLP**: OpenAI for WhatsApp inspector chat interface
+### High-Level Architecture
+- **Frontend**: Next.js 15.5 with App Router (React Server Components by default)
+- **Backend**: Next.js API Routes as REST endpoints
+- **Database**: PostgreSQL with Prisma ORM + raw `pg` for complex queries
+- **UI Framework**: shadcn/ui components with Tailwind CSS v4
+- **File Storage**: DigitalOcean Spaces with base64 fallback in database
 
-### Project Structure
+### Critical Data Flows
+
+1. **Admin Portal Flow**:
+   ```
+   UI Component → API Route → Prisma → PostgreSQL
+   ```
+
+2. **WhatsApp Inspector Flow**:
+   ```
+   WhatsApp → Wassenger → Webhook → OpenAI Assistant → Database Update
+   ```
+
+3. **Report Generation Flow**:
+   ```
+   Work Order → Checklist Items → Media Attachments → PDF/Web Report
+   ```
+
+### Dual Database Connection Strategy
+The codebase uses two database connection approaches:
+- **Prisma Client** (`/lib/prisma.ts`): Type-safe ORM for admin portal CRUD operations
+- **Raw pg client** (`/lib/services/database.ts`): Direct SQL for WhatsApp/AI integration requiring complex queries
+
+### Entity Relationships
 ```
-property-admin/
-├── src/
-│   └── app/           # Next.js App Router pages and layouts
-├── docs/              # Technical documentation
-│   └── openai.md      # OpenAI Assistant implementation details
-└── project.md         # Full functional specification
+Customer → CustomerAddress → Contract → ContractChecklist → WorkOrder
+                                    ↓                        ↓
+                           ContractChecklistItem ← Inspector
 ```
 
-### Key System Components
+## WhatsApp Integration Architecture
 
-1. **Customer Management**: Direct customer entry and management without lead generation
-2. **Inspector Management**: Inspector profiles with WhatsApp integration
-3. **Contract Lifecycle**: Draft → Confirmed → Scheduled → Completed → Closed
-4. **Work Orders**: Color-coded status tracking (Blue/Orange/Red/Green)
-5. **Checklist System**: Customizable property inspection templates
-6. **Report Generation**: PDF and web-based inspection reports
+Inspectors interact via WhatsApp with:
+- **Wassenger API**: Primary WhatsApp gateway service
+- **OpenAI Assistant API**: NLP processing with thread-based context
+- **Session Management**: OpenAI thread IDs persist conversation state
+- **Numbered Options**: `[1], [2], [3]` format for easy mobile selection
+- **Media Handling**: Images/videos stored in DigitalOcean Spaces or base64 in DB
 
-### Database Schema (PostgreSQL)
+### Critical Integration Points
+- Webhook endpoint: `/api/whatsapp/webhook`
+- Thread management stored in database
+- Automatic work order status updates from WhatsApp activity
 
-Key entities defined in project.md:
-- **Customer**: ID, Name, Type, Email, Phone, Member status
-- **Customer Addresses**: Property locations with type and size
-- **Inspector**: ID, Name, Mobile Phone, Type, Specialization
-- **Contract**: Links customer to inspection job with payment tracking
-- **Work Order**: Tracks individual inspection visits with status
-- **Checklist**: Template and contract-specific inspection items
-
-### WhatsApp Integration Flow
-
-Inspectors interact via WhatsApp using:
-- Wassenger for WhatsApp API integration
-- OpenAI Assistant API for natural language processing
-- Numbered bracket options `[1], [2], [3]` for easy selection
-- Session management with thread persistence
-
-### Environment Variables Required
+## Environment Configuration
 
 ```env
-# OpenAI Configuration
+# Database (Required)
+DATABASE_URL="postgresql://user:password@host:port/dbname?sslmode=require"
+
+# OpenAI (Required for WhatsApp integration)
 OPENAI_API_KEY=
 
-# Database
-DATABASE_URL=postgresql://...
-
-# DigitalOcean Spaces
+# DigitalOcean (Required for file storage)
+DIGITALOCEAN_ACCESS_TOKEN=
 DO_SPACES_KEY=
 DO_SPACES_SECRET=
 DO_SPACES_ENDPOINT=
 DO_SPACES_BUCKET=
 
-# WhatsApp/Wassenger
+# WhatsApp/Wassenger (Required for inspector interface)
 WASSENGER_API_KEY=
 WASSENGER_WEBHOOK_SECRET=
 ```
 
-## Implementation Status
+## Project Structure
 
-Current state: Fresh Next.js installation with basic setup. Main implementation tasks:
+```
+/src
+  /app/              # Next.js App Router pages
+    /api/            # API route handlers
+    /(pages)/        # UI pages with layouts
+  /components/       # Reusable UI components
+    /ui/            # shadcn/ui base components
+  /lib/             # Core utilities
+    /services/      # Business logic layer
+    prisma.ts       # Prisma client singleton
+```
 
-1. Database schema implementation with Prisma/Drizzle
-2. shadcn/ui component integration
-3. Authentication system
-4. CRUD interfaces for all entities
-5. WhatsApp webhook endpoints
-6. OpenAI Assistant integration
-7. Report generation system
-8. File upload to DigitalOcean Spaces
+## Key Architectural Decisions
 
-## Important Notes
+1. **Server Components First**: All components are React Server Components unless marked with "use client"
+2. **Work Order Status Colors**: Blue (scheduled), Orange (in-progress), Red (issues), Green (completed)
+3. **No Lead Generation**: System focuses on direct customer management only
+4. **Inspector Authentication**: Phone number-based, no hardcoded IDs
+5. **CUID IDs**: Collision-resistant unique identifiers for all database entities
+6. **Soft Deletes**: Status fields instead of hard deletes for data integrity
 
-- No lead generation features - focus on direct customer management
-- Inspectors authenticate via phone number (no hardcoded IDs)
-- Work order statuses update automatically via WhatsApp activity
-- System supports multiple inspectors per work order
-- All reports use predefined templates for consistency
+## API Route Patterns
+
+All API routes follow RESTful conventions:
+- `GET /api/[entity]` - List with pagination
+- `GET /api/[entity]/[id]` - Get single entity
+- `POST /api/[entity]` - Create new entity
+- `PUT /api/[entity]/[id]` - Update entity
+- `DELETE /api/[entity]/[id]` - Delete entity
 
 ## Path Aliases
 
 Use `@/*` for imports from the `src/` directory:
 ```typescript
-import { Component } from '@/app/components/Component'
+import { prisma } from '@/lib/prisma'
+import { Button } from '@/components/ui/button'
 ```
+
+## Current Implementation Status
+
+- ✅ Basic Next.js setup with dashboard
+- ✅ Database connection and Prisma schema
+- ✅ Initial data seeding
+- ✅ Navigation structure
+- ⏳ CRUD interfaces for entities
+- ⏳ WhatsApp webhook integration
+- ⏳ OpenAI Assistant setup
+- ⏳ Authentication system
+- ⏳ Report generation
+- ⏳ File upload to DigitalOcean Spaces
