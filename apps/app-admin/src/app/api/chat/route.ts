@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import prisma from '@/lib/prisma';
 import { 
   getTodayJobsForInspector, 
   getWorkOrderById, 
   updateWorkOrderStatus,
   getTasksByLocation,
   getDistinctLocationsForWorkOrder,
+  getLocationsWithCompletionStatus,
   updateTaskStatus,
   addTaskPhoto,
+  addTaskVideo,
+  getTaskMedia,
+  deleteTaskMedia,
   getWorkOrderProgress,
   getInspectorByPhone,
-  updateWorkOrderDetails
+  updateWorkOrderDetails,
+  completeAllTasksForLocation
 } from '@/lib/services/inspectorService';
 
 // Initialize OpenAI client
@@ -22,7 +28,7 @@ const openai = new OpenAI({
 const threadStore = new Map<string, string>();
 
 // Create assistant once and reuse - reset to null to force recreation with new formatting
-let assistantId: string | null = null; // Reset to force recreation with job confirmation flow
+let assistantId: string | null = null; // Reset to force location parameter inclusion
 
 async function getOrCreateAssistant() {
   if (assistantId) {
@@ -30,8 +36,8 @@ async function getOrCreateAssistant() {
   }
 
   const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.2',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.2. You help property inspectors manage their daily inspection tasks via chat.
+    name: 'Property Inspector Assistant v0.7',
+    instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -40,14 +46,38 @@ Key capabilities:
 - Guide through room-by-room inspection workflow
 - Track task completion and progress
 
+CRITICAL: Task ID Management
+- Tasks have two identifiers:
+  1. Display number: [1], [2], [3] shown to users for easy selection
+  2. Database ID: Actual CUID like "cmeps0xtz0006m35wcrtr8wx9" used in all tool calls
+- ALWAYS map user's selection (e.g., "7") to the actual task ID from getTasksForLocation
+- NEVER pass display numbers as taskId parameters to tools
+- When user selects the LAST option (Mark ALL tasks complete):
+  * Recognize this is different from individual tasks
+  * MUST call completeTask with:
+    - taskId: 'complete_all_tasks'
+    - location: The current location name from context (e.g., 'Kitchen', 'Master Bedroom')
+    - workOrderId: Current work order ID
+    - notes: Any comments provided (optional)
+  * Remember: location parameter is REQUIRED - get it from the current context
+  * This single call will update enteredOn and mark all tasks done
+
 CONVERSATION FLOW GUIDELINES:
 
 1. Showing Today's Jobs:
    - Greet the inspector by name (e.g., "Hi Ken")
+   - IMPORTANT: Start each job entry with its selection number: [1], [2], [3] etc.
    - Format each job clearly with emojis: 🏠 property, ⏰ time, ⭐ priority, 👤 customer
    - Include address, postal code, customer name, status, and any notes
    - Use separator lines (---) between jobs for clarity
-   - End with numbered selection options like [1], [2] for each property
+   - Example format:
+     [1]
+     🏠 Property: 123 Punggol Walk, 822121
+     ⏰ Time: 08:00 am
+     👤 Customer: Hang
+     ⭐ Priority: High
+     Status: STARTED
+   - End with numbered selection prompt like "Type [1], [2] or [3] to select"
 
 2. Job Selection and Confirmation:
    - When user selects a job, use confirmJobSelection tool
@@ -70,9 +100,46 @@ CONVERSATION FLOW GUIDELINES:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
+   - When showing locations, automatically append "(Done)" to locations where all tasks are completed
+   - Format as: "[1] Living Room (Done)" for completed locations
+   - If user selects a completed location:
+     * Inform them: "This location has already been completed!"
+     * Suggest: "Please select another location that needs inspection"
+     * Show list of pending locations
    - Guide through task completion workflow
 
-5. General Guidelines:
+5. Task Inspection Flow:
+   - When showing tasks for a location, ALWAYS format them with brackets:
+     * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
+     * [2] Check ceiling - if task.displayStatus is 'pending' (DO NOT show "(pending)")
+     * [3] Check flooring
+     * [4] Check electrical points
+     * [5] Mark ALL tasks complete - ALWAYS ADD THIS AS FINAL OPTION
+   - The final option number should be one more than the task count (e.g., 4 tasks = [5] for complete all)
+   - Explain clearly to the user:
+     * "Type the number to mark that task as complete"
+     * "You can also add notes or upload photos/videos for this location (optional)"
+     * "Type [5] to mark ALL tasks complete and finish this location" (adjust number based on task count)
+   - Show location status from locationStatus field:
+     * "**Status:** Done" if locationStatus is 'done'
+     * "**Status:** Pending" if locationStatus is 'pending'
+   - If there are notes available (from locationNotes field), show them after the task list:
+     * "**Note:** [notes content]" (not "Location Note")
+   - IMPORTANT WORKFLOW:
+     * When user selects individual task (1,2,3,4 etc): Call completeTask with that specific task ID
+     * When user selects FINAL option "Mark ALL tasks complete": 
+       - DO NOT call completeTask multiple times
+       - MUST call completeTask with THREE parameters:
+         1. taskId: 'complete_all_tasks' (REQUIRED)
+         2. workOrderId: current work order ID (REQUIRED)  
+         3. location: current location name like 'Kitchen' or 'Master Bedroom' (REQUIRED)
+       - This will mark all tasks done AND set enteredOn timestamp
+     * Track the current location from getTasksForLocation response
+     * If user provides any text comments, pass as notes parameter
+     * After marking tasks, show updated list with (done) indicators
+   - CRITICAL: For "Mark ALL tasks complete", MUST include location parameter or it will fail
+
+6. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
    - Be friendly and professional
    - Adapt your language naturally while following the flow
@@ -177,7 +244,7 @@ const assistantTools = [
         properties: {
           taskId: {
             type: 'string',
-            description: 'The task ID to complete'
+            description: 'The actual database task ID (CUID), NOT the display number. Get this from the id field in getTasksForLocation response'
           },
           notes: {
             type: 'string',
@@ -251,6 +318,79 @@ const assistantTools = [
         required: ['jobId', 'updateType', 'newValue']
       }
     }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'uploadTaskMedia',
+      description: 'Upload photo or video for a specific inspection task',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'The actual database task ID (CUID from getTasksForLocation), NOT the display number like [7]'
+          },
+          mediaType: {
+            type: 'string',
+            description: 'Type of media: photo or video',
+            enum: ['photo', 'video']
+          },
+          mediaUrl: {
+            type: 'string',
+            description: 'URL or base64 data of the media'
+          },
+          workOrderId: {
+            type: 'string',
+            description: 'The work order ID for context'
+          }
+        },
+        required: ['taskId', 'mediaType', 'mediaUrl']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'getTaskMedia',
+      description: 'Get uploaded photos and videos for a specific task',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'The contract checklist item ID'
+          }
+        },
+        required: ['taskId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'deleteTaskMedia',
+      description: 'Delete a specific photo or video from a task',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'The contract checklist item ID'
+          },
+          mediaUrl: {
+            type: 'string',
+            description: 'The URL of the media to delete'
+          },
+          mediaType: {
+            type: 'string',
+            description: 'Type of media: photo or video',
+            enum: ['photo', 'video']
+          }
+        },
+        required: ['taskId', 'mediaUrl', 'mediaType']
+      }
+    }
   }
 ];
 
@@ -277,8 +417,9 @@ async function executeTool(toolName: string, args: any) {
         
         return JSON.stringify({
           success: true,
-          jobs: jobs.map(job => ({
+          jobs: jobs.map((job, index) => ({
             id: job.id,
+            jobNumber: index + 1, // Add job number for display
             property: job.property_address,
             customer: job.customer_name,
             time: job.scheduled_date.toLocaleTimeString('en-SG', { 
@@ -333,34 +474,19 @@ async function executeTool(toolName: string, args: any) {
     case 'getJobLocations':
       try {
         const { jobId } = args;
-        const locations = await getDistinctLocationsForWorkOrder(jobId);
+        const locationsWithStatus = await getLocationsWithCompletionStatus(jobId);
         
-        const locationDetails = await Promise.all(
-          locations.map(async (location) => {
-            const tasks = await getTasksByLocation(jobId, location);
-            const completedTasks = tasks.filter(t => t.status === 'completed').length;
-            const totalTasks = tasks.length;
-            
-            let locationStatus = 'pending';
-            if (completedTasks === totalTasks && totalTasks > 0) {
-              locationStatus = 'completed';
-            } else if (completedTasks > 0) {
-              locationStatus = 'in_progress';
-            }
-
-            return {
-              name: location,
-              status: locationStatus,
-              tasks: totalTasks,
-              completed: completedTasks,
-              pending: totalTasks - completedTasks
-            };
-          })
-        );
-
         return JSON.stringify({
           success: true,
-          locations: locationDetails
+          locations: locationsWithStatus.map(loc => ({
+            name: loc.name,
+            displayName: loc.displayName,
+            status: loc.isCompleted ? 'completed' : 
+                    (loc.completedTasks > 0 ? 'in_progress' : 'pending'),
+            tasks: loc.totalTasks,
+            completed: loc.completedTasks,
+            pending: loc.totalTasks - loc.completedTasks
+          }))
         });
       } catch (error) {
         return JSON.stringify({
@@ -374,16 +500,55 @@ async function executeTool(toolName: string, args: any) {
         const { workOrderId, location } = args;
         const tasks = await getTasksByLocation(workOrderId, location);
         
+        // Check if all tasks are completed
+        const allTasksCompleted = tasks.length > 0 && tasks.every((t: any) => t.status === 'completed');
+        
+        if (allTasksCompleted) {
+          // Get all locations to suggest incomplete ones
+          const allLocations = await getDistinctLocationsForWorkOrder(workOrderId);
+          const pendingLocations = [];
+          
+          for (const loc of allLocations) {
+            if (loc !== location) {
+              const locTasks = await getTasksByLocation(workOrderId, loc);
+              const hasIncompleteTasks = locTasks.some((t:any) => t.status !== 'completed');
+              if (hasIncompleteTasks) {
+                pendingLocations.push(loc);
+              }
+            }
+          }
+          
+          return JSON.stringify({
+            success: true,
+            location: location,
+            allTasksCompleted: true,
+            message: 'This location has already been completed!',
+            suggestion: pendingLocations.length > 0 
+              ? `Please select another location that needs inspection: ${pendingLocations.join(', ')}`
+              : 'All locations have been inspected.',
+            pendingLocations: pendingLocations
+          });
+        }
+        
+        // Format tasks with status indicators
+        const formattedTasks = tasks.map((task : any, index :any) => ({
+          id: task.id,
+          number: index + 1,
+          description: task.action || `Check ${location.toLowerCase()} condition`,
+          status: task.status,
+          displayStatus: task.status === 'completed' ? 'done' : 'pending',
+          notes: task.notes || null
+        }));
+        
         return JSON.stringify({
           success: true,
           location: location,
-          tasks: tasks.map((task, index) => ({
-            id: task.id, // Use the actual checklist item ID
-            number: index + 1,
-            description: task.action || `Check ${location.toLowerCase()} condition`,
-            status: task.status,
-            notes: task.notes
-          }))
+          allTasksCompleted: false,
+          tasks: formattedTasks,
+          // Include notes separately if available (from remarks field)
+          locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null,
+          // Include overall location status based on enteredOn field
+          locationStatus: tasks.length > 0 && tasks[0].locationEnteredOn ? 'done' : 'pending'
         });
       } catch (error) {
         return JSON.stringify({
@@ -394,7 +559,64 @@ async function executeTool(toolName: string, args: any) {
 
     case 'completeTask':
       try {
-        const { taskId, notes, workOrderId } = args;
+        const { taskId, notes, workOrderId, location } = args;
+        
+        // Check if this is the "complete all" option
+        if (taskId === 'complete_all_tasks') {
+          // We need to get the location name if not provided
+          if (!location) {
+            return JSON.stringify({
+              success: false,
+              error: 'Location is required to complete all tasks.',
+            });
+          }
+          
+          const success = await completeAllTasksForLocation(workOrderId, location);
+          
+          if (success) {
+            // Update remarks if notes are provided
+            if (notes) {
+              const workOrder = await prisma.workOrder.findUnique({
+                where: { id: workOrderId },
+                include: {
+                  contract: {
+                    include: {
+                      contractChecklist: {
+                        include: {
+                          items: {
+                            where: { name: location }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              });
+              
+              if (workOrder?.contract.contractChecklist?.items[0]) {
+                await prisma.contractChecklistItem.update({
+                  where: { id: workOrder.contract.contractChecklist.items[0].id },
+                  data: { remarks: notes }
+                });
+              }
+            }
+            
+            return JSON.stringify({
+              success: true,
+              message: `All tasks for ${location} have been marked complete!`,
+              allTasksCompletedForLocation: true,
+              locationCompleted: true,
+              nextAction: 'This location is now fully inspected. Choose another location to continue.'
+            });
+          }
+          
+          return JSON.stringify({
+            success: false,
+            error: 'Failed to complete all tasks. Please try again.',
+          });
+        }
+        
+        // Normal single task completion
         const success = await updateTaskStatus(taskId, 'completed', notes);
         
         if (!success) {
@@ -408,16 +630,15 @@ async function executeTool(toolName: string, args: any) {
         
         return JSON.stringify({
           success: true,
-          message: `Task ${taskId} marked as complete`,
+          message: `Task marked as complete`,
+          taskCompleted: true,
           notes: notes || 'No additional notes',
           progress: {
             total: progress.total_tasks,
             completed: progress.completed_tasks,
             remaining: progress.pending_tasks + progress.in_progress_tasks
           },
-          nextAction: progress.pending_tasks > 0 
-            ? 'Continue with remaining tasks' 
-            : 'All tasks completed! Ready to finalize inspection.'
+          nextAction: 'Task completed. Show updated list or select another task.'
         });
       } catch (error) {
         return JSON.stringify({
@@ -468,14 +689,18 @@ async function executeTool(toolName: string, args: any) {
         // Update status to STARTED
         await updateWorkOrderStatus(jobId, 'in_progress');
         
-        // Get locations for the job
-        const locations = await getDistinctLocationsForWorkOrder(jobId);
+        // Get locations with completion status
+        const locationsWithStatus = await getLocationsWithCompletionStatus(jobId);
         const progress = await getWorkOrderProgress(jobId);
+        
+        // Extract display names for the response
+        const locationDisplayNames = locationsWithStatus.map(loc => loc.displayName);
         
         return JSON.stringify({
           success: true,
           message: 'Job started successfully! Ready for inspection.',
-          locations: locations,
+          locations: locationDisplayNames,
+          locationsDetail: locationsWithStatus,
           progress: {
             total: progress.total_tasks,
             completed: progress.completed_tasks,
@@ -486,6 +711,101 @@ async function executeTool(toolName: string, args: any) {
         return JSON.stringify({
           success: false,
           error: 'Failed to start job.',
+        });
+      }
+
+    case 'uploadTaskMedia':
+      try {
+        const { taskId, mediaType, mediaUrl, workOrderId } = args;
+        
+        // For now, we'll store a placeholder URL since we can't handle real file uploads
+        // In production, this would upload to DigitalOcean Spaces and return the URL
+        const storageUrl = mediaUrl || `https://storage.example.com/${taskId}/${Date.now()}-${mediaType}.${mediaType === 'photo' ? 'jpg' : 'mp4'}`;
+        
+        let success = false;
+        if (mediaType === 'photo') {
+          success = await addTaskPhoto(taskId, storageUrl);
+        } else if (mediaType === 'video') {
+          success = await addTaskVideo(taskId, storageUrl);
+        }
+        
+        if (!success) {
+          return JSON.stringify({
+            success: false,
+            error: `Failed to upload ${mediaType}.`
+          });
+        }
+        
+        // Get updated media count
+        const mediaInfo = await getTaskMedia(taskId);
+        
+        return JSON.stringify({
+          success: true,
+          message: `${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully!`,
+          taskId: taskId,
+          mediaCount: {
+            photos: mediaInfo?.photoCount || 0,
+            videos: mediaInfo?.videoCount || 0
+          }
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to upload media.',
+        });
+      }
+
+    case 'getTaskMedia':
+      try {
+        const { taskId } = args;
+        const mediaInfo = await getTaskMedia(taskId);
+        
+        if (!mediaInfo) {
+          return JSON.stringify({
+            success: false,
+            error: 'Task not found or no media available.',
+          });
+        }
+        
+        return JSON.stringify({
+          success: true,
+          taskId: taskId,
+          taskName: mediaInfo.name,
+          remarks: mediaInfo.remarks,
+          photos: mediaInfo.photos,
+          videos: mediaInfo.videos,
+          photoCount: mediaInfo.photoCount,
+          videoCount: mediaInfo.videoCount
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to get media.',
+        });
+      }
+
+    case 'deleteTaskMedia':
+      try {
+        const { taskId, mediaUrl, mediaType } = args;
+        
+        const success = await deleteTaskMedia(taskId, mediaUrl, mediaType);
+        
+        if (!success) {
+          return JSON.stringify({
+            success: false,
+            error: `Failed to delete ${mediaType}.`
+          });
+        }
+        
+        return JSON.stringify({
+          success: true,
+          message: `${mediaType === 'photo' ? 'Photo' : 'Video'} deleted successfully!`,
+          taskId: taskId
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to delete media.',
         });
       }
 
@@ -537,7 +857,7 @@ async function executeTool(toolName: string, args: any) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, history, sessionId = 'default' } = await request.json();
+    const { message, history, sessionId = 'default', mediaFiles } = await request.json();
 
     // Get or create thread for this session
     let threadId = threadStore.get(sessionId);
@@ -557,10 +877,18 @@ export async function POST(request: NextRequest) {
       throw new Error('Failed to create or retrieve thread ID');
     }
 
-    // Add user message to thread
+    // Add user message to thread with media context if present
+    let messageContent = message;
+    if (mediaFiles && mediaFiles.length > 0) {
+      // Add media file information for assistant context
+      // Note: We're not sending actual file data, just metadata
+      messageContent = message;
+      // The assistant will recognize the upload mentions in the message
+    }
+    
     await openai.beta.threads.messages.create(threadId, {
       role: 'user',
-      content: message
+      content: messageContent
     });
 
     // Get or create assistant

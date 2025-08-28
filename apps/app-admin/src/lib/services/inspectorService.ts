@@ -165,6 +165,65 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
   }
 }
 
+export async function getLocationsWithCompletionStatus(workOrderId: string) {
+  try {
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      include: {
+        contract: {
+          include: {
+            contractChecklist: {
+              include: {
+                items: {
+                  orderBy: {
+                    order: 'asc'
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+
+    if (!workOrder?.contract.contractChecklist) {
+      return []
+    }
+
+    // Group items by location and check if all tasks for each location are completed
+    const locationMap = new Map<string, { total: number, completed: number }>()
+    
+    for (const item of workOrder.contract.contractChecklist.items) {
+      const location = item.name
+      if (!locationMap.has(location)) {
+        locationMap.set(location, { total: 0, completed: 0 })
+      }
+      const locData = locationMap.get(location)!
+      locData.total++
+      if (item.enteredOn !== null) {
+        locData.completed++
+      }
+    }
+
+    // Convert to array with completion status
+    const locationsWithStatus = Array.from(locationMap.entries()).map(([name, data]) => {
+      const isCompleted = data.completed === data.total && data.total > 0
+      return {
+        name: name,
+        displayName: isCompleted ? `${name} (Done)` : name,
+        isCompleted: isCompleted,
+        totalTasks: data.total,
+        completedTasks: data.completed
+      }
+    })
+
+    return locationsWithStatus
+  } catch (error) {
+    console.error('Error fetching locations with status:', error)
+    return []
+  }
+}
+
 export async function getTasksByLocation(workOrderId: string, location: string) {
   try {
     const workOrder = await prisma.workOrder.findUnique({
@@ -193,17 +252,46 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
       return []
     }
 
-    return workOrder.contract.contractChecklist.items.map(item => ({
-      id: item.id,
-      location: item.name,
-      action: item.remarks || 'Inspect area',
-      status: item.enteredOn ? 'completed' : 'pending',
-      notes: item.remarks,
-      photos: item.photos,
-      videos: item.videos,
-      completed_at: item.enteredOn,
-      completed_by: item.enteredById
-    }))
+    // Get the first item for this location (there should only be one per location)
+    const checklistItem = workOrder.contract.contractChecklist.items[0] as any
+    if (!checklistItem) {
+      return []
+    }
+
+    // Parse tasks from JSON field if it exists
+    if (checklistItem.tasks && typeof checklistItem.tasks === 'object') {
+      const tasks = Array.isArray(checklistItem.tasks) ? checklistItem.tasks : []
+      
+      // Return individual tasks from the tasks array
+      return tasks.map((task: any, index: number) => ({
+        id: `${checklistItem.id}_task_${index}`,
+        location: checklistItem.name,
+        action: typeof task === 'string' ? task : (task.task || 'Inspect area'),
+        status: typeof task === 'object' && task.status === 'done' ? 'completed' : 'pending',
+        notes: checklistItem.remarks,
+        photos: checklistItem.photos,
+        videos: checklistItem.videos,
+        completed_at: checklistItem.enteredOn,
+        completed_by: checklistItem.enteredById,
+        isSubTask: true,
+        taskIndex: index,
+        locationEnteredOn: checklistItem.enteredOn  // Pass the enteredOn for overall status
+      }))
+    }
+    
+    // Fallback to old behavior if no tasks JSON - treat remarks as single task
+    return [{
+      id: checklistItem.id,
+      location: checklistItem.name,
+      action: checklistItem.remarks || 'Inspect area',
+      status: checklistItem.enteredOn ? 'completed' : 'pending',
+      notes: checklistItem.remarks,
+      photos: checklistItem.photos,
+      videos: checklistItem.videos,
+      completed_at: checklistItem.enteredOn,
+      completed_by: checklistItem.enteredById,
+      isSubTask: false
+    }]
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
     return []
@@ -212,6 +300,46 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
 
 export async function updateTaskStatus(taskId: string, status: 'completed' | 'pending', notes?: string) {
   try {
+    // Check if this is marking a single subtask
+    if (taskId.includes('_task_')) {
+      const [checklistItemId, , taskIndexStr] = taskId.split('_')
+      const taskIndex = parseInt(taskIndexStr)
+      
+      // Get the checklist item
+      const item = await prisma.contractChecklistItem.findUnique({
+        where: { id: checklistItemId }
+      }) as any
+      
+      if (!item) return false
+      
+      // Update the specific task in the tasks array
+      let tasks = item.tasks || []
+      if (Array.isArray(tasks) && tasks[taskIndex]) {
+        tasks[taskIndex] = {
+          ...tasks[taskIndex],
+          status: status === 'completed' ? 'done' : 'pending'
+        }
+        
+        // Prepare update data
+        const updateData: any = { tasks }
+        
+        // If notes are provided, update the remarks field for the entire location
+        if (notes) {
+          updateData.remarks = notes
+        }
+        
+        // Update the item with new tasks array and optional remarks
+        await prisma.contractChecklistItem.update({
+          where: { id: checklistItemId },
+          data: updateData
+        })
+        
+        return true
+      }
+      return false
+    }
+    
+    // Original behavior for completing entire location
     const updateData: any = {}
     
     if (status === 'completed') {
@@ -236,6 +364,61 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
   }
 }
 
+// New function to mark all tasks complete for a location
+export async function completeAllTasksForLocation(workOrderId: string, location: string, inspectorId?: string) {
+  try {
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      include: {
+        contract: {
+          include: {
+            contractChecklist: {
+              include: {
+                items: {
+                  where: { name: location }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+
+    if (!workOrder?.contract.contractChecklist) {
+      return false
+    }
+
+    const checklistItem = workOrder.contract.contractChecklist.items[0] as any
+    if (!checklistItem) {
+      return false
+    }
+
+    // Mark all tasks in the array as done
+    let tasks = checklistItem.tasks || []
+    if (Array.isArray(tasks)) {
+      tasks = tasks.map((task: any) => ({
+        ...task,
+        status: 'done'
+      }))
+    }
+
+    // Update the checklist item with all tasks done and set enteredOn
+    await prisma.contractChecklistItem.update({
+      where: { id: checklistItem.id },
+      data: {
+        tasks: tasks,
+        enteredOn: new Date(),
+        enteredById: inspectorId || checklistItem.enteredById
+      }
+    })
+
+    return true
+  } catch (error) {
+    console.error('Error completing all tasks for location:', error)
+    return false
+  }
+}
+
 export async function addTaskPhoto(taskId: string, photoUrl: string) {
   try {
     const item = await prisma.contractChecklistItem.findUnique({
@@ -256,6 +439,92 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
     return true
   } catch (error) {
     console.error('Error adding task photo:', error)
+    return false
+  }
+}
+
+export async function addTaskVideo(taskId: string, videoUrl: string) {
+  try {
+    const item = await prisma.contractChecklistItem.findUnique({
+      where: { id: taskId }
+    })
+
+    if (!item) return false
+
+    await prisma.contractChecklistItem.update({
+      where: { id: taskId },
+      data: {
+        videos: {
+          push: videoUrl
+        }
+      }
+    })
+
+    return true
+  } catch (error) {
+    console.error('Error adding task video:', error)
+    return false
+  }
+}
+
+export async function getTaskMedia(taskId: string) {
+  try {
+    const item = await prisma.contractChecklistItem.findUnique({
+      where: { id: taskId },
+      select: {
+        photos: true,
+        videos: true,
+        name: true,
+        remarks: true
+      }
+    })
+
+    if (!item) return null
+
+    return {
+      taskId: taskId,
+      name: item.name,
+      remarks: item.remarks,
+      photos: item.photos || [],
+      videos: item.videos || [],
+      photoCount: item.photos?.length || 0,
+      videoCount: item.videos?.length || 0
+    }
+  } catch (error) {
+    console.error('Error getting task media:', error)
+    return null
+  }
+}
+
+export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaType: 'photo' | 'video') {
+  try {
+    const item = await prisma.contractChecklistItem.findUnique({
+      where: { id: taskId }
+    })
+
+    if (!item) return false
+
+    if (mediaType === 'photo') {
+      const updatedPhotos = item.photos.filter(photo => photo !== mediaUrl)
+      await prisma.contractChecklistItem.update({
+        where: { id: taskId },
+        data: {
+          photos: updatedPhotos
+        }
+      })
+    } else {
+      const updatedVideos = item.videos.filter(video => video !== mediaUrl)
+      await prisma.contractChecklistItem.update({
+        where: { id: taskId },
+        data: {
+          videos: updatedVideos
+        }
+      })
+    }
+
+    return true
+  } catch (error) {
+    console.error('Error deleting task media:', error)
     return false
   }
 }

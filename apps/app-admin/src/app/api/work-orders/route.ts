@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { parseActionIntoTasks } from '@/lib/utils/taskParser'
 
 // GET /api/work-orders - Get all work orders
 export async function GET(request: NextRequest) {
@@ -187,13 +188,15 @@ export async function POST(request: NextRequest) {
         })
         
         // Create checklist items from template
-        if (contract.basedOnChecklist.items && contract.basedOnChecklist.items.length > 0) {
+        if (contract.basedOnChecklist.items && contract.basedOnChecklist.items.length > 0 && contractChecklist) {
+          const checklistId = contractChecklist.id;
           await tx.contractChecklistItem.createMany({
             data: contract.basedOnChecklist.items.map(item => ({
-              contractChecklistId: contractChecklist.id,
+              contractChecklistId: checklistId,
               name: item.name,
               order: item.order,
-              remarks: item.action
+              remarks: item.action,  // Keep full action text
+              tasks: parseActionIntoTasks(item.action) as any  // Parse into tasks array (cast as any for Prisma JSON field)
             }))
           })
         }

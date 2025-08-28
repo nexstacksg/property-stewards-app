@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { parseActionIntoTasks } from '@/lib/utils/taskParser'
 
 // POST /api/contracts/[id]/checklist - Add a checklist to a contract
 export async function POST(
@@ -73,7 +74,8 @@ export async function POST(
             contractChecklistId: checklist.id,
             name: item.name,
             order: item.order,
-            remarks: item.action
+            remarks: item.action,  // Keep full action text
+            tasks: parseActionIntoTasks(item.action)  // Parse into tasks array
           }))
         })
       }
