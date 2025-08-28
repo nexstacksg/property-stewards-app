@@ -28,7 +28,7 @@ export default function ChatPage() {
   const [sessionId] = useState(`inspector-chat-${Date.now()}`)
   const [showMediaButtons, setShowMediaButtons] = useState(false)
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
-  const [pendingMedia, setPendingMedia] = useState<{ type: 'photo' | 'video', url: string, name: string }[]>([])
+  const [pendingMedia, setPendingMedia] = useState<{ type: 'photo' | 'video', url: string, name: string, file?: File }[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
 
@@ -40,8 +40,7 @@ export default function ChatPage() {
     scrollToBottom()
   }, [messages])
 
-  // Check if we're in task inspection stage based on messages
-  useEffect(() => {
+ useEffect(() => {
     // Look for task context in recent messages
     const recentMessages = messages.slice(-5).reverse()
     
@@ -69,7 +68,7 @@ export default function ChatPage() {
           content.includes('all tasks completed') ||
           content.includes('job completed') ||
           content.includes('select a location') ||
-          content.includes('choose a room')
+          content.includes('choose room')
         ) {
           inTaskMode = false
           break
@@ -113,14 +112,93 @@ export default function ChatPage() {
     setIsLoading(true)
 
     try {
-      // If there are media files, mention them in the message
       let apiMessage = input
+      const uploadedMediaUrls: string[] = []
+      
+      // Upload media files to DO Spaces first if any
       if (mediaToSend.length > 0) {
+        console.log('📤 Uploading media files to DigitalOcean Spaces...')
+        
         for (const media of mediaToSend) {
-          apiMessage += `\n[User uploaded a ${media.type}: ${media.name}]`
+          if (media.file) {
+            try {
+              const formData = new FormData()
+              formData.append('file', media.file)
+              formData.append('mediaType', media.type)
+              formData.append('sessionId', sessionId)
+              
+              const uploadResponse = await fetch('/api/chat', {
+                method: 'POST',
+                body: formData,
+              })
+              
+              if (uploadResponse.ok) {
+                const uploadData = await uploadResponse.json()
+                uploadedMediaUrls.push(uploadData.url)
+                
+                // Add the uploaded URL to the message for the assistant
+                apiMessage += `\n[Uploaded ${media.type}: ${uploadData.url}]`
+                console.log(`✅ Uploaded ${media.type}: ${uploadData.url}`)
+              } else {
+                console.error(`Failed to upload ${media.name}`)
+              }
+            } catch (uploadError) {
+              console.error('Upload error:', uploadError)
+            }
+          }
         }
       }
 
+      // Check if we need to send job context from recent messages
+      let jobContextToSend: Record<string, string> | null = null
+      
+      // Look through recent messages for job confirmation or location selection
+      for (let i = messages.length - 1; i >= Math.max(0, messages.length - 10); i--) {
+        const msg = messages[i]
+        if (msg.role === 'assistant') {
+          const content = msg.content
+          
+          // Check if this is a job confirmation (user just confirmed with "1" or "yes")
+          if (content.includes('Please confirm the destination') && input.trim() === '1') {
+            // Extract job details from the confirmation message
+            const propertyMatch = content.match(/🏠 Property:\s*([^\n]+)/)
+            const customerMatch = content.match(/👤 Customer:\s*([^\n]+)/)
+            
+            if (propertyMatch) {
+              const propertyAddress = propertyMatch[1].trim()
+              const postalMatch = propertyAddress.match(/\b(\d{6})\b/)
+              
+              jobContextToSend = {
+                propertyAddress,
+                postalCode: postalMatch ? postalMatch[1] : 'unknown',
+                userConfirmedJob: 'yes'
+              }
+              
+              if (customerMatch) {
+                jobContextToSend.customerName = customerMatch[1].trim()
+              }
+              
+              console.log('📋 Sending job confirmation context to OpenAI:', jobContextToSend)
+              break
+            }
+          }
+          
+          // Check if user is selecting a location (user just typed a number)
+          if (/^\d+$/.test(input.trim()) && content.includes('Select a location')) {
+            // Try to find the location name from the list
+            const locationNumber = parseInt(input.trim())
+            const locationMatch = content.match(new RegExp(`\\[${locationNumber}\\]\\s+([^\\[\\n]+)`))
+            
+            if (locationMatch) {
+              const locationName = locationMatch[1].trim().replace(' (Done)', '')
+              jobContextToSend = { selectedLocation: locationName }
+              console.log('📍 Sending location selection to OpenAI:', locationName)
+              break
+            }
+          }
+        }
+      }
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -137,7 +215,9 @@ export default function ChatPage() {
           history: messages.map(m => ({
             role: m.role,
             content: m.content
-          }))
+          })),
+          // Include job context if detected
+          jobContext: jobContextToSend
         }),
       })
 
@@ -182,7 +262,7 @@ export default function ChatPage() {
   const handleFilesUpload = async (files: FileList) => {
     if (!files || files.length === 0) return
 
-    const newMedia: { type: 'photo' | 'video', url: string, name: string }[] = []
+    const newMedia: { type: 'photo' | 'video', url: string, name: string, file?: File }[] = []
 
     // Process all files
     for (let i = 0; i < files.length; i++) {
@@ -190,13 +270,14 @@ export default function ChatPage() {
       const isVideo = file.type.startsWith('video/')
       const mediaType: 'photo' | 'video' = isVideo ? 'video' : 'photo'
       
-      // Create object URL for preview (much smaller than base64)
+      // Create object URL for preview
       const url = URL.createObjectURL(file)
       
       newMedia.push({ 
         type: mediaType, 
         url: url,
-        name: file.name 
+        name: file.name,
+        file: file // Store the actual file for upload
       })
     }
     

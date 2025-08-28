@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import prisma from '@/lib/prisma';
+import { threadStore } from '@/lib/thread-store';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-client';
+import { randomUUID } from 'crypto';
 import { 
   getTodayJobsForInspector, 
   getWorkOrderById, 
@@ -24,8 +28,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Store for thread management (in production, use Redis or database)
-const threadStore = new Map<string, string>();
+// Thread store is imported from shared module
 
 // Create assistant once and reuse - reset to null to force recreation with new formatting
 let assistantId: string | null = null; // Reset to force location parameter inclusion
@@ -111,12 +114,15 @@ CONVERSATION FLOW GUIDELINES:
 5. Task Inspection Flow:
    - When showing tasks for a location, ALWAYS format them with brackets:
      * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
-     * [2] Check ceiling - if task.displayStatus is 'pending' (DO NOT show "(pending)")
-     * [3] Check flooring
+     * [2] Check ceiling (done) - if task.displayStatus is 'done'
+     * [3] Check flooring - if task.displayStatus is 'pending' (DO NOT show "(pending)")
      * [4] Check electrical points
-     * [5] Mark ALL tasks complete - ALWAYS ADD THIS AS FINAL OPTION
+     * [5] Mark ALL tasks complete - THIS IS MANDATORY, ALWAYS INCLUDE AS FINAL OPTION
+   - CRITICAL: ALWAYS show ALL tasks, even completed ones with (done) marker
+   - CRITICAL: ALWAYS add "Mark ALL tasks complete" as the last numbered option
+   - DO NOT show task completion count during task inspection (no "X out of Y completed")
    - The final option number should be one more than the task count (e.g., 4 tasks = [5] for complete all)
-   - Explain clearly to the user:
+   - Simply list the tasks and explain:
      * "Type the number to mark that task as complete"
      * "You can also add notes or upload photos/videos for this location (optional)"
      * "Type [5] to mark ALL tasks complete and finish this location" (adjust number based on task count)
@@ -129,15 +135,14 @@ CONVERSATION FLOW GUIDELINES:
      * When user selects individual task (1,2,3,4 etc): Call completeTask with that specific task ID
      * When user selects FINAL option "Mark ALL tasks complete": 
        - DO NOT call completeTask multiple times
-       - MUST call completeTask with THREE parameters:
+       - MUST call completeTask with TWO parameters:
          1. taskId: 'complete_all_tasks' (REQUIRED)
-         2. workOrderId: current work order ID (REQUIRED)  
-         3. location: current location name like 'Kitchen' or 'Master Bedroom' (REQUIRED)
+         2. workOrderId: current work order ID (REQUIRED)
+       - Location is automatically retrieved from thread context
        - This will mark all tasks done AND set enteredOn timestamp
-     * Track the current location from getTasksForLocation response
      * If user provides any text comments, pass as notes parameter
      * After marking tasks, show updated list with (done) indicators
-   - CRITICAL: For "Mark ALL tasks complete", MUST include location parameter or it will fail
+   - ALWAYS include "Mark ALL tasks complete" as the last numbered option when showing tasks
 
 6. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
@@ -238,13 +243,13 @@ const assistantTools = [
     type: 'function' as const,
     function: {
       name: 'completeTask',
-      description: 'Mark a specific inspection task as complete',
+      description: 'Mark a specific inspection task as complete or mark all tasks complete for current location',
       parameters: {
         type: 'object',
         properties: {
           taskId: {
             type: 'string',
-            description: 'The actual database task ID (CUID), NOT the display number. Get this from the id field in getTasksForLocation response'
+            description: 'The actual database task ID (CUID) OR "complete_all_tasks" to mark all tasks in current location as complete'
           },
           notes: {
             type: 'string',
@@ -252,7 +257,7 @@ const assistantTools = [
           },
           workOrderId: {
             type: 'string',
-            description: 'Work order ID to get next tasks'
+            description: 'Work order ID'
           }
         },
         required: ['taskId', 'workOrderId']
@@ -394,8 +399,42 @@ const assistantTools = [
   }
 ];
 
+// Helper to get thread metadata
+async function getThreadMetadata(threadId: string) {
+  try {
+    const thread = await openai.beta.threads.retrieve(threadId);
+    console.log('🔍 Retrieved thread metadata:', thread.metadata);
+    return thread.metadata || {};
+  } catch (error) {
+    console.error('Error retrieving thread metadata:', error);
+    return {};
+  }
+}
+
+// Helper to update thread metadata
+async function updateThreadMetadata(threadId: string, updates: Record<string, string>) {
+  try {
+    const currentMetadata = await getThreadMetadata(threadId);
+    const updatedMetadata = { ...currentMetadata, ...updates };
+    
+    await openai.beta.threads.update(threadId, {
+      metadata: updatedMetadata
+    });
+    
+    console.log('✅ Updated thread metadata:', updatedMetadata);
+    return updatedMetadata;
+  } catch (error) {
+    console.error('Error updating thread metadata:', error);
+    return null;
+  }
+}
+
 // Tool execution functions
-async function executeTool(toolName: string, args: any) {
+async function executeTool(toolName: string, args: any, threadId?: string) {
+  console.log(`🔧 Executing tool: ${toolName}`, args);
+  
+  // Get thread metadata for context
+  const metadata = threadId ? await getThreadMetadata(threadId) : {};
   switch (toolName) {
     case 'getTodayJobs':
       try {
@@ -498,39 +537,20 @@ async function executeTool(toolName: string, args: any) {
     case 'getTasksForLocation':
       try {
         const { workOrderId, location } = args;
-        const tasks = await getTasksByLocation(workOrderId, location);
         
-        // Check if all tasks are completed
-        const allTasksCompleted = tasks.length > 0 && tasks.every((t: any) => t.status === 'completed');
-        
-        if (allTasksCompleted) {
-          // Get all locations to suggest incomplete ones
-          const allLocations = await getDistinctLocationsForWorkOrder(workOrderId);
-          const pendingLocations = [];
-          
-          for (const loc of allLocations) {
-            if (loc !== location) {
-              const locTasks = await getTasksByLocation(workOrderId, loc);
-              const hasIncompleteTasks = locTasks.some((t:any) => t.status !== 'completed');
-              if (hasIncompleteTasks) {
-                pendingLocations.push(loc);
-              }
-            }
-          }
-          
-          return JSON.stringify({
-            success: true,
-            location: location,
-            allTasksCompleted: true,
-            message: 'This location has already been completed!',
-            suggestion: pendingLocations.length > 0 
-              ? `Please select another location that needs inspection: ${pendingLocations.join(', ')}`
-              : 'All locations have been inspected.',
-            pendingLocations: pendingLocations
+        // Store current location in thread metadata
+        if (threadId) {
+          await updateThreadMetadata(threadId, {
+            currentLocation: location,
+            lastLocationAccessedAt: new Date().toISOString()
           });
+          console.log(`📍 Current location set to: ${location}`);
         }
         
-        // Format tasks with status indicators
+        const tasks = await getTasksByLocation(workOrderId, location);
+        
+        // Don't skip if all tasks are completed - show them with (done) markers
+        // Format tasks with status indicators - ALWAYS show all tasks
         const formattedTasks = tasks.map((task : any, index :any) => ({
           id: task.id,
           number: index + 1,
@@ -540,11 +560,20 @@ async function executeTool(toolName: string, args: any) {
           notes: task.notes || null
         }));
         
+        // Count completed tasks for this location only
+        const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length;
+        const totalTasksInLocation = formattedTasks.length;
+        
         return JSON.stringify({
           success: true,
           location: location,
-          allTasksCompleted: false,
+          allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0,
           tasks: formattedTasks,
+          // Progress for THIS location only
+          locationProgress: {
+            completed: completedTasksInLocation,
+            total: totalTasksInLocation
+          },
           // Include notes separately if available (from remarks field)
           locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null,
           // Include overall location status based on enteredOn field
@@ -559,15 +588,22 @@ async function executeTool(toolName: string, args: any) {
 
     case 'completeTask':
       try {
-        const { taskId, notes, workOrderId, location } = args;
+        const { taskId, notes, workOrderId } = args;
         
         // Check if this is the "complete all" option
         if (taskId === 'complete_all_tasks') {
-          // We need to get the location name if not provided
+          // Get location from thread metadata
+          let location = '';
+          if (threadId) {
+            const metadata = await getThreadMetadata(threadId);
+            location = metadata.currentLocation || '';
+            console.log(`📍 Using location from thread metadata: ${location}`);
+          }
+          
           if (!location) {
             return JSON.stringify({
               success: false,
-              error: 'Location is required to complete all tasks.',
+              error: 'Could not determine current location. Please select a location first.',
             });
           }
           
@@ -659,6 +695,22 @@ async function executeTool(toolName: string, args: any) {
           });
         }
         
+        // Extract postal code from property address
+        const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/);
+        const postalCode = postalCodeMatch ? postalCodeMatch[1] : 'unknown';
+        
+        // Store job details in thread metadata when job is selected for confirmation
+        if (threadId) {
+          await updateThreadMetadata(threadId, {
+            workOrderId: jobId,
+            customerName: workOrder.customer_name,
+            propertyAddress: workOrder.property_address,
+            postalCode: postalCode,
+            jobStatus: 'confirming'
+          });
+          console.log(`📝 Stored job confirmation details - Customer: ${workOrder.customer_name}, Postal: ${postalCode}`);
+        }
+        
         return JSON.stringify({
           success: true,
           message: 'Please confirm the destination',
@@ -689,6 +741,15 @@ async function executeTool(toolName: string, args: any) {
         // Update status to STARTED
         await updateWorkOrderStatus(jobId, 'in_progress');
         
+        // Update thread metadata to mark job as started
+        if (threadId) {
+          await updateThreadMetadata(threadId, {
+            jobStatus: 'started',
+            jobStartedAt: new Date().toISOString()
+          });
+          console.log('🚀 Job started and metadata updated');
+        }
+        
         // Get locations with completion status
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId);
         const progress = await getWorkOrderProgress(jobId);
@@ -718,40 +779,33 @@ async function executeTool(toolName: string, args: any) {
       try {
         const { taskId, mediaType, mediaUrl, workOrderId } = args;
         
-        // For now, we'll store a placeholder URL since we can't handle real file uploads
-        // In production, this would upload to DigitalOcean Spaces and return the URL
-        const storageUrl = mediaUrl || `https://storage.example.com/${taskId}/${Date.now()}-${mediaType}.${mediaType === 'photo' ? 'jpg' : 'mp4'}`;
+        // The media has ALREADY been uploaded to DO Spaces AND saved to database
+        // by the upload handler in this same route. We just acknowledge it here.
+        // DO NOT save again to avoid duplicates!
         
-        let success = false;
-        if (mediaType === 'photo') {
-          success = await addTaskPhoto(taskId, storageUrl);
-        } else if (mediaType === 'video') {
-          success = await addTaskVideo(taskId, storageUrl);
-        }
+        console.log(`📸 Media already processed - ${mediaType}: ${mediaUrl}`);
+        
+        // Just return success since upload handler already saved everything
+        const success = true;
         
         if (!success) {
           return JSON.stringify({
             success: false,
-            error: `Failed to upload ${mediaType}.`
+            error: `Failed to save ${mediaType} URL to database.`
           });
         }
         
-        // Get updated media count
-        const mediaInfo = await getTaskMedia(taskId);
-        
+        // Return success - media already saved by upload handler
         return JSON.stringify({
           success: true,
           message: `${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully!`,
-          taskId: taskId,
-          mediaCount: {
-            photos: mediaInfo?.photoCount || 0,
-            videos: mediaInfo?.videoCount || 0
-          }
+          mediaUrl: mediaUrl,
+          note: 'Media already saved to database by upload handler'
         });
       } catch (error) {
         return JSON.stringify({
           success: false,
-          error: 'Failed to upload media.',
+          error: 'Failed to process media.',
         });
       }
 
@@ -857,19 +911,176 @@ async function executeTool(toolName: string, args: any) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, history, sessionId = 'default', mediaFiles } = await request.json();
+    const contentType = request.headers.get('content-type') || '';
+    
+    // Handle file upload directly in chat route
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      const file = formData.get('file') as File;
+      const mediaType = formData.get('mediaType') as string;
+      const sessionId = formData.get('sessionId') as string;
+      
+      if (!file || !mediaType || !sessionId) {
+        return NextResponse.json(
+          { error: 'Missing required fields for upload' },
+          { status: 400 }
+        );
+      }
+      
+      // Get thread and its metadata
+      const threadId = threadStore.get(sessionId);
+      if (!threadId) {
+        return NextResponse.json(
+          { error: 'No thread found for session' },
+          { status: 400 }
+        );
+      }
+      
+      // Get thread metadata
+      const metadata = await getThreadMetadata(threadId);
+      console.log('📤 Upload with thread metadata:', metadata);
+      
+      // Extract context from metadata
+      let customerName = 'unknown';
+      let postalCode = 'unknown';
+      let roomName = 'general';
+      const workOrderId = metadata.workOrderId || '';
+      
+      if (metadata.customerName) {
+        customerName = metadata.customerName
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/gi, '')
+          .replace(/\s+/g, '-')
+          .substring(0, 50);
+      }
+      
+      postalCode = metadata.postalCode || 'unknown';
+      roomName = metadata.currentLocation || 'general';
+      roomName = roomName
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/gi, '')
+        .replace(/\s+/g, '-');
+      
+      // Generate filename and path
+      const fileExtension = file.name.split('.').pop();
+      const mediaFolder = mediaType === 'photo' ? 'photos' : 'videos';
+      const fileName = `${randomUUID()}.${fileExtension}`;
+      const folderPath = `${customerName}-${postalCode}/${roomName}/${mediaFolder}`;
+      const key = `${SPACE_DIRECTORY}/${folderPath}/${fileName}`;
+      
+      // Convert file to buffer
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      
+      // Upload to DigitalOcean Spaces
+      const uploadParams = {
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Body: buffer,
+        ContentType: file.type,
+        ACL: 'public-read' as const,
+        Metadata: {
+          workOrderId: workOrderId,
+          location: roomName,
+          mediaType: mediaType,
+          originalName: file.name,
+          uploadedAt: new Date().toISOString(),
+        },
+      };
+      
+      const command = new PutObjectCommand(uploadParams);
+      await s3Client.send(command);
+      
+      const publicUrl = `${PUBLIC_URL}/${key}`;
+      console.log('✅ Uploaded to:', publicUrl);
+      
+      // Save to database
+      if (workOrderId && roomName !== 'general') {
+        const normalizedRoomName = roomName.replace(/-/g, ' ');
+        const workOrder = await prisma.workOrder.findUnique({
+          where: { id: workOrderId },
+          include: {
+            contract: {
+              include: {
+                contractChecklist: {
+                  include: {
+                    items: true
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+        if (workOrder?.contract?.contractChecklist?.items) {
+          const checklistItem = workOrder.contract.contractChecklist.items.find(
+            item => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
+          );
+          
+          if (checklistItem) {
+            if (mediaType === 'photo') {
+              await prisma.contractChecklistItem.update({
+                where: { id: checklistItem.id },
+                data: { photos: [...checklistItem.photos, publicUrl] }
+              });
+            } else {
+              await prisma.contractChecklistItem.update({
+                where: { id: checklistItem.id },
+                data: { videos: [...checklistItem.videos, publicUrl] }
+              });
+            }
+            console.log(`📷 Saved ${mediaType} to database`);
+          }
+        }
+      }
+      
+      return NextResponse.json({
+        success: true,
+        url: publicUrl,
+        path: folderPath,
+        filename: fileName
+      });
+    }
+    
+    // Normal chat message handling
+    const { message, history, sessionId = 'default', mediaFiles, jobContext } = await request.json();
+    
+    console.log('📥 Received request with jobContext:', jobContext);
 
     // Get or create thread for this session
     let threadId = threadStore.get(sessionId);
     
     if (!threadId) {
       console.log('Creating new thread for session:', sessionId);
-      const thread = await openai.beta.threads.create();
+      // Create thread with metadata to store job context
+      const thread = await openai.beta.threads.create({
+        metadata: {
+          sessionId: sessionId,
+          workOrderId: '',
+          customerName: '',
+          postalCode: '',
+          currentLocation: '',
+          propertyAddress: '',
+          jobStatus: 'none',
+          createdAt: new Date().toISOString()
+        }
+      });
       threadId = thread.id;
       threadStore.set(sessionId, threadId);
       console.log('Created thread:', threadId);
+      console.log('🆕 Thread created with initial metadata:', thread.metadata);
     } else {
       console.log('Using existing thread:', threadId);
+      
+      // Always get current metadata to see what's stored
+      const currentMetadata = await getThreadMetadata(threadId);
+      console.log('📊 Current thread state:', currentMetadata);
+    }
+
+    // Update thread metadata if job context is provided from chat page
+    if (jobContext && threadId) {
+      console.log('📝 Received job context from chat page:', jobContext);
+      await updateThreadMetadata(threadId, jobContext);
     }
 
     // Verify threadId is valid
@@ -940,7 +1151,8 @@ export async function POST(request: NextRequest) {
           const functionArgs = JSON.parse(toolCall.function.arguments);
           console.log('Executing tool:', functionName, 'with args:', functionArgs);
           
-          const output = await executeTool(functionName, functionArgs);
+          // Pass threadId to executeTool for metadata access
+          const output = await executeTool(functionName, functionArgs, finalThreadId);
           console.log('Tool output:', output);
           
           toolOutputs.push({
