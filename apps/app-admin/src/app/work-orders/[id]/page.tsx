@@ -100,16 +100,21 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
   const totalItems = checklistItems.length
   const progressRate = totalItems > 0 ? (completedItems / totalItems) * 100 : 0
   
-  // Calculate sub-items from descriptions
-  // Count items separated by commas, "and", or line breaks in descriptions
+  // Calculate sub-items from tasks array
   let totalSubItems = 0
   checklistItems.forEach((item: any) => {
-    const description = item.description || item.remarks || ''
-    // Split by commas, "and", or common separators to count sub-items
-    const subItems = description.split(/[,;]|\sand\s|\n/).filter((s: string) => s.trim().length > 0)
-    // If description exists and has multiple parts, count them; otherwise count as 1
-    const subItemCount = subItems.length > 0 ? subItems.length : 1
-    totalSubItems += subItemCount
+    // Use tasks array if available, otherwise fall back to parsing remarks
+    if (item.tasks && Array.isArray(item.tasks)) {
+      // Count pending tasks only
+      const pendingTasks = item.tasks.filter((task: any) => task.status === 'pending')
+      totalSubItems += pendingTasks.length
+    } else {
+      // Fallback to old behavior for legacy data
+      const description = item.description || item.remarks || ''
+      const subItems = description.split(/[,;]|\sand\s|\n/).filter((s: string) => s.trim().length > 0)
+      const subItemCount = subItems.length > 0 ? subItems.length : 1
+      totalSubItems += subItemCount
+    }
   })
 
   return (
@@ -393,14 +398,31 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           <div>
                             <p className="font-medium">{item.name || item.item}</p>
                             {(() => {
+                              // Don't show checks count if item is completed
+                              if (item.enteredOn) {
+                                return null
+                              }
+                              
+                              // Use tasks array if available
+                              if (item.tasks && Array.isArray(item.tasks)) {
+                                const pendingTasks = item.tasks.filter((task: any) => task.status === 'pending')
+                                const taskCount = pendingTasks.length
+                                return taskCount > 0 && (
+                                  <Badge variant="secondary" className="text-xs mt-1 mr-2">
+                                    {taskCount} checks
+                                  </Badge>
+                                )
+                              }
+                              
+                              // Fallback to old behavior for legacy data
                               const description = item.description || item.remarks || ''
                               const subItems = description.split(/[,;]|\sand\s|\n/).filter((s: string) => s.trim().length > 0)
                               const subItemCount = subItems.length > 0 ? subItems.length : 1
-                              return subItemCount > 1 && (
-                                <Badge variant="secondary" className="text-xs mt-1 mr-2">
-                                  {subItemCount} checks
-                                </Badge>
-                              )
+                              // return subItemCount > 1 && (
+                              //   <Badge variant="secondary" className="text-xs mt-1 mr-2">
+                              //     {subItemCount} checks
+                              //   </Badge>
+                              // )
                             })()}
                             {item.category && (
                               <Badge variant="outline" className="text-xs mt-1">
