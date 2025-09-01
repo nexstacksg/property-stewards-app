@@ -37,12 +37,16 @@ export async function GET(request: NextRequest) {
 // Store to track processed messages and prevent duplicates
 const processedMessages = new Map<string, number>();
 
+// Store to track currently processing phone numbers (prevent concurrent processing)
+const processingPhones = new Set<string>();
+
 // POST - Handle incoming WhatsApp messages from Wassenger
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const requestId = `req-${startTime}-${Math.random().toString(36).substr(2, 9)}`;
   
-  console.log(`🔵 [${requestId}] Webhook request started`);
+  // Use console.error for critical logs (always shows in Vercel)
+  console.error(`🔵 [${requestId}] Webhook request started at ${new Date().toISOString()}`);
   
   // Log headers to check for duplicates or retries
   const headers: Record<string, string> = {};
@@ -51,7 +55,7 @@ export async function POST(request: NextRequest) {
       headers[key] = value;
     }
   });
-  console.log(`📋 [${requestId}] Headers:`, headers);
+  console.error(`📋 [${requestId}] Headers:`, JSON.stringify(headers));
   
   try {
     // Verify secret in query params
@@ -64,7 +68,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    console.log(`📱 [${requestId}] WhatsApp webhook received:`, JSON.stringify(body, null, 2));
+    console.error(`📱 [${requestId}] WhatsApp webhook received - Event: ${body.event}, From: ${body.data?.fromNumber || 'unknown'}`);
 
     // Wassenger webhook format - ONLY process incoming messages
     if (body.event === 'message:in:new') {
@@ -105,17 +109,39 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true });
       }
 
-      console.log(`📨 Message from ${phoneNumber}: ${message} (ID: ${messageId})`);
+      console.error(`📨 [${requestId}] Message from ${phoneNumber}: ${message} (ID: ${messageId})`);
 
-      // Process with OpenAI and send response
-      const response = await processMessageWithAssistant(phoneNumber, message);
-      
-      // Send response back via Wassenger with tracking
-      if (response) {
-        const responseId = `resp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        console.log(`📤 Sending response ${responseId} to ${phoneNumber}`);
-        await sendWhatsAppMessage(phoneNumber, response);
-        console.log(`✅ Response ${responseId} sent successfully`);
+      // Check if this phone is already being processed
+      if (processingPhones.has(phoneNumber)) {
+        console.error(`⏭️ [${requestId}] Skipping - already processing message for ${phoneNumber}`);
+        return NextResponse.json({ success: true });
+      }
+
+      // Mark phone as processing
+      processingPhones.add(phoneNumber);
+
+      // Process with OpenAI and send response (ensure single execution)
+      try {
+        const response = await processMessageWithAssistant(phoneNumber, message);
+        
+        // Send response back via Wassenger with tracking
+        if (response && response.trim()) {
+          const responseId = `resp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          console.error(`📤 [${requestId}] Sending response ${responseId} to ${phoneNumber}`);
+          
+          // Send only once
+          await sendWhatsAppMessage(phoneNumber, response);
+          
+          console.error(`✅ [${requestId}] Response ${responseId} sent successfully`);
+        } else {
+          console.error(`⚠️ [${requestId}] No response generated for message from ${phoneNumber}`);
+        }
+      } catch (processError) {
+        console.error(`❌ Error processing message from ${phoneNumber}:`, processError);
+        // Don't throw - just log and return success to avoid webhook retries
+      } finally {
+        // Remove phone from processing set
+        processingPhones.delete(phoneNumber);
       }
     }
     
@@ -139,6 +165,9 @@ export async function POST(request: NextRequest) {
 }
 
 async function processMessageWithAssistant(phoneNumber: string, message: string): Promise<string> {
+  const processingId = `proc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  console.log(`🔄 [${processingId}] Starting message processing for ${phoneNumber}`);
+  
   try {
     // Clean phone number (remove + and spaces)
     const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
@@ -161,7 +190,7 @@ async function processMessageWithAssistant(phoneNumber: string, message: string)
       });
       threadId = thread.id;
       whatsappThreads.set(cleanPhone, threadId);
-      console.log(`🆕 Created thread for ${cleanPhone}: ${threadId}`);
+      console.log(`🆕 [${processingId}] Created thread for ${cleanPhone}: ${threadId}`);
     }
 
     // Add message to thread
@@ -238,15 +267,22 @@ async function processMessageWithAssistant(phoneNumber: string, message: string)
 
     // Get assistant's response
     const messages = await openai.beta.threads.messages.list(threadId);
-    const lastMessage = messages.data[0];
+    console.log(`📬 [${processingId}] Found ${messages.data.length} messages in thread`);
+    
+    // Get only the most recent assistant message
+    const assistantMessages = messages.data.filter(m => m.role === 'assistant');
+    const lastAssistantMessage = assistantMessages[0];
 
-    if (lastMessage && lastMessage.role === 'assistant') {
-      const content = lastMessage.content[0];
+    if (lastAssistantMessage) {
+      const content = lastAssistantMessage.content[0];
       if (content.type === 'text') {
-        return content.text.value;
+        const responseText = content.text.value;
+        console.log(`✅ [${processingId}] Generated response: ${responseText.substring(0, 100)}...`);
+        return responseText;
       }
     }
 
+    console.log(`⚠️ [${processingId}] No assistant response found`);
     return 'Sorry, I could not process your request. Please try again.';
   } catch (error) {
     console.error('Error processing message:', error);
