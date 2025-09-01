@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`);
 
-    // Process with OpenAI Assistant
+    // Process with OpenAI Assistant - optimized for speed
     const assistantResponse = await processWithAssistant(phoneNumber, message);
     
     if (assistantResponse && assistantResponse.trim()) {
@@ -209,17 +209,17 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion
+// Wait for run completion - maximum speed
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 60; // 30 seconds (500ms intervals)
+  const maxAttempts = 50; // 5 seconds max (100ms intervals)
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 100)); // Very fast polling
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
@@ -291,7 +291,7 @@ async function sendWhatsAppResponse(to: string, message: string) {
   }
 }
 
-// Create assistant (same as chat)
+// Create assistant optimized for WhatsApp speed
 async function createAssistant() {
   const assistant = await openai.beta.assistants.create({
     name: 'Property Inspector Assistant v0.7',
@@ -372,7 +372,7 @@ INSPECTOR IDENTIFICATION:
 - Inspector can be found by either name OR phone number
 - Once identified, provide helpful suggestions for next steps
 - Be conversational and helpful throughout the identification process`,
-    model: 'gpt-4o-mini',
+    model: 'gpt-4o-mini', // Fast model for quick responses
     tools: assistantTools
   });
 
@@ -802,8 +802,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        // Store inspector details in thread metadata
+        // Store inspector details in thread metadata (non-blocking)
         if (threadId) {
+          // Fast metadata update
           await openai.beta.threads.update(threadId, {
             metadata: {
               channel: 'whatsapp',
@@ -811,10 +812,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
               inspectorId: inspector.id,
               inspectorName: inspector.name,
               inspectorPhone: inspector.mobilePhone || normalizedPhone,
-              identifiedAt: new Date().toISOString(),
-              workOrderId: '',
-              currentLocation: '',
-              createdAt: new Date().toISOString()
+              identifiedAt: new Date().toISOString()
             }
           });
         }
