@@ -34,19 +34,37 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
 }
 
+// Store to track processed messages and prevent duplicates
+const processedMessages = new Map<string, number>();
+
 // POST - Handle incoming WhatsApp messages from Wassenger
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  const requestId = `req-${startTime}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  console.log(`🔵 [${requestId}] Webhook request started`);
+  
+  // Log headers to check for duplicates or retries
+  const headers: Record<string, string> = {};
+  request.headers.forEach((value, key) => {
+    if (key.toLowerCase() !== 'authorization' && key.toLowerCase() !== 'token') {
+      headers[key] = value;
+    }
+  });
+  console.log(`📋 [${requestId}] Headers:`, headers);
+  
   try {
     // Verify secret in query params
     const { searchParams } = new URL(request.url);
     const secret = searchParams.get('secret');
     
     if (secret !== process.env.WASSENGER_WEBHOOK_SECRET) {
+      console.log(`❌ [${requestId}] Invalid secret`);
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = await request.json();
-    console.log('📱 WhatsApp webhook received:', JSON.stringify(body, null, 2));
+    console.log(`📱 [${requestId}] WhatsApp webhook received:`, JSON.stringify(body, null, 2));
 
     // Wassenger webhook format - ONLY process incoming messages
     if (body.event === 'message:in:new') {
@@ -61,21 +79,43 @@ export async function POST(request: NextRequest) {
       // Extract message details
       const phoneNumber = data.fromNumber || data.from;
       const message = data.body || data.message?.text?.body || '';
-      // const messageId = data.id; // Unused variable
+      const messageId = data.id || `${phoneNumber}-${Date.now()}`;
+      
+      // Check if we've already processed this message (deduplication)
+      const lastProcessed = processedMessages.get(messageId);
+      const now = Date.now();
+      
+      if (lastProcessed && (now - lastProcessed) < 60000) { // Within last 60 seconds
+        console.log(`⏭️ Skipping duplicate message ${messageId} - already processed ${(now - lastProcessed)/1000}s ago`);
+        return NextResponse.json({ success: true });
+      }
+      
+      // Mark message as processed
+      processedMessages.set(messageId, now);
+      
+      // Clean up old entries (older than 5 minutes)
+      for (const [id, timestamp] of processedMessages.entries()) {
+        if (now - timestamp > 300000) {
+          processedMessages.delete(id);
+        }
+      }
       
       // Skip if no message content
       if (!message) {
         return NextResponse.json({ success: true });
       }
 
-      console.log(`📨 Message from ${phoneNumber}: ${message}`);
+      console.log(`📨 Message from ${phoneNumber}: ${message} (ID: ${messageId})`);
 
       // Process with OpenAI and send response
       const response = await processMessageWithAssistant(phoneNumber, message);
       
-      // Send response back via Wassenger
+      // Send response back via Wassenger with tracking
       if (response) {
+        const responseId = `resp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        console.log(`📤 Sending response ${responseId} to ${phoneNumber}`);
         await sendWhatsAppMessage(phoneNumber, response);
+        console.log(`✅ Response ${responseId} sent successfully`);
       }
     }
     
@@ -85,9 +125,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    const duration = Date.now() - startTime;
+    console.log(`🟢 [${requestId}] Webhook completed in ${duration}ms`);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('❌ Webhook error:', error);
+    const duration = Date.now() - startTime;
+    console.error(`❌ [${requestId}] Webhook error after ${duration}ms:`, error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
