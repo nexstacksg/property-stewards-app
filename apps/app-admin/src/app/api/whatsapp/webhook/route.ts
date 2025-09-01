@@ -48,9 +48,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log('📱 WhatsApp webhook received:', JSON.stringify(body, null, 2));
 
-    // Wassenger webhook format
+    // Wassenger webhook format - ONLY process incoming messages
     if (body.event === 'message:in:new') {
       const { data } = body;
+      
+      // Skip if this is from our own number (outgoing message echo)
+      if (data.fromMe === true || data.self === 1) {
+        console.log('⏭️ Skipping outgoing message echo');
+        return NextResponse.json({ success: true });
+      }
       
       // Extract message details
       const phoneNumber = data.fromNumber || data.from;
@@ -71,6 +77,12 @@ export async function POST(request: NextRequest) {
       if (response) {
         await sendWhatsAppMessage(phoneNumber, response);
       }
+    }
+    
+    // Ignore all other events (message:out:new, etc.)
+    else {
+      console.log(`⏭️ Ignoring event: ${body.event}`);
+      return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ success: true });
@@ -123,15 +135,15 @@ async function processMessageWithAssistant(phoneNumber: string, message: string)
       assistant_id: currentAssistantId
     });
 
-    // Wait for completion
+    // Wait for completion with shorter polling interval for faster response
     let runStatus = await openai.beta.threads.runs.retrieve(run.id, {
       thread_id: threadId
     });
     let attempts = 0;
-    const maxAttempts = 30;
+    const maxAttempts = 60; // 30 seconds max (60 * 500ms)
 
     while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 500)); // Poll every 500ms instead of 1000ms
       runStatus = await openai.beta.threads.runs.retrieve(run.id, {
         thread_id: threadId
       });
@@ -167,13 +179,13 @@ async function processMessageWithAssistant(phoneNumber: string, message: string)
         tool_outputs: toolOutputs
       });
 
-      // Wait for final completion
+      // Wait for final completion with faster polling
       attempts = 0;
       runStatus = await openai.beta.threads.runs.retrieve(run.id, {
         thread_id: threadId
       });
       while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 500)); // Faster polling
         runStatus = await openai.beta.threads.runs.retrieve(run.id, {
           thread_id: threadId
         });
