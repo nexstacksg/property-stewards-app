@@ -3,180 +3,149 @@ import OpenAI from 'openai';
 import { 
   getTodayJobsForInspector,
   getWorkOrderById,
+  updateWorkOrderStatus,
   getTasksByLocation,
   getLocationsWithCompletionStatus,
   updateTaskStatus,
   getInspectorByPhone,
-  completeAllTasksForLocation
+  updateWorkOrderDetails,
+  completeAllTasksForLocation,
+  getWorkOrderProgress
 } from '@/lib/services/inspectorService';
+import prisma from '@/lib/prisma';
 
+// Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Store for WhatsApp threads (in production, use Redis or database)
+// Cache for processed messages (prevents duplicates)
+const processedMessages = new Map<string, {
+  timestamp: number;
+  responseId: string;
+  responded: boolean;
+}>();
+
+// Thread management for WhatsApp conversations
 const whatsappThreads = new Map<string, string>();
 
-// Reuse assistant from chat or create dedicated one
+// Reuse assistant ID
 let assistantId: string | null = null;
 
-// GET - Webhook verification (Wassenger uses query params for verification)
+// Clean up old processed messages every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [msgId, data] of processedMessages.entries()) {
+    if (now - data.timestamp > 300000) { // 5 minutes
+      processedMessages.delete(msgId);
+    }
+  }
+}, 60000); // Check every minute
+
+// GET - Webhook verification
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const secret = searchParams.get('secret');
   
-  // Verify the secret matches
   if (secret === process.env.WASSENGER_WEBHOOK_SECRET) {
-    console.log('✅ Webhook verified');
+    console.log('✅ Wassenger webhook verified');
     return new Response('OK', { status: 200 });
   }
-
+  
   return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
 }
 
-// Store to track processed messages and prevent duplicates
-const processedMessages = new Map<string, number>();
-
-// Store to track currently processing phone numbers (prevent concurrent processing)
-const processingPhones = new Set<string>();
-
-// POST - Handle incoming WhatsApp messages from Wassenger
+// POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  const requestId = `req-${startTime}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  // Use console.error for critical logs (always shows in Vercel)
-  console.error(`🔵 [${requestId}] Webhook request started at ${new Date().toISOString()}`);
-  
-  // Log headers to check for duplicates or retries
-  const headers: Record<string, string> = {};
-  request.headers.forEach((value, key) => {
-    if (key.toLowerCase() !== 'authorization' && key.toLowerCase() !== 'token') {
-      headers[key] = value;
-    }
-  });
-  console.error(`📋 [${requestId}] Headers:`, JSON.stringify(headers));
   
   try {
-    // Verify secret in query params
+    // Verify webhook secret
     const { searchParams } = new URL(request.url);
     const secret = searchParams.get('secret');
     
     if (secret !== process.env.WASSENGER_WEBHOOK_SECRET) {
-      console.log(`❌ [${requestId}] Invalid secret`);
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = await request.json();
-    console.error(`📱 [${requestId}] WhatsApp webhook received - Event: ${body.event}, From: ${body.data?.fromNumber || 'unknown'}`);
-
-    // Wassenger webhook format - ONLY process incoming messages
-    if (body.event === 'message:in:new') {
-      const { data } = body;
-      
-      // Skip if this is from our own number (outgoing message echo)
-      if (data.fromMe === true || data.self === 1) {
-        console.log('⏭️ Skipping outgoing message echo');
-        return NextResponse.json({ success: true });
-      }
-      
-      // Extract message details
-      const phoneNumber = data.fromNumber || data.from;
-      const message = data.body || data.message?.text?.body || '';
-      const messageId = data.id || `${phoneNumber}-${Date.now()}`;
-      
-      // Check if we've already processed this message (deduplication)
-      const lastProcessed = processedMessages.get(messageId);
-      const now = Date.now();
-      
-      if (lastProcessed && (now - lastProcessed) < 60000) { // Within last 60 seconds
-        console.log(`⏭️ Skipping duplicate message ${messageId} - already processed ${(now - lastProcessed)/1000}s ago`);
-        return NextResponse.json({ success: true });
-      }
-      
-      // Mark message as processed
-      processedMessages.set(messageId, now);
-      
-      // Clean up old entries (older than 5 minutes)
-      for (const [id, timestamp] of processedMessages.entries()) {
-        if (now - timestamp > 300000) {
-          processedMessages.delete(id);
-        }
-      }
-      
-      // Skip if no message content
-      if (!message) {
-        return NextResponse.json({ success: true });
-      }
-
-      console.error(`📨 [${requestId}] Message from ${phoneNumber}: ${message} (ID: ${messageId})`);
-
-      // Check if this phone is already being processed
-      if (processingPhones.has(phoneNumber)) {
-        console.error(`⏭️ [${requestId}] Skipping - already processing message for ${phoneNumber}`);
-        return NextResponse.json({ success: true });
-      }
-
-      // Mark phone as processing
-      processingPhones.add(phoneNumber);
-
-      // Process with OpenAI and send response (ensure single execution)
-      try {
-        const response = await processMessageWithAssistant(phoneNumber, message);
-        
-        // Send response back via Wassenger with tracking
-        if (response && response.trim()) {
-          const responseId = `resp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          console.error(`📤 [${requestId}] Sending response ${responseId} to ${phoneNumber}`);
-          
-          // Send only once
-          await sendWhatsAppMessage(phoneNumber, response);
-          
-          console.error(`✅ [${requestId}] Response ${responseId} sent successfully`);
-        } else {
-          console.error(`⚠️ [${requestId}] No response generated for message from ${phoneNumber}`);
-        }
-      } catch (processError) {
-        console.error(`❌ Error processing message from ${phoneNumber}:`, processError);
-        // Don't throw - just log and return success to avoid webhook retries
-      } finally {
-        // Remove phone from processing set
-        processingPhones.delete(phoneNumber);
-      }
-    }
+    const event = body.event;
     
-    // Ignore all other events (message:out:new, etc.)
-    else {
-      console.log(`⏭️ Ignoring event: ${body.event}`);
+    // Only process incoming messages
+    if (event !== 'message:in:new') {
+      console.log(`⏭️ Ignoring event: ${event}`);
       return NextResponse.json({ success: true });
     }
 
-    const duration = Date.now() - startTime;
-    console.log(`🟢 [${requestId}] Webhook completed in ${duration}ms`);
+    const { data } = body;
+    
+    // Skip outgoing messages (safety check)
+    if (data.fromMe || data.self === 1 || data.flow === 'outbound') {
+      console.log('⏭️ Skipping outgoing message');
+      return NextResponse.json({ success: true });
+    }
+    
+    const messageId = data.id || `${Date.now()}-${Math.random()}`;
+    const phoneNumber = data.fromNumber || data.from;
+    const message = data.body || data.message?.text?.body || '';
+    
+    // Check if already processed
+    const processed = processedMessages.get(messageId);
+    if (processed && processed.responded) {
+      console.log(`⏭️ Message ${messageId} already processed and responded`);
+      return NextResponse.json({ success: true });
+    }
+    
+    // Mark as being processed
+    processedMessages.set(messageId, {
+      timestamp: Date.now(),
+      responseId: `resp-${Date.now()}`,
+      responded: false
+    });
+    
+    // Skip empty messages
+    if (!message || !message.trim()) {
+      console.log('⏭️ Empty message, skipping');
+      return NextResponse.json({ success: true });
+    }
+
+    console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`);
+
+    // Process with OpenAI Assistant
+    const assistantResponse = await processWithAssistant(phoneNumber, message);
+    
+    if (assistantResponse && assistantResponse.trim()) {
+      // Send response via Wassenger
+      await sendWhatsAppResponse(phoneNumber, assistantResponse);
+      
+      // Mark as responded
+      const msgData = processedMessages.get(messageId);
+      if (msgData) {
+        msgData.responded = true;
+        processedMessages.set(messageId, msgData);
+      }
+      
+      console.log(`✅ Response sent to ${phoneNumber} in ${Date.now() - startTime}ms`);
+    }
+
     return NextResponse.json({ success: true });
+    
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`❌ [${requestId}] Webhook error after ${duration}ms:`, error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    console.error('❌ Webhook error:', error);
+    // Return success to prevent webhook retries
+    return NextResponse.json({ success: true });
   }
 }
 
-async function processMessageWithAssistant(phoneNumber: string, message: string): Promise<string> {
-  const processingId = `proc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  console.log(`🔄 [${processingId}] Starting message processing for ${phoneNumber}`);
-  
+// Process message with OpenAI Assistant
+async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
-    // Clean phone number (remove + and spaces)
     const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
     
-    // Get or create thread for this phone number
+    // Get or create thread
     let threadId = whatsappThreads.get(cleanPhone);
     
     if (!threadId) {
-      // Look up inspector by phone
       const inspector = await getInspectorByPhone(cleanPhone);
       
       const thread = await openai.beta.threads.create({
@@ -185,12 +154,15 @@ async function processMessageWithAssistant(phoneNumber: string, message: string)
           phoneNumber: cleanPhone,
           inspectorId: inspector?.id || '',
           inspectorName: inspector?.name || '',
+          workOrderId: '',
+          currentLocation: '',
           createdAt: new Date().toISOString()
         }
       });
+      
       threadId = thread.id;
       whatsappThreads.set(cleanPhone, threadId);
-      console.log(`🆕 [${processingId}] Created thread for ${cleanPhone}: ${threadId}`);
+      console.log(`🆕 Created thread ${threadId} for ${cleanPhone}`);
     }
 
     // Add message to thread
@@ -200,139 +172,123 @@ async function processMessageWithAssistant(phoneNumber: string, message: string)
     });
 
     // Get or create assistant
-    const currentAssistantId = await getOrCreateWhatsAppAssistant();
+    if (!assistantId) {
+      assistantId = await createAssistant();
+    }
 
     // Run assistant
     const run = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: currentAssistantId
+      assistant_id: assistantId
     });
 
-    // Wait for completion with shorter polling interval for faster response
-    let runStatus = await openai.beta.threads.runs.retrieve(run.id, {
-      thread_id: threadId
-    });
-    let attempts = 0;
-    const maxAttempts = 60; // 30 seconds max (60 * 500ms)
+    // Wait for completion
+    let runStatus = await waitForRunCompletion(threadId, run.id);
 
-    while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 500)); // Poll every 500ms instead of 1000ms
-      runStatus = await openai.beta.threads.runs.retrieve(run.id, {
-        thread_id: threadId
-      });
-      attempts++;
-    }
-
-    // Handle tool calls if required
+    // Handle tool calls
     if (runStatus.status === 'requires_action') {
-      const toolCalls = runStatus.required_action?.submit_tool_outputs?.tool_calls || [];
-      const toolOutputs = [];
-
-      for (const toolCall of toolCalls) {
-        const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
-        
-        // Add inspector phone if not provided
-        if (!functionArgs.inspectorPhone) {
-          functionArgs.inspectorPhone = cleanPhone;
-        }
-        
-        console.log('Executing tool:', functionName, functionArgs);
-        const output = await executeTool(functionName, functionArgs);
-        
-        toolOutputs.push({
-          tool_call_id: toolCall.id,
-          output: output
-        });
-      }
-
-      // Submit tool outputs
-      await openai.beta.threads.runs.submitToolOutputs(run.id, {
-        thread_id: threadId,
-        tool_outputs: toolOutputs
-      });
-
-      // Wait for final completion with faster polling
-      attempts = 0;
-      runStatus = await openai.beta.threads.runs.retrieve(run.id, {
-        thread_id: threadId
-      });
-      while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Faster polling
-        runStatus = await openai.beta.threads.runs.retrieve(run.id, {
-          thread_id: threadId
-        });
-        attempts++;
-      }
+      await handleToolCalls(threadId, run.id, runStatus, cleanPhone);
+      runStatus = await waitForRunCompletion(threadId, run.id);
     }
 
     // Get assistant's response
     const messages = await openai.beta.threads.messages.list(threadId);
-    console.log(`📬 [${processingId}] Found ${messages.data.length} messages in thread`);
+    const lastMessage = messages.data[0];
     
-    // Get only the most recent assistant message
-    const assistantMessages = messages.data.filter(m => m.role === 'assistant');
-    const lastAssistantMessage = assistantMessages[0];
-
-    if (lastAssistantMessage) {
-      const content = lastAssistantMessage.content[0];
+    if (lastMessage && lastMessage.role === 'assistant') {
+      const content = lastMessage.content[0];
       if (content.type === 'text') {
-        const responseText = content.text.value;
-        console.log(`✅ [${processingId}] Generated response: ${responseText.substring(0, 100)}...`);
-        return responseText;
+        return content.text.value;
       }
     }
 
-    console.log(`⚠️ [${processingId}] No assistant response found`);
-    return 'Sorry, I could not process your request. Please try again.';
+    return '';
+    
   } catch (error) {
-    console.error('Error processing message:', error);
-    return 'An error occurred. Please try again or contact support.';
+    console.error('Error processing with assistant:', error);
+    return 'Sorry, I encountered an error processing your request. Please try again.';
   }
 }
 
-// Send message back via Wassenger API
-async function sendWhatsAppMessage(to: string, message: string) {
-  try {
-    // Split long messages (WhatsApp has a 4096 character limit)
-    const maxLength = 4000;
-    const messages = message.match(new RegExp(`.{1,${maxLength}}`, 'g')) || [message];
+// Wait for run completion
+async function waitForRunCompletion(threadId: string, runId: string) {
+  let attempts = 0;
+  const maxAttempts = 60; // 30 seconds (500ms intervals)
+  
+  let runStatus = await openai.beta.threads.runs.retrieve(runId, {
+    thread_id: threadId
+  });
+  
+  while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    runStatus = await openai.beta.threads.runs.retrieve(runId, {
+      thread_id: threadId
+    });
+    attempts++;
+  }
+  
+  return runStatus;
+}
 
-    for (const msgPart of messages) {
-      const response = await fetch('https://api.wassenger.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Token': process.env.WASSENGER_API_KEY!
-        },
-        body: JSON.stringify({
-          phone: to,
-          message: msgPart  // Changed from 'body' to 'message' per Wassenger API docs
-        })
-      });
+// Handle tool calls
+async function handleToolCalls(threadId: string, runId: string, runStatus: any, phoneNumber: string) {
+  const toolCalls = runStatus.required_action?.submit_tool_outputs?.tool_calls || [];
+  const toolOutputs = [];
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Wassenger API error: ${response.status} - ${error}`);
-      }
-
-      const result = await response.json();
-      console.log(`✅ Message sent to ${to}`);
-      
-      // Small delay between messages to avoid rate limiting
-      if (messages.length > 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+  for (const toolCall of toolCalls) {
+    const functionName = toolCall.function.name;
+    const functionArgs = JSON.parse(toolCall.function.arguments);
+    
+    // Add phone number if needed
+    if (functionName === 'getTodayJobs' && !functionArgs.inspectorPhone) {
+      functionArgs.inspectorPhone = phoneNumber;
     }
+    
+    const output = await executeTool(functionName, functionArgs, threadId);
+    
+    toolOutputs.push({
+      tool_call_id: toolCall.id,
+      output: output
+    });
+  }
+
+  await openai.beta.threads.runs.submitToolOutputs(runId, {
+    thread_id: threadId,
+    tool_outputs: toolOutputs
+  });
+}
+
+// Send WhatsApp response via Wassenger
+async function sendWhatsAppResponse(to: string, message: string) {
+  try {
+    const response = await fetch('https://api.wassenger.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Token': process.env.WASSENGER_API_KEY!
+      },
+      body: JSON.stringify({
+        phone: to,
+        message: message // Wassenger uses 'message' field
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Wassenger API error: ${response.status} - ${error}`);
+    }
+
+    const result = await response.json();
+    console.log(`✅ Message sent to ${to}`);
+    return result;
+    
   } catch (error) {
     console.error('❌ Error sending WhatsApp message:', error);
     throw error;
   }
 }
 
-// Create or get WhatsApp assistant (reuse from chat)
-async function getOrCreateWhatsAppAssistant(): Promise<string> {
-  if (assistantId) return assistantId;
-
+// Create assistant (same as chat)
+async function createAssistant() {
   const assistant = await openai.beta.assistants.create({
     name: 'Property Inspector Assistant v0.7',
     instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
@@ -383,66 +339,21 @@ CONVERSATION FLOW GUIDELINES:
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
 
-3. Handling Changes:
-   - If user says no or wants changes, be helpful
-   - Offer options to modify:
-     * Different job selection
-     * Customer name update
-     * Property address change
-     * Time rescheduling
-     * Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
-   - Use updateJobDetails tool to save changes
-   - Show updated job list after modifications
-
-4. Starting Inspection:
+3. Starting Inspection:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
    - When showing locations, automatically append "(Done)" to locations where all tasks are completed
    - Format as: "[1] Living Room (Done)" for completed locations
-   - If user selects a completed location:
-     * Inform them: "This location has already been completed!"
-     * Suggest: "Please select another location that needs inspection"
-     * Show list of pending locations
-   - Guide through task completion workflow
 
-5. Task Inspection Flow:
-   - When showing tasks for a location, ALWAYS format them with brackets:
-     * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
-     * [2] Check ceiling (done) - if task.displayStatus is 'done'
-     * [3] Check flooring - if task.displayStatus is 'pending' (DO NOT show "(pending)")
-     * [4] Check electrical points
-     * [5] Mark ALL tasks complete - THIS IS MANDATORY, ALWAYS INCLUDE AS FINAL OPTION
-   - CRITICAL: ALWAYS show ALL tasks, even completed ones with (done) marker
-   - CRITICAL: ALWAYS add "Mark ALL tasks complete" as the last numbered option
-   - DO NOT show task completion count during task inspection (no "X out of Y completed")
-   - The final option number should be one more than the task count (e.g., 4 tasks = [5] for complete all)
-   - Simply list the tasks and explain:
-     * "Type the number to mark that task as complete"
-     * "You can also add notes or upload photos/videos for this location (optional)"
-     * "Type [5] to mark ALL tasks complete and finish this location" (adjust number based on task count)
-   - Show location status from locationStatus field:
-     * "**Status:** Done" if locationStatus is 'done'
-     * "**Status:** Pending" if locationStatus is 'pending'
-   - If there are notes available (from locationNotes field), show them after the task list:
-     * "**Note:** [notes content]" (not "Location Note")
-   - IMPORTANT WORKFLOW:
-     * When user selects individual task (1,2,3,4 etc): Call completeTask with that specific task ID
-     * When user selects FINAL option "Mark ALL tasks complete": 
-       - DO NOT call completeTask multiple times
-       - MUST call completeTask with TWO parameters:
-         1. taskId: 'complete_all_tasks' (REQUIRED)
-         2. workOrderId: current work order ID (REQUIRED)
-       - Location is automatically retrieved from thread context
-       - This will mark all tasks done AND set enteredOn timestamp
-     * If user provides any text comments, pass as notes parameter
-     * After marking tasks, show updated list with (done) indicators
-   - ALWAYS include "Mark ALL tasks complete" as the last numbered option when showing tasks
+4. Task Inspection Flow:
+   - When showing tasks for a location, ALWAYS format them with brackets
+   - ALWAYS add "Mark ALL tasks complete" as the last numbered option
+   - DO NOT show task completion count during task inspection
 
-6. General Guidelines:
+5. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
    - Be friendly and professional
-   - Adapt your language naturally while following the flow
    - Remember context from previous messages
    - Handle errors gracefully with helpful messages
 
@@ -451,12 +362,11 @@ For testing, use inspector ID 'cmeps0xtz0006m35wcrtr8wx9' for Ken.`,
     tools: assistantTools
   });
 
-  assistantId = assistant.id;
-  console.log('Created WhatsApp assistant:', assistantId);
-  return assistantId;
+  console.log('Created assistant:', assistant.id);
+  return assistant.id;
 }
 
-// Tool definitions (same as chat but adapted for WhatsApp)
+// Tool definitions (simplified for WhatsApp)
 const assistantTools = [
   {
     type: 'function' as const,
@@ -466,12 +376,16 @@ const assistantTools = [
       parameters: {
         type: 'object',
         properties: {
+          inspectorId: {
+            type: 'string',
+            description: 'Inspector ID'
+          },
           inspectorPhone: {
             type: 'string',
             description: 'Inspector phone number'
           }
         },
-        required: ['inspectorPhone']
+        required: []
       }
     }
   },
@@ -480,6 +394,40 @@ const assistantTools = [
     function: {
       name: 'selectJob',
       description: 'Select a job to inspect',
+      parameters: {
+        type: 'object',
+        properties: {
+          jobId: {
+            type: 'string',
+            description: 'Work order ID'
+          }
+        },
+        required: ['jobId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'confirmJobSelection',
+      description: 'Confirm job selection',
+      parameters: {
+        type: 'object',
+        properties: {
+          jobId: {
+            type: 'string',
+            description: 'Work order ID'
+          }
+        },
+        required: ['jobId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'startJob',
+      description: 'Start the job',
       parameters: {
         type: 'object',
         properties: {
@@ -549,31 +497,69 @@ const assistantTools = [
         required: ['taskId', 'workOrderId']
       }
     }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'updateJobDetails',
+      description: 'Update job details',
+      parameters: {
+        type: 'object',
+        properties: {
+          jobId: {
+            type: 'string'
+          },
+          updateType: {
+            type: 'string',
+            enum: ['customer', 'address', 'time', 'status']
+          },
+          newValue: {
+            type: 'string'
+          }
+        },
+        required: ['jobId', 'updateType', 'newValue']
+      }
+    }
   }
 ];
 
-// Tool execution (simplified version of chat tools)
-async function executeTool(toolName: string, args: any): Promise<string> {
+// Tool execution
+async function executeTool(toolName: string, args: any, threadId?: string): Promise<string> {
   try {
+    // Get thread metadata for context
+    let metadata: any = {};
+    if (threadId) {
+      try {
+        const thread = await openai.beta.threads.retrieve(threadId);
+        metadata = thread.metadata || {};
+      } catch (error) {
+        console.error('Error getting thread metadata:', error);
+      }
+    }
+
     switch (toolName) {
       case 'getTodayJobs':
-        const { inspectorPhone } = args;
-        const inspector = await getInspectorByPhone(inspectorPhone);
+        const { inspectorId, inspectorPhone } = args;
+        let finalInspectorId = inspectorId;
         
-        if (!inspector) {
-          return JSON.stringify({
-            success: false,
-            error: 'Inspector not found. Please contact admin.'
-          });
+        if (!finalInspectorId && inspectorPhone) {
+          const inspector = await getInspectorByPhone(inspectorPhone);
+          if (!inspector) {
+            return JSON.stringify({
+              success: false,
+              error: 'Inspector not found. Please contact admin.'
+            });
+          }
+          finalInspectorId = inspector.id;
         }
 
-        const jobs = await getTodayJobsForInspector(inspector.id);
+        const jobs = await getTodayJobsForInspector(finalInspectorId);
         
         return JSON.stringify({
           success: true,
           jobs: jobs.map((job, index) => ({
             id: job.id,
-            number: index + 1,
+            jobNumber: index + 1,
             property: job.property_address,
             customer: job.customer_name,
             time: job.scheduled_date.toLocaleTimeString('en-SG', {
@@ -581,14 +567,14 @@ async function executeTool(toolName: string, args: any): Promise<string> {
               minute: '2-digit',
               hour12: true
             }),
-            status: job.status
+            status: job.status,
+            priority: job.priority
           })),
           count: jobs.length
         });
 
-      case 'selectJob':
-        const { jobId } = args;
-        const workOrder = await getWorkOrderById(jobId);
+      case 'confirmJobSelection':
+        const workOrder = await getWorkOrderById(args.jobId);
         
         if (!workOrder) {
           return JSON.stringify({
@@ -596,22 +582,71 @@ async function executeTool(toolName: string, args: any): Promise<string> {
             error: 'Job not found'
           });
         }
-
+        
+        // Update thread metadata
+        if (threadId) {
+          const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/);
+          await openai.beta.threads.update(threadId, {
+            metadata: {
+              ...metadata,
+              workOrderId: args.jobId,
+              customerName: workOrder.customer_name,
+              propertyAddress: workOrder.property_address,
+              postalCode: postalCodeMatch ? postalCodeMatch[1] : 'unknown',
+              jobStatus: 'confirming'
+            }
+          });
+        }
+        
         return JSON.stringify({
           success: true,
-          job: {
-            id: jobId,
+          message: 'Please confirm the destination',
+          jobDetails: {
+            id: args.jobId,
             property: workOrder.property_address,
             customer: workOrder.customer_name,
+            time: workOrder.scheduled_start.toLocaleTimeString('en-SG', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            }),
             status: workOrder.status
           }
         });
 
-      case 'getJobLocations':
+      case 'startJob':
+        await updateWorkOrderStatus(args.jobId, 'in_progress');
+        
+        if (threadId) {
+          await openai.beta.threads.update(threadId, {
+            metadata: {
+              ...metadata,
+              jobStatus: 'started',
+              jobStartedAt: new Date().toISOString()
+            }
+          });
+        }
+        
         const locations = await getLocationsWithCompletionStatus(args.jobId);
+        const progress = await getWorkOrderProgress(args.jobId);
+        
         return JSON.stringify({
           success: true,
-          locations: locations.map(loc => ({
+          message: 'Job started successfully!',
+          locations: locations.map(loc => loc.displayName),
+          locationsDetail: locations,
+          progress: {
+            total: progress.total_tasks,
+            completed: progress.completed_tasks,
+            pending: progress.pending_tasks
+          }
+        });
+
+      case 'getJobLocations':
+        const locs = await getLocationsWithCompletionStatus(args.jobId);
+        return JSON.stringify({
+          success: true,
+          locations: locs.map(loc => ({
             name: loc.name,
             displayName: loc.displayName,
             isCompleted: loc.isCompleted,
@@ -621,7 +656,19 @@ async function executeTool(toolName: string, args: any): Promise<string> {
         });
 
       case 'getTasksForLocation':
+        // Update current location in thread
+        if (threadId) {
+          await openai.beta.threads.update(threadId, {
+            metadata: {
+              ...metadata,
+              currentLocation: args.location,
+              lastLocationAccessedAt: new Date().toISOString()
+            }
+          });
+        }
+        
         const tasks = await getTasksByLocation(args.workOrderId, args.location);
+        
         return JSON.stringify({
           success: true,
           location: args.location,
@@ -630,24 +677,44 @@ async function executeTool(toolName: string, args: any): Promise<string> {
             number: index + 1,
             description: task.action,
             status: task.status,
-            isCompleted: task.status === 'completed'
+            displayStatus: task.status === 'completed' ? 'done' : 'pending'
           }))
         });
 
       case 'completeTask':
         if (args.taskId === 'complete_all_tasks') {
-          const success = await completeAllTasksForLocation(args.workOrderId, args.location || '');
+          // Get location from thread metadata
+          let location = metadata.currentLocation || '';
+          
+          if (!location) {
+            return JSON.stringify({
+              success: false,
+              error: 'Could not determine current location'
+            });
+          }
+          
+          const success = await completeAllTasksForLocation(args.workOrderId, location);
+          
           return JSON.stringify({
             success,
-            message: success ? 'All tasks completed!' : 'Failed to complete tasks'
+            message: success ? `All tasks for ${location} completed!` : 'Failed to complete tasks'
           });
         } else {
           const success = await updateTaskStatus(args.taskId, 'completed', args.notes);
+          
           return JSON.stringify({
             success,
             message: success ? 'Task completed!' : 'Failed to complete task'
           });
         }
+
+      case 'updateJobDetails':
+        const updateSuccess = await updateWorkOrderDetails(args.jobId, args.updateType, args.newValue);
+        
+        return JSON.stringify({
+          success: updateSuccess,
+          message: updateSuccess ? `Updated ${args.updateType}` : 'Failed to update'
+        });
 
       default:
         return JSON.stringify({
