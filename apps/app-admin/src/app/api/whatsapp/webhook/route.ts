@@ -238,9 +238,13 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     const functionName = toolCall.function.name;
     const functionArgs = JSON.parse(toolCall.function.arguments);
     
-    // Add phone number if needed
+    // Add phone number for relevant tools
     if (functionName === 'getTodayJobs' && !functionArgs.inspectorPhone) {
       functionArgs.inspectorPhone = phoneNumber;
+    }
+    
+    if (functionName === 'collectInspectorInfo' && !functionArgs.phone) {
+      functionArgs.phone = phoneNumber;
     }
     
     const output = await executeTool(functionName, functionArgs, threadId);
@@ -357,7 +361,17 @@ CONVERSATION FLOW GUIDELINES:
    - Remember context from previous messages
    - Handle errors gracefully with helpful messages
 
-For testing, use inspector ID 'cmeps0xtz0006m35wcrtr8wx9' for Ken.`,
+INSPECTOR IDENTIFICATION:
+- Check if inspector is already identified in thread metadata
+- If unknown, politely ask: "Hello! To assign you today's inspection jobs, I need your details. Please provide:
+  [1] Your full name
+  [2] Your phone number (with country code, e.g., +65 for Singapore)"
+- If no country code provided, assume Singapore (+65)
+- Use the collectInspectorInfo tool to process this information
+- Inspector phone number is automatically extracted from WhatsApp message
+- Inspector can be found by either name OR phone number
+- Once identified, provide helpful suggestions for next steps
+- Be conversational and helpful throughout the identification process`,
     model: 'gpt-4o-mini',
     tools: assistantTools
   });
@@ -520,6 +534,27 @@ const assistantTools = [
         required: ['jobId', 'updateType', 'newValue']
       }
     }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'collectInspectorInfo',
+      description: 'Collect and validate inspector name and phone number for identification',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Inspector full name'
+          },
+          phone: {
+            type: 'string',
+            description: 'Inspector phone number with country code (e.g., +6512345678)'
+          }
+        },
+        required: ['name', 'phone']
+      }
+    }
   }
 ];
 
@@ -542,15 +577,29 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         const { inspectorId, inspectorPhone } = args;
         let finalInspectorId = inspectorId;
         
+        // Check thread metadata for inspector info first
+        if (!finalInspectorId && threadId) {
+          const thread = await openai.beta.threads.retrieve(threadId);
+          const metadata = thread.metadata || {};
+          finalInspectorId = metadata.inspectorId;
+        }
+        
         if (!finalInspectorId && inspectorPhone) {
           const inspector = await getInspectorByPhone(inspectorPhone);
           if (!inspector) {
             return JSON.stringify({
               success: false,
-              error: 'Inspector not found. Please contact admin.'
+              error: 'Inspector not found. Please provide your name and phone number for identification.'
             });
           }
           finalInspectorId = inspector.id;
+        }
+        
+        if (!finalInspectorId) {
+          return JSON.stringify({
+            success: false,
+            error: 'Inspector identification required. Please provide your name and phone number.'
+          });
         }
 
         const jobs = await getTodayJobsForInspector(finalInspectorId);
@@ -714,6 +763,70 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         return JSON.stringify({
           success: updateSuccess,
           message: updateSuccess ? `Updated ${args.updateType}` : 'Failed to update'
+        });
+
+      case 'collectInspectorInfo':
+        const { name, phone } = args;
+        
+        // Normalize phone number - add +65 if no country code
+        let normalizedPhone = phone.replace(/[\s-]/g, '');
+        if (!normalizedPhone.startsWith('+')) {
+          normalizedPhone = '+65' + normalizedPhone;
+        }
+        
+        // Try to find inspector by normalized phone first
+        let inspector = await getInspectorByPhone(normalizedPhone);
+        
+        // Also try original phone format
+        if (!inspector) {
+          inspector = await getInspectorByPhone(phone);
+        }
+        
+        // If not found by phone, try by name
+        if (!inspector) {
+          const inspectors = await prisma.inspector.findMany({
+            where: {
+              name: {
+                contains: name,
+                mode: 'insensitive'
+              }
+            }
+          });
+          inspector = inspectors[0] || null;
+        }
+        
+        if (!inspector) {
+          return JSON.stringify({
+            success: false,
+            error: 'Inspector not found in our system. Please contact admin for registration.'
+          });
+        }
+        
+        // Store inspector details in thread metadata
+        if (threadId) {
+          await openai.beta.threads.update(threadId, {
+            metadata: {
+              channel: 'whatsapp',
+              phoneNumber: normalizedPhone,
+              inspectorId: inspector.id,
+              inspectorName: inspector.name,
+              inspectorPhone: inspector.mobilePhone || normalizedPhone,
+              identifiedAt: new Date().toISOString(),
+              workOrderId: '',
+              currentLocation: '',
+              createdAt: new Date().toISOString()
+            }
+          });
+        }
+        
+        return JSON.stringify({
+          success: true,
+          message: `Welcome ${inspector.name}! I've identified you in our system.\n\nTry: "What are my jobs today?" or "Show me pending inspections"`,
+          inspector: {
+            id: inspector.id,
+            name: inspector.name,
+            phone: inspector.mobilePhone
+          }
         });
 
       default:
