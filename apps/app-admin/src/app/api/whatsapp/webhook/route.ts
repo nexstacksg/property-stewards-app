@@ -215,7 +215,7 @@ async function sendWhatsAppMessage(to: string, message: string) {
         },
         body: JSON.stringify({
           phone: to,
-          body: msgPart
+          message: msgPart  // Changed from 'body' to 'message' per Wassenger API docs
         })
       });
 
