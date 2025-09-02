@@ -7,8 +7,9 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { id } = await params
     const checklist = await prisma.checklist.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         items: {
           orderBy: { order: 'asc' }
@@ -41,12 +42,21 @@ export async function GET(
   }
 }
 
+// PUT /api/checklists/[id] - Update a checklist (alias for PATCH)
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  return PATCH(request, { params });
+}
+
 // PATCH /api/checklists/[id] - Update a checklist
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     
     const {
@@ -59,7 +69,7 @@ export async function PATCH(
 
     // Update checklist
     const checklist = await prisma.checklist.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         name,
         propertyType,
@@ -72,13 +82,13 @@ export async function PATCH(
     if (items && Array.isArray(items)) {
       // Delete existing items
       await prisma.checklistItem.deleteMany({
-        where: { checklistId: params.id }
+        where: { checklistId: id }
       })
 
       // Create new items
       await prisma.checklistItem.createMany({
         data: items.map((item: any, index: number) => ({
-          checklistId: params.id,
+          checklistId: id,
           name: item.name,
           action: item.action,
           order: item.order || index + 1
@@ -88,7 +98,7 @@ export async function PATCH(
 
     // Fetch and return updated checklist with items
     const updatedChecklist = await prisma.checklist.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         items: {
           orderBy: { order: 'asc' }
@@ -112,15 +122,16 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { id } = await params
     // Check if checklist is used in contracts
     const contractCount = await prisma.contract.count({
-      where: { basedOnChecklistId: params.id }
+      where: { basedOnChecklistId: id }
     })
 
     if (contractCount > 0) {
       // Soft delete - mark as inactive
       const checklist = await prisma.checklist.update({
-        where: { id: params.id },
+        where: { id },
         data: { status: 'INACTIVE' }
       })
       
@@ -132,10 +143,10 @@ export async function DELETE(
       // Hard delete if not used
       await prisma.$transaction([
         prisma.checklistItem.deleteMany({
-          where: { checklistId: params.id }
+          where: { checklistId: id }
         }),
         prisma.checklist.delete({
-          where: { id: params.id }
+          where: { id }
         })
       ])
       

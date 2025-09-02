@@ -19,6 +19,8 @@ interface ChecklistItem {
   isRequired: boolean
   order: number
   status?: string
+  name?:string
+  action?:string
 }
 
 interface Checklist {
@@ -396,13 +398,13 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
                           <div className="flex items-start justify-between">
                             <div>
                               <p className="font-medium">
-                                {item.order}. {item.item}
+                                {item.order}. {item.name}
                               </p>
-                              {item.description && (
-                                <p className="text-sm text-muted-foreground">{item.description}</p>
+                              {item.action && (
+                                <p className="text-sm text-muted-foreground">{item.action}</p>
                               )}
                               <div className="flex gap-2 mt-1">
-                                <Badge variant="outline">{item.category}</Badge>
+                                {/* <Badge variant="outline">{item.category}</Badge> */}
                                 <Badge variant={item.isRequired ? 'default' : 'secondary'}>
                                   {item.isRequired ? 'Required' : 'Optional'}
                                 </Badge>

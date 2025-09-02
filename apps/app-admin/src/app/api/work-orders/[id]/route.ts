@@ -7,8 +7,9 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { id } = await params
     const workOrder = await prisma.workOrder.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         contract: {
           include: {
@@ -17,7 +18,7 @@ export async function GET(
             contractChecklist: {
               include: {
                 items: {
-                  where: { workOrderId: params.id },
+                  where: { workOrderId: id },
                   include: {
                     enteredBy: true
                   },
@@ -49,12 +50,21 @@ export async function GET(
   }
 }
 
+// PUT /api/work-orders/[id] - Update a work order (alias for PATCH)
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  return PATCH(request, { params });
+}
+
 // PATCH /api/work-orders/[id] - Update a work order
 export async function PATCH(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     
     const {
@@ -91,7 +101,7 @@ export async function PATCH(
     }
 
     const workOrder = await prisma.workOrder.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         inspectorId,
         scheduledStartDateTime: scheduledStartDateTime ? new Date(scheduledStartDateTime) : undefined,
@@ -130,7 +140,7 @@ export async function PATCH(
         where: {
           contractId: workOrder.contractId,
           status: { not: 'COMPLETED' },
-          id: { not: params.id }
+          id: { not: id }
         }
       })
 
@@ -162,8 +172,9 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { id } = await params
     const workOrder = await prisma.workOrder.findUnique({
-      where: { id: params.id }
+      where: { id }
     })
 
     if (!workOrder) {
@@ -183,7 +194,7 @@ export async function DELETE(
 
     // Delete work order
     await prisma.workOrder.delete({
-      where: { id: params.id }
+      where: { id }
     })
 
     return NextResponse.json({ 

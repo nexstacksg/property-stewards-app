@@ -49,13 +49,34 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Debug logging
+    console.log('Received items:', items)
+    
+    // Filter out invalid items and validate - map correct field names
+    const validItems = items.filter((item: any) => 
+      (item.name || item.item) && (item.action || item.description)
+    ).map((item: any) => ({
+      name: item.name || item.item,
+      action: item.action || item.description,
+      order: item.order
+    }))
+    
+    console.log('Valid items:', validItems)
+    
+    if (validItems.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one valid checklist item is required. Each item must have both name and action.' },
+        { status: 400 }
+      )
+    }
+
     const checklist = await prisma.checklist.create({
       data: {
         name,
         propertyType,
         remarks,
         items: {
-          create: items.map((item: any, index: number) => ({
+          create: validItems.map((item: any, index: number) => ({
             name: item.name,
             action: item.action,
             order: item.order || index + 1
