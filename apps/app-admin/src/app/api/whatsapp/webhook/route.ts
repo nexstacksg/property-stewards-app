@@ -795,7 +795,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
 
     case 'uploadTaskMedia':
       try {
-        const { taskId, mediaType, mediaUrl, workOrderId } = args;
+        const { mediaType, mediaUrl } = args;
         
         console.log(`📸 Media already processed - ${mediaType}: ${mediaUrl}`);
         
@@ -1189,13 +1189,15 @@ async function processMediaUpload(mediaUrl: string, mediaType: string, metadata:
 
 export async function POST(request: NextRequest) {
   try {
-    const data = await request.json();
-    console.log('📥 Webhook received:', JSON.stringify(data, null, 2));
+    const webhookData = await request.json();
+    console.log('📥 Webhook received:', JSON.stringify(webhookData, null, 2));
     
-    // Extract phone number and message
-    const phone = data.phone || data.from;
+    // Extract the actual message data from Wassenger webhook structure
+    const data = webhookData.data || webhookData;
+    
+    // Extract phone number and message from nested structure
+    const phone = data.fromNumber || data.from || data.phone;
     const message = data.body || data.message || '';
-    const messageId = data.id || data.messageId;
     
     // Check if this is a media message (Wassenger format)
     const hasMedia = data.type === 'image' || 
@@ -1445,7 +1447,7 @@ export async function POST(request: NextRequest) {
 }
 
 // Handle GET requests (for webhook verification)
-export async function GET(request: NextRequest) {
+export async function GET() {
   return NextResponse.json({ 
     status: 'ok',
     message: 'WhatsApp webhook endpoint is active'
