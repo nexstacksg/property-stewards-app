@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, Bot, ImagePlus, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   id: string
@@ -355,10 +356,34 @@ export default function ChatPage() {
                     />
                   )}
                   {/* Message content with proper formatting for job details */}
-                  <div className={`text-sm whitespace-pre-wrap ${
-                    message.role === 'user' ? 'text-white' : 'text-gray-800'
+                  <div className={`text-sm ${
+                    message.role === 'user' ? 'text-white whitespace-pre-wrap' : 'text-gray-800'
                   }`}>
-                    {message.content}
+                    {message.role === 'assistant' ? (
+                      <ReactMarkdown 
+                        components={{
+                          img: ({ alt, src, ...props }) => (
+                            <img 
+                              alt={alt || 'Photo'} 
+                              src={src} 
+                              {...props}
+                              className="max-w-full h-auto rounded-lg my-2 border border-gray-200 shadow-sm"
+                              style={{ maxHeight: '300px', objectFit: 'contain' }}
+                            />
+                          ),
+                          p: ({ children, ...props }) => (
+                            <p {...props} className="mb-2 last:mb-0">{children}</p>
+                          ),
+                          strong: ({ children, ...props }) => (
+                            <strong {...props} className="font-semibold text-gray-900">{children}</strong>
+                          )
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    ) : (
+                      message.content
+                    )}
                   </div>
                   <div className={`text-xs mt-1 ${
                     message.role === 'user' ? 'text-blue-100' : 'text-gray-400'

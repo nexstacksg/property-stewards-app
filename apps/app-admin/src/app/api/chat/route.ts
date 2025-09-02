@@ -10,17 +10,15 @@ import {
   getWorkOrderById, 
   updateWorkOrderStatus,
   getTasksByLocation,
-  getDistinctLocationsForWorkOrder,
   getLocationsWithCompletionStatus,
   updateTaskStatus,
-  addTaskPhoto,
-  addTaskVideo,
   getTaskMedia,
   deleteTaskMedia,
   getWorkOrderProgress,
   getInspectorByPhone,
   updateWorkOrderDetails,
-  completeAllTasksForLocation
+  completeAllTasksForLocation,
+  getContractChecklistItemIdByLocation
 } from '@/lib/services/inspectorService';
 
 // Initialize OpenAI client
@@ -31,7 +29,7 @@ const openai = new OpenAI({
 // Thread store is imported from shared module
 
 // Create assistant once and reuse - reset to null to force recreation with new formatting
-let assistantId: string | null = null; // Reset to force location parameter inclusion
+let assistantId: string | null = null; // Reset to force numbered location formatting recreation
 
 async function getOrCreateAssistant() {
   if (assistantId) {
@@ -103,8 +101,19 @@ CONVERSATION FLOW GUIDELINES:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
+   - CRITICAL: ALWAYS format locations with numbered brackets [1], [2], [3] etc.
    - When showing locations, automatically append "(Done)" to locations where all tasks are completed
    - Format as: "[1] Living Room (Done)" for completed locations
+   - Example format:
+     "Here are the locations available for inspection:
+     
+     [1] Living Room
+     [2] Master Bedroom  
+     [3] Bedroom 2
+     [4] Bedroom 3 (Done)
+     [5] Kitchen
+     
+     Please select a location to continue the inspection."
    - If user selects a completed location:
      * Inform them: "This location has already been completed!"
      * Suggest: "Please select another location that needs inspection"
@@ -160,7 +169,22 @@ INSPECTOR IDENTIFICATION:
 - Use the collectInspectorInfo tool to process this information
 - Inspector can be found by either name OR phone number
 - Once identified, provide helpful suggestions for next steps
-- Be conversational and helpful throughout the identification process`,
+- Be conversational and helpful throughout the identification process
+
+MEDIA DISPLAY FORMATTING:
+- When showing photos from getLocationMedia or getTaskMedia tools, format images for inline display
+- For each photo URL, create a markdown image reference: ![Image](URL)
+- Group multiple photos with clear labels: "**Photo 1:**", "**Photo 2:**", etc.
+- Example format for media responses:
+  "Here are the photos for Bedroom 3:
+  
+  **Photo 1:**
+  ![Bedroom 3 Photo 1](https://property-stewards.sgp1.digitaloceanspaces.com/data/hang-82212/bedroom-3/photos/ed888645-7270-452c-9d01-fde5656d3e37.jpeg)
+  
+  **Remarks:** All tasks completed for Bedroom 3.
+  "
+- Always include photo count and location name in the response
+- If no photos available, clearly state "No photos found for [location name]"`,
     model: 'gpt-4o-mini',
     tools: assistantTools
   });
@@ -383,6 +407,31 @@ const assistantTools = [
   {
     type: 'function' as const,
     function: {
+      name: 'getLocationMedia',
+      description: 'Get photos and videos for a specific location by selection number or name',
+      parameters: {
+        type: 'object',
+        properties: {
+          locationNumber: {
+            type: 'number',
+            description: 'The location selection number (e.g., 4 for [4] Bedroom 3)'
+          },
+          locationName: {
+            type: 'string',
+            description: 'The location name (e.g., "Bedroom 3")'
+          },
+          workOrderId: {
+            type: 'string',
+            description: 'The work order ID'
+          }
+        },
+        required: ['workOrderId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'deleteTaskMedia',
       description: 'Delete a specific photo or video from a task',
       parameters: {
@@ -560,9 +609,11 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         
         return JSON.stringify({
           success: true,
-          locations: locationsWithStatus.map(loc => ({
+          locations: locationsWithStatus.map((loc, index) => ({
+            number: index + 1,  // Add selection number
             name: loc.name,
             displayName: loc.displayName,
+            contractChecklistItemId: loc.contractChecklistItemId,  // Include the ID!
             status: loc.isCompleted ? 'completed' : 
                     (loc.completedTasks > 0 ? 'in_progress' : 'pending'),
             tasks: loc.totalTasks,
@@ -855,6 +906,44 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
     case 'getTaskMedia':
       try {
         const { taskId } = args;
+        console.log('🔧 getTaskMedia tool called with taskId:', taskId);
+        
+        // Check if the taskId is actually an inspector ID (common mistake)
+        if (taskId === metadata.inspectorId) {
+          console.log('⚠️ TaskId is inspector ID, need to find actual ContractChecklistItem');
+          console.log('🔍 Current location from metadata:', metadata.currentLocation);
+          console.log('🔍 Work order from metadata:', metadata.workOrderId);
+          
+          if (metadata.currentLocation && metadata.workOrderId) {
+            // Use the imported helper function
+            const actualTaskId = await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation);
+            
+            if (actualTaskId) {
+              console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
+              const mediaInfo = await getTaskMedia(actualTaskId);
+              
+              if (mediaInfo) {
+                return JSON.stringify({
+                  success: true,
+                  taskId: actualTaskId,
+                  taskName: mediaInfo.name,
+                  remarks: mediaInfo.remarks,
+                  photos: mediaInfo.photos,
+                  videos: mediaInfo.videos,
+                  photoCount: mediaInfo.photoCount,
+                  videoCount: mediaInfo.videoCount
+                });
+              }
+            }
+          }
+          
+          return JSON.stringify({
+            success: false,
+            error: 'Could not find media for the current location. Please make sure you are in a specific room/location first.',
+          });
+        }
+        
+        // Normal case - try with the provided taskId
         const mediaInfo = await getTaskMedia(taskId);
         
         if (!mediaInfo) {
@@ -878,6 +967,71 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         return JSON.stringify({
           success: false,
           error: 'Failed to get media.',
+        });
+      }
+
+    case 'getLocationMedia':
+      try {
+        const { locationNumber, locationName, workOrderId } = args;
+        console.log('🔧 getLocationMedia called with:', { locationNumber, locationName, workOrderId });
+        
+        // First get all locations to map the number to the ContractChecklistItem ID
+        const locationsWithStatus = await getLocationsWithCompletionStatus(workOrderId);
+        console.log('📍 Available locations:', locationsWithStatus.map((loc, index) => ({
+          number: index + 1,
+          name: loc.name,
+          id: loc.contractChecklistItemId
+        })));
+        
+        let targetLocation = null;
+        
+        // Find by number if provided
+        if (locationNumber && locationNumber > 0 && locationNumber <= locationsWithStatus.length) {
+          targetLocation = locationsWithStatus[locationNumber - 1];
+          console.log('🎯 Found location by number', locationNumber, ':', targetLocation.name);
+        }
+        // Find by name if number not found or not provided
+        else if (locationName) {
+          targetLocation = locationsWithStatus.find(loc => 
+            loc.name.toLowerCase() === locationName.toLowerCase()
+          );
+          console.log('🎯 Found location by name', locationName, ':', targetLocation?.name);
+        }
+        
+        if (!targetLocation) {
+          return JSON.stringify({
+            success: false,
+            error: `Location not found. Available locations: ${locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.name}`).join(', ')}`
+          });
+        }
+        
+        // Get media using the ContractChecklistItem ID
+        const mediaInfo = await getTaskMedia(targetLocation.contractChecklistItemId);
+        
+        if (!mediaInfo) {
+          return JSON.stringify({
+            success: false,
+            error: `No media found for ${targetLocation.name}.`
+          });
+        }
+        
+        return JSON.stringify({
+          success: true,
+          location: targetLocation.name,
+          locationNumber: locationsWithStatus.indexOf(targetLocation) + 1,
+          taskId: targetLocation.contractChecklistItemId,
+          taskName: mediaInfo.name,
+          remarks: mediaInfo.remarks,
+          photos: mediaInfo.photos,
+          videos: mediaInfo.videos,
+          photoCount: mediaInfo.photoCount,
+          videoCount: mediaInfo.videoCount
+        });
+      } catch (error) {
+        console.error('❌ Error in getLocationMedia:', error);
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to get location media.',
         });
       }
 
@@ -1119,24 +1273,54 @@ export async function POST(request: NextRequest) {
         });
         
         if (workOrder?.contract?.contractChecklist?.items) {
+          console.log('🔍 Looking for checklist item with room name:', normalizedRoomName);
+          console.log('🔍 Available checklist items:', workOrder.contract.contractChecklist.items.map(item => ({
+            id: item.id,
+            name: item.name,
+            photosCount: item.photos.length,
+            videosCount: item.videos.length
+          })));
+          
           const checklistItem = workOrder.contract.contractChecklist.items.find(
             item => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
           );
           
           if (checklistItem) {
+            console.log('✅ Found matching checklist item:');
+            console.log('  - ID:', checklistItem.id);
+            console.log('  - Name:', checklistItem.name);
+            console.log('  - Current photos:', checklistItem.photos);
+            console.log('  - Current videos:', checklistItem.videos);
+            console.log('  - Adding new URL:', publicUrl);
+            
             if (mediaType === 'photo') {
+              const updatedPhotos = [...checklistItem.photos, publicUrl];
+              console.log('📷 Updating photos array to:', updatedPhotos);
+              
               await prisma.contractChecklistItem.update({
                 where: { id: checklistItem.id },
-                data: { photos: [...checklistItem.photos, publicUrl] }
+                data: { photos: updatedPhotos }
               });
+              
+              console.log('✅ Photo saved to ContractChecklistItem ID:', checklistItem.id);
             } else {
+              const updatedVideos = [...checklistItem.videos, publicUrl];
+              console.log('🎥 Updating videos array to:', updatedVideos);
+              
               await prisma.contractChecklistItem.update({
                 where: { id: checklistItem.id },
-                data: { videos: [...checklistItem.videos, publicUrl] }
+                data: { videos: updatedVideos }
               });
+              
+              console.log('✅ Video saved to ContractChecklistItem ID:', checklistItem.id);
             }
-            console.log(`📷 Saved ${mediaType} to database`);
+            console.log(`📷 Saved ${mediaType} to database for room: ${normalizedRoomName}`);
+          } else {
+            console.log('❌ No checklist item found for room:', normalizedRoomName);
+            console.log('❌ Available room names:', workOrder.contract.contractChecklist.items.map(item => item.name));
           }
+        } else {
+          console.log('❌ No contract checklist items found in work order');
         }
       }
       
@@ -1298,20 +1482,80 @@ export async function POST(request: NextRequest) {
         attempts++;
         console.log('Final run status:', runStatus.status, 'attempt:', attempts);
       }
+      
+      // Check if we need to handle more tool calls
+      if (runStatus.status === 'requires_action') {
+        console.log('🔄 Run still requires action after first tool execution, checking for more tool calls...');
+        const additionalToolCalls = runStatus.required_action?.submit_tool_outputs?.tool_calls || [];
+        console.log('Additional tool calls needed:', additionalToolCalls.length);
+        
+        if (additionalToolCalls.length > 0) {
+          console.log('🔧 Processing additional tool calls...');
+          // Handle additional tool calls recursively
+          const additionalToolOutputs = [];
+          
+          for (const toolCall of additionalToolCalls) {
+            try {
+              const functionName = toolCall.function.name;
+              const functionArgs = JSON.parse(toolCall.function.arguments);
+              console.log('Executing additional tool:', functionName, 'with args:', functionArgs);
+              
+              const output = await executeTool(functionName, functionArgs, finalThreadId);
+              console.log('Additional tool output:', output);
+              
+              additionalToolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: output
+              });
+            } catch (error) {
+              console.error('Additional tool execution error:', error);
+              additionalToolOutputs.push({
+                tool_call_id: toolCall.id,
+                output: JSON.stringify({
+                  success: false,
+                  error: 'Tool execution failed: ' + (error instanceof Error ? error.message : 'Unknown error')
+                })
+              });
+            }
+          }
+          
+          // Submit additional tool outputs
+          await openai.beta.threads.runs.submitToolOutputs(runId, {
+            thread_id: finalThreadId,
+            tool_outputs: additionalToolOutputs
+          });
+          
+          // Wait for final completion after additional tools
+          attempts = 0;
+          runStatus = await openai.beta.threads.runs.retrieve(runId, {
+            thread_id: finalThreadId
+          });
+          while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            runStatus = await openai.beta.threads.runs.retrieve(runId, {
+              thread_id: finalThreadId
+            });
+            attempts++;
+            console.log('Final completion status:', runStatus.status, 'attempt:', attempts);
+          }
+        }
+      }
     }
 
     // Get the latest assistant message
     const messages = await openai.beta.threads.messages.list(finalThreadId);
     const lastMessage = messages.data[0];
     
-    console.log('Last message:', lastMessage);
-    console.log('Messages data length:', messages.data.length);
+    console.log('📋 Final run status:', runStatus.status);
+    console.log('📋 Last message:', lastMessage);
+    console.log('📋 Messages data length:', messages.data.length);
+    console.log('📋 All message roles:', messages.data.map(m => m.role));
 
     if (lastMessage && lastMessage.role === 'assistant') {
       const content = lastMessage.content[0];
       console.log('Content type:', content.type);
       if (content.type === 'text') {
-        console.log('Returning assistant response:', content.text.value);
+        console.log('✅ Returning assistant response:', content.text.value);
         return NextResponse.json({
           content: content.text.value,
           threadId: finalThreadId,
@@ -1320,7 +1564,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log('No valid assistant response found, returning fallback');
+    console.log('❌ No valid assistant response found, returning fallback');
+    console.log('❌ Run status was:', runStatus.status);
+    if (runStatus.status === 'requires_action') {
+      console.log('❌ Required action:', runStatus.required_action);
+    }
     return NextResponse.json({
       content: 'I apologize, but I encountered an issue processing your request. Please try again.',
       threadId: finalThreadId,
