@@ -39,6 +39,7 @@ async function getChecklist(id: string) {
   return checklist
 }
 
+
 function formatDate(date: Date | string | null) {
   if (!date) return 'N/A'
   return new Date(date).toLocaleDateString('en-SG', {
@@ -49,6 +50,8 @@ function formatDate(date: Date | string | null) {
 export default async function ChecklistDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params
   const checklist = await getChecklist(resolvedParams.id) as any
+
+
 
   return (
     <div className="p-6 space-y-6">
@@ -77,10 +80,10 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
               Edit Template
             </Button>
           </Link>
-          <Button variant="outline">
+          {/* <Button variant="outline">
             <Copy className="h-4 w-4 mr-2" />
             Duplicate
-          </Button>
+          </Button> */}
         </div>
       </div>
 
@@ -147,9 +150,9 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">Recent Contracts</p>
                   <div className="space-y-1">
-                    {checklist.contracts.map((contract: any) => (
+                    {checklist.contracts.map((contract: any,index:any) => (
                       <Link
-                        key={contract.id}
+                        key={index}
                         href={`/contracts/${contract.id}`}
                         className="block text-sm text-primary hover:underline"
                       >
@@ -172,10 +175,10 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                   <CardTitle>Checklist Items</CardTitle>
                   <CardDescription>{checklist.items.length} inspection item(s)</CardDescription>
                 </div>
-                <Button size="sm">
+                {/* <Button size="sm">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Item
-                </Button>
+                </Button> */}
               </div>
             </CardHeader>
             <CardContent>
@@ -198,16 +201,16 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                         <TableCell className="font-medium">{item.order}</TableCell>
                         <TableCell>
                           <div>
-                            <p className="font-medium">{item.item}</p>
-                            {item.description && (
+                            <p className="font-medium">{item.name}</p>
+                            {item.action && (
                               <p className="text-sm text-muted-foreground">
-                                {item.description}
+                                {item.action}
                               </p>
                             )}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{item.category}</Badge>
+                          <Badge variant="outline">{checklist.propertyType}</Badge>
                         </TableCell>
                         <TableCell>
                           <Badge variant={item.isRequired ? 'default' : 'secondary'}>
@@ -216,7 +219,7 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                         </TableCell>
                         <TableCell>
                           <Badge variant={item.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                            {item.status}
+                            {checklist.status}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -228,7 +231,7 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
           </Card>
 
           {/* Item Categories */}
-          <Card>
+          {/* <Card>
             <CardHeader>
               <CardTitle>Categories</CardTitle>
             </CardHeader>
@@ -244,7 +247,7 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                 })}
               </div>
             </CardContent>
-          </Card>
+          </Card> */}
         </div>
       </div>
     </div>

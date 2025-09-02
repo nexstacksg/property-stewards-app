@@ -151,7 +151,16 @@ CONVERSATION FLOW GUIDELINES:
    - Remember context from previous messages
    - Handle errors gracefully with helpful messages
 
-For testing, use inspector ID 'cmeps0xtz0006m35wcrtr8wx9' for Ken.`,
+INSPECTOR IDENTIFICATION:
+- Check if inspector is already identified in thread metadata
+- If unknown, politely ask: "Hello! To assign you today's inspection jobs, I need your details. Please provide:
+  [1] Your full name
+  [2] Your phone number (with country code, e.g., +65 for Singapore)"
+- If no country code provided, assume Singapore (+65)
+- Use the collectInspectorInfo tool to process this information
+- Inspector can be found by either name OR phone number
+- Once identified, provide helpful suggestions for next steps
+- Be conversational and helpful throughout the identification process`,
     model: 'gpt-4o-mini',
     tools: assistantTools
   });
@@ -180,7 +189,7 @@ const assistantTools = [
             description: 'Inspector phone to lookup ID if not provided'
           }
         },
-        required: ['inspectorId']
+        required: []
       }
     }
   },
@@ -396,6 +405,27 @@ const assistantTools = [
         required: ['taskId', 'mediaUrl', 'mediaType']
       }
     }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'collectInspectorInfo',
+      description: 'Collect and validate inspector name and phone number for identification',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Inspector full name'
+          },
+          phone: {
+            type: 'string',
+            description: 'Inspector phone number with country code (e.g., +6512345678)'
+          }
+        },
+        required: ['name', 'phone']
+      }
+    }
   }
 ];
 
@@ -441,15 +471,28 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         const { inspectorId, inspectorPhone } = args;
         let finalInspectorId = inspectorId;
         
+        // Check thread metadata for inspector info first
+        if (!finalInspectorId && threadId) {
+          const metadata = await getThreadMetadata(threadId);
+          finalInspectorId = metadata.inspectorId;
+        }
+        
         if (!finalInspectorId && inspectorPhone) {
           const inspector = await getInspectorByPhone(inspectorPhone);
           if (!inspector) {
             return JSON.stringify({
               success: false,
-              error: 'Inspector not found. Please contact admin for registration.',
+              error: 'Inspector not found. Please provide your name and phone number for identification.',
             });
           }
           finalInspectorId = inspector.id;
+        }
+        
+        if (!finalInspectorId) {
+          return JSON.stringify({
+            success: false,
+            error: 'Inspector identification required. Please provide your name and phone number.',
+          });
         }
 
         const jobs = await getTodayJobsForInspector(finalInspectorId);
@@ -898,6 +941,69 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         return JSON.stringify({
           success: false,
           error: 'Failed to update job details.',
+        });
+      }
+
+    case 'collectInspectorInfo':
+      try {
+        const { name, phone } = args;
+        
+        // Normalize phone number - add +65 if no country code
+        let normalizedPhone = phone.replace(/[\s-]/g, '');
+        if (!normalizedPhone.startsWith('+')) {
+          normalizedPhone = '+65' + normalizedPhone;
+        }
+        
+        // Try to find inspector by normalized phone first
+        let inspector = await getInspectorByPhone(normalizedPhone);
+        
+        // Also try original phone format
+        if (!inspector) {
+          inspector = await getInspectorByPhone(phone);
+        }
+        
+        // If not found by phone, try by name
+        if (!inspector) {
+          inspector = await prisma.inspector.findFirst({
+            where: {
+              name: {
+                contains: name,
+                mode: 'insensitive'
+              }
+            }
+          });
+        }
+        
+        if (!inspector) {
+          return JSON.stringify({
+            success: false,
+            error: 'Inspector not found in our system. Please contact admin for registration.',
+          });
+        }
+        
+        // Store inspector details in thread metadata
+        if (threadId) {
+          await updateThreadMetadata(threadId, {
+            inspectorId: inspector.id,
+            inspectorName: inspector.name,
+            inspectorPhone: inspector.mobilePhone || normalizedPhone,
+            identifiedAt: new Date().toISOString()
+          });
+        }
+        
+        return JSON.stringify({
+          success: true,
+          message: `Welcome ${inspector.name}! I've identified you in our system.\n\nTry: "What are my jobs today?" or "Show me pending inspections"`,
+          inspector: {
+            id: inspector.id,
+            name: inspector.name,
+            phone: inspector.mobilePhone
+          }
+        });
+      } catch (error) {
+        return JSON.stringify({
+          success: false,
+          error: 'Failed to process inspector information. Please try again.',
         });
       }
 
