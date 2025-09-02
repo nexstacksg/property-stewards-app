@@ -60,7 +60,12 @@ pnpm db:studio    # Open Prisma Studio GUI
 ### Dual Database Connection Strategy
 The codebase uses two database connection approaches:
 - **Prisma Client** (`/lib/prisma.ts`): Type-safe ORM for admin portal CRUD operations
-- **Raw pg client** (`/lib/services/database.ts`): Direct SQL for WhatsApp/AI integration requiring complex queries
+- **Raw pg client** (`/lib/db.ts`): Direct SQL for WhatsApp/AI integration requiring complex queries
+
+### Performance Optimizations
+- **Redis Caching** (`/lib/redis-cache.ts`): In-memory caching for frequently accessed data
+- **Connection Pooling**: PostgreSQL connection pooling configured in both Prisma and pg clients
+- **Fast WhatsApp Response**: Sub-2-second response times via optimized OpenAI Assistant API calls
 
 ### Entity Relationships
 ```
@@ -73,21 +78,32 @@ Customer → CustomerAddress → Contract → ContractChecklist → WorkOrder
 
 Inspectors interact via WhatsApp with:
 - **Wassenger API**: Primary WhatsApp gateway service
-- **OpenAI Assistant API**: NLP processing with thread-based context
-- **Session Management**: OpenAI thread IDs persist conversation state
+- **OpenAI Assistant API**: NLP processing with thread-based context (using gpt-4o-mini for speed)
+- **Session Management**: OpenAI thread IDs persist conversation state with Redis caching
 - **Numbered Options**: `[1], [2], [3]` format for easy mobile selection
 - **Media Handling**: Images/videos stored in DigitalOcean Spaces or base64 in DB
+- **Duplicate Prevention**: Message deduplication using in-memory cache with timestamps
+- **Tool Calling**: Structured function calls for job management, location selection, and task completion
 
 ### Critical Integration Points
-- Webhook endpoint: `/api/whatsapp/webhook`
-- Thread management stored in database
+- Webhook endpoint: `/api/whatsapp/webhook` with secret verification
+- Inspector service: `/lib/services/inspectorService.ts` handles all WhatsApp business logic
+- Thread management with automatic cleanup and phone number normalization
 - Automatic work order status updates from WhatsApp activity
+- Real-time task completion tracking with location-based workflows
 
 ## Environment Configuration
 
 ```env
 # Database (Required)
 DATABASE_URL="postgresql://user:password@host:port/dbname?sslmode=require"
+
+# Raw PostgreSQL Connection (Optional - for direct SQL queries)
+DB_USER=username
+DB_PASSWORD=password
+DB_HOST=hostname
+DB_PORT=25060
+DB_NAME=database
 
 # OpenAI (Required for WhatsApp integration)
 OPENAI_API_KEY=
@@ -104,18 +120,31 @@ WASSENGER_API_KEY=
 WASSENGER_WEBHOOK_SECRET=
 ```
 
+### SSL Certificate Requirement
+The system expects a `ca-certificate.crt` file in the project root for secure PostgreSQL connections. This file is required for DigitalOcean managed database connections.
+
 ## Project Structure
 
 ```
 /src
   /app/              # Next.js App Router pages
     /api/            # API route handlers
+      /whatsapp/     # WhatsApp webhook integration
     /(pages)/        # UI pages with layouts
   /components/       # Reusable UI components
     /ui/            # shadcn/ui base components
   /lib/             # Core utilities
     /services/      # Business logic layer
     prisma.ts       # Prisma client singleton
+    db.ts           # Raw PostgreSQL client
+    redis-cache.ts  # Redis caching utilities
+    s3-client.ts    # DigitalOcean Spaces client
+    thread-store.ts # OpenAI thread management
+    /utils/         # Utility functions
+/prisma/             # Database schema and migrations
+  schema.prisma     # Database schema definition
+  /migrations/      # Database migration files
+  seed.ts          # Database seeding script
 ```
 
 ## Key Architectural Decisions
@@ -126,6 +155,9 @@ WASSENGER_WEBHOOK_SECRET=
 4. **Inspector Authentication**: Phone number-based, no hardcoded IDs
 5. **CUID IDs**: Collision-resistant unique identifiers for all database entities
 6. **Soft Deletes**: Status fields instead of hard deletes for data integrity
+7. **WhatsApp-First Inspector Interface**: No mobile app required - all inspector interactions via WhatsApp
+8. **Task Granularity**: JSON-based task arrays within checklist items for flexible task management
+9. **Numbered Selection UI**: Consistent `[1], [2], [3]` interface for mobile-friendly WhatsApp interactions
 
 ## API Route Patterns
 
@@ -150,9 +182,42 @@ import { Button } from '@/components/ui/button'
 - ✅ Database connection and Prisma schema
 - ✅ Initial data seeding
 - ✅ Navigation structure
-- ⏳ CRUD interfaces for entities
-- ⏳ WhatsApp webhook integration
-- ⏳ OpenAI Assistant setup
-- ⏳ Authentication system
-- ⏳ Report generation
-- ⏳ File upload to DigitalOcean Spaces
+- ✅ CRUD interfaces for entities (customers, inspectors, contracts, work orders, checklists)
+- ✅ WhatsApp webhook integration with Wassenger API
+- ✅ OpenAI Assistant setup with tool calling and thread management
+- ✅ Inspector authentication via phone number
+- ✅ Real-time task completion tracking
+- ✅ DigitalOcean Spaces integration for file storage
+- ✅ Redis caching for performance optimization
+- ⏳ Authentication system for admin portal
+- ⏳ Report generation (PDF/web reports)
+- ⏳ Advanced media handling in WhatsApp conversations
+
+## Working with the WhatsApp Integration
+
+### Inspector Service Functions
+Key functions in `/lib/services/inspectorService.ts`:
+- `getInspectorByPhone()` - Find inspector by phone number
+- `getTodayJobsForInspector()` - Get scheduled jobs for today
+- `getWorkOrderById()` - Get detailed work order information
+- `updateWorkOrderStatus()` - Update work order status (scheduled → started → completed)
+- `getTasksByLocation()` - Get tasks for specific room/location
+- `completeAllTasksForLocation()` - Mark all tasks in a location as done
+- `updateTaskStatus()` - Update individual task status
+
+### OpenAI Assistant Tools
+Available function calls for the assistant:
+- `getTodayJobs` - Show inspector's scheduled jobs
+- `confirmJobSelection` - Confirm job selection with details
+- `startJob` - Begin work order and show locations
+- `getTasksForLocation` - Show tasks for selected room
+- `completeTask` - Mark individual or all tasks complete
+- `updateJobDetails` - Modify job information
+- `collectInspectorInfo` - Identify inspector by name/phone
+
+### Development Tips
+- WhatsApp responses must be under 2 seconds for good UX
+- Use caching aggressively for frequently accessed data
+- Message deduplication prevents double processing
+- Phone number normalization handles different formats
+- Task completion uses `enteredOn` timestamp for tracking

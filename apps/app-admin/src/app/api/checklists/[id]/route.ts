@@ -89,8 +89,8 @@ export async function PATCH(
       await prisma.checklistItem.createMany({
         data: items.map((item: any, index: number) => ({
           checklistId: id,
-          name: item.name,
-          action: item.action,
+          name: item.name || item.item,
+          action: item.action || item.description,
           order: item.order || index + 1
         }))
       })

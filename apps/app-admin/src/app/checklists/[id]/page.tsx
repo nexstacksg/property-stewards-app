@@ -201,10 +201,10 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                         <TableCell className="font-medium">{item.order}</TableCell>
                         <TableCell>
                           <div>
-                            <p className="font-medium">{item.name}</p>
-                            {item.action && (
+                            <p className="font-medium">{item.name || item.item}</p>
+                            {item.action || item.description && (
                               <p className="text-sm text-muted-foreground">
-                                {item.action}
+                                {item.action || item.description}
                               </p>
                             )}
                           </div>
