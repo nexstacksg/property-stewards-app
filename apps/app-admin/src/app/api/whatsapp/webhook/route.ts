@@ -67,16 +67,26 @@ export async function POST(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const secret = searchParams.get('secret');
     
+    console.log('🔐 Webhook secret verification:', {
+      provided: secret ? 'present' : 'missing',
+      expected: process.env.WASSENGER_WEBHOOK_SECRET ? 'configured' : 'not configured',
+      matches: secret === process.env.WASSENGER_WEBHOOK_SECRET
+    });
+    
     if (secret !== process.env.WASSENGER_WEBHOOK_SECRET) {
+      console.log('❌ Webhook secret mismatch or missing');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const body = await request.json();
     const event = body.event;
     
-    // Only process incoming messages
+    // Log all events for debugging
+    console.log(`📨 Received webhook event: ${event}`);
+    
+    // Process both text and media messages
     if (event !== 'message:in:new') {
-      console.log(`⏭️ Ignoring event: ${event}`);
+      console.log(`⏭️ Ignoring event: ${event} - only processing message:in:new`);
       return NextResponse.json({ success: true });
     }
 
@@ -92,18 +102,45 @@ export async function POST(request: NextRequest) {
     const phoneNumber = data.fromNumber || data.from;
     const message = data.body || data.message?.text?.body || '';
     
+    // Debug: Log key message properties first
+    console.log('📋 Message summary:', {
+      id: messageId,
+      phone: phoneNumber,
+      type: data.type,
+      messageType: data.messageType,
+      hasBody: !!data.body,
+      bodyLength: message?.length || 0,
+      hasMedia: !!(data.media || data.message?.imageMessage || data.message?.videoMessage),
+      event: event
+    });
+    
     // Debug: Log the entire message data structure
     console.log('🔍 Full WhatsApp message data:', JSON.stringify(data, null, 2));
     
-    // Check for media attachments
-    const hasMedia = data.hasMedia || data.media || data.message?.imageMessage || data.message?.videoMessage;
+    // Check for media attachments - Wassenger specific detection
+    const hasMedia = data.type === 'image' ||
+                    data.type === 'video' ||
+                    data.type === 'document' ||
+                    data.type === 'audio' ||
+                    data.hasMedia ||
+                    data.media ||
+                    data.message?.imageMessage ||
+                    data.message?.videoMessage ||
+                    data.message?.documentMessage;
+                    
+    console.log('🔍 Media detection check:', {
+      hasMedia: data.hasMedia,
+      media: data.media,
+      type: data.type,
+      messageType: data.messageType,
+      imageMessage: data.message?.imageMessage,
+      videoMessage: data.message?.videoMessage,
+      documentMessage: data.message?.documentMessage,
+      detectedMedia: hasMedia
+    });
+    
     if (hasMedia) {
-      console.log('📎 Media detected in WhatsApp message:', {
-        hasMedia: data.hasMedia,
-        media: data.media,
-        imageMessage: data.message?.imageMessage,
-        videoMessage: data.message?.videoMessage
-      });
+      console.log('📎 Media detected in WhatsApp message - proceeding with media handling');
     }
     
     // Check if already processed
@@ -123,6 +160,23 @@ export async function POST(request: NextRequest) {
     // Handle media messages
     if (hasMedia) {
       console.log('🔄 Processing media message...');
+      
+      // Ensure we have a thread for this phone number BEFORE processing media
+      let threadId = whatsappThreads.get(phoneNumber);
+      if (!threadId) {
+        console.log('🆕 Creating new thread for media upload from phone:', phoneNumber);
+        const thread = await openai.beta.threads.create({
+          metadata: {
+            phoneNumber: phoneNumber,
+            createdAt: new Date().toISOString(),
+            source: 'whatsapp_media_upload'
+          }
+        });
+        threadId = thread.id;
+        whatsappThreads.set(phoneNumber, threadId);
+        console.log('✅ Created new thread for media:', threadId);
+      }
+      
       const mediaResponse = await handleMediaMessage(data, phoneNumber);
       if (mediaResponse) {
         // Send response via Wassenger
@@ -1154,29 +1208,67 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     const workOrderId = metadata.workOrderId;
     const currentLocation = metadata.currentLocation;
     
+    console.log('🔍 Media upload context check:', {
+      workOrderId: workOrderId,
+      currentLocation: currentLocation,
+      hasWorkOrder: !!workOrderId,
+      hasLocation: !!currentLocation
+    });
+    
     if (!workOrderId) {
-      return 'Please select a job first before uploading media.';
+      console.log('⚠️ No work order context - media upload without job context');
+      return 'Please select a job first before uploading media. Try saying "what are my jobs today?" to get started.';
     }
     
     if (!currentLocation) {
-      return 'Please select a location/room first before uploading media.';
+      console.log('⚠️ No location context - will save to general folder');
+      // Don't block upload, but save to general folder
+      // return 'Please select a location/room first before uploading media.';
     }
     
-    // Extract media URL from WhatsApp data
+    // Extract media URL from WhatsApp data - Enhanced for multiple Wassenger formats
     let mediaUrl: string | null = null;
     let mediaType: 'photo' | 'video' = 'photo';
     
-    // Check various possible media fields from Wassenger
-    if (data.media && data.media.url) {
+    // Check various possible media fields from Wassenger - prioritize type-based detection
+    if (data.type === 'image') {
+      // Wassenger image message
+      mediaUrl = data.url || data.fileUrl || data.media?.url;
+      mediaType = 'photo';
+      console.log('📎 Found image via type=image:', { url: mediaUrl, type: data.type });
+    } else if (data.type === 'video') {
+      // Wassenger video message  
+      mediaUrl = data.url || data.fileUrl || data.media?.url;
+      mediaType = 'video';
+      console.log('📎 Found video via type=video:', { url: mediaUrl, type: data.type });
+    } else if (data.type === 'document' && (data.mimetype?.startsWith('image/') || data.mimeType?.startsWith('image/'))) {
+      // Wassenger document that's actually an image
+      mediaUrl = data.url || data.fileUrl || data.media?.url;
+      mediaType = 'photo';
+      console.log('📎 Found image via type=document:', { url: mediaUrl, mimetype: data.mimetype || data.mimeType });
+    } else if (data.media && data.media.url) {
       mediaUrl = data.media.url;
       mediaType = data.media.mimetype?.startsWith('video/') ? 'video' : 'photo';
-    } else if (data.message?.imageMessage) {
+      console.log('📎 Found media in data.media:', { url: mediaUrl, mimetype: data.media.mimetype });
+    } else if (data.message?.imageMessage?.url) {
       mediaUrl = data.message.imageMessage.url;
       mediaType = 'photo';
-    } else if (data.message?.videoMessage) {
+      console.log('📎 Found media in data.message.imageMessage:', mediaUrl);
+    } else if (data.message?.videoMessage?.url) {
       mediaUrl = data.message.videoMessage.url;
       mediaType = 'video';
+      console.log('📎 Found media in data.message.videoMessage:', mediaUrl);
+    } else if (data.url) {
+      mediaUrl = data.url;
+      mediaType = (data.mimetype || data.mimeType)?.startsWith('video/') ? 'video' : 'photo';
+      console.log('📎 Found media in data.url:', { url: mediaUrl, mimetype: data.mimetype || data.mimeType });
+    } else if (data.fileUrl) {
+      mediaUrl = data.fileUrl;
+      mediaType = (data.mimetype || data.mimeType)?.startsWith('video/') ? 'video' : 'photo';
+      console.log('📎 Found media in data.fileUrl:', { url: mediaUrl, mimetype: data.mimetype || data.mimeType });
     }
+    
+    console.log('🔍 Media extraction result:', { mediaUrl, mediaType });
     
     if (!mediaUrl) {
       console.log('❌ No media URL found in WhatsApp message');
@@ -1187,13 +1279,31 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     // Download media from WhatsApp/Wassenger
     console.log('⬇️ Downloading media from:', mediaUrl);
-    const response = await fetch(mediaUrl);
+    console.log('📱 Attempting fetch with headers for Wassenger media...');
+    
+    const response = await fetch(mediaUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Property-Stewards-Bot/1.0',
+        'Accept': 'image/*,video/*,*/*'
+      }
+    });
+    
+    console.log('📡 Media download response:', {
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get('content-type'),
+      contentLength: response.headers.get('content-length')
+    });
+    
     if (!response.ok) {
-      throw new Error(`Failed to download media: ${response.status}`);
+      throw new Error(`Failed to download media: ${response.status} ${response.statusText}`);
     }
     
     const buffer = await response.arrayBuffer();
     const uint8Array = new Uint8Array(buffer);
+    
+    console.log('📦 Downloaded media buffer size:', buffer.byteLength, 'bytes');
     
     // Extract context from metadata for DigitalOcean path
     let customerName = 'unknown';
