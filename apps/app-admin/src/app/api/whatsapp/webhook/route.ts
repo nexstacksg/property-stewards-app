@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-client';
+import { randomUUID } from 'crypto';
 import { 
   getTodayJobsForInspector,
   getWorkOrderById,
@@ -29,7 +32,7 @@ const processedMessages = new Map<string, {
 // Thread management for WhatsApp conversations
 const whatsappThreads = new Map<string, string>();
 
-// Reuse assistant ID
+// Reuse assistant ID - reset to force recreation with media tools
 let assistantId: string | null = null;
 
 // Clean up old processed messages every 5 minutes
@@ -89,6 +92,20 @@ export async function POST(request: NextRequest) {
     const phoneNumber = data.fromNumber || data.from;
     const message = data.body || data.message?.text?.body || '';
     
+    // Debug: Log the entire message data structure
+    console.log('🔍 Full WhatsApp message data:', JSON.stringify(data, null, 2));
+    
+    // Check for media attachments
+    const hasMedia = data.hasMedia || data.media || data.message?.imageMessage || data.message?.videoMessage;
+    if (hasMedia) {
+      console.log('📎 Media detected in WhatsApp message:', {
+        hasMedia: data.hasMedia,
+        media: data.media,
+        imageMessage: data.message?.imageMessage,
+        videoMessage: data.message?.videoMessage
+      });
+    }
+    
     // Check if already processed
     const processed = processedMessages.get(messageId);
     if (processed && processed.responded) {
@@ -103,16 +120,41 @@ export async function POST(request: NextRequest) {
       responded: false
     });
     
-    // Skip empty messages
+    // Handle media messages
+    if (hasMedia) {
+      console.log('🔄 Processing media message...');
+      const mediaResponse = await handleMediaMessage(data, phoneNumber);
+      if (mediaResponse) {
+        // Send response via Wassenger
+        await sendWhatsAppResponse(phoneNumber, mediaResponse);
+        
+        // Mark as responded
+        const msgData = processedMessages.get(messageId);
+        if (msgData) {
+          msgData.responded = true;
+          processedMessages.set(messageId, msgData);
+        }
+        
+        console.log(`✅ Media response sent to ${phoneNumber} in ${Date.now() - startTime}ms`);
+        return NextResponse.json({ success: true });
+      }
+    }
+    
+    // Skip empty text messages (but allow media-only messages to pass through)
     if (!message || !message.trim()) {
-      console.log('⏭️ Empty message, skipping');
-      return NextResponse.json({ success: true });
+      if (!hasMedia) {
+        console.log('⏭️ Empty message with no media, skipping');
+        return NextResponse.json({ success: true });
+      } else {
+        // Media message with no text - process as "uploaded media"
+        console.log('📎 Media-only message detected');
+      }
     }
 
     console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`);
 
     // Process with OpenAI Assistant - optimized for speed
-    const assistantResponse = await processWithAssistant(phoneNumber, message);
+    const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media');
     
     if (assistantResponse && assistantResponse.trim()) {
       // Send response via Wassenger
@@ -347,13 +389,57 @@ CONVERSATION FLOW GUIDELINES:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
+   - CRITICAL: ALWAYS format locations with numbered brackets [1], [2], [3] etc.
    - When showing locations, automatically append "(Done)" to locations where all tasks are completed
    - Format as: "[1] Living Room (Done)" for completed locations
+   - Example format:
+     "Here are the locations available for inspection:
+     
+     [1] Living Room
+     [2] Master Bedroom  
+     [3] Bedroom 2
+     [4] Bedroom 3 (Done)
+     [5] Kitchen
+     
+     Please select a location to continue the inspection."
+   - If user selects a completed location:
+     * Inform them: "This location has already been completed!"
+     * Suggest: "Please select another location that needs inspection"
+     * Show list of pending locations
+   - Guide through task completion workflow
 
 4. Task Inspection Flow:
-   - When showing tasks for a location, ALWAYS format them with brackets
-   - ALWAYS add "Mark ALL tasks complete" as the last numbered option
-   - DO NOT show task completion count during task inspection
+   - When showing tasks for a location, ALWAYS format them with brackets:
+     * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
+     * [2] Check ceiling (done) - if task.displayStatus is 'done'
+     * [3] Check flooring - if task.displayStatus is 'pending' (DO NOT show "(pending)")
+     * [4] Check electrical points
+     * [5] Mark ALL tasks complete - THIS IS MANDATORY, ALWAYS INCLUDE AS FINAL OPTION
+   - CRITICAL: ALWAYS show ALL tasks, even completed ones with (done) marker
+   - CRITICAL: ALWAYS add "Mark ALL tasks complete" as the last numbered option
+   - DO NOT show task completion count during task inspection (no "X out of Y completed")
+   - The final option number should be one more than the task count (e.g., 4 tasks = [5] for complete all)
+   - Simply list the tasks and explain:
+     * "Type the number to mark that task as complete"
+     * "You can also add notes or upload photos/videos for this location (optional)"
+     * "Type [5] to mark ALL tasks complete and finish this location" (adjust number based on task count)
+   - Show location status from locationStatus field:
+     * "**Status:** Done" if locationStatus is 'done'
+     * "**Status:** Pending" if locationStatus is 'pending'
+   - If there are notes available (from locationNotes field), show them after the task list:
+     * "**Note:** [notes content]" (not "Location Note")
+   - IMPORTANT WORKFLOW:
+     * When user selects individual task (1,2,3,4 etc): Call completeTask with that specific task ID
+     * When user selects FINAL option "Mark ALL tasks complete": 
+       - DO NOT call completeTask multiple times
+       - MUST call completeTask with TWO parameters:
+         1. taskId: 'complete_all_tasks' (REQUIRED)
+         2. workOrderId: current work order ID (REQUIRED)
+       - Location is automatically retrieved from thread context
+       - This will mark all tasks done AND set enteredOn timestamp
+     * If user provides any text comments, pass as notes parameter
+     * After marking tasks, show updated list with (done) indicators
+   - ALWAYS include "Mark ALL tasks complete" as the last numbered option when showing tasks
 
 5. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
@@ -371,7 +457,21 @@ INSPECTOR IDENTIFICATION:
 - Inspector phone number is automatically extracted from WhatsApp message
 - Inspector can be found by either name OR phone number
 - Once identified, provide helpful suggestions for next steps
-- Be conversational and helpful throughout the identification process`,
+- Be conversational and helpful throughout the identification process
+
+MEDIA DISPLAY FORMATTING:
+- When showing photos from getLocationMedia or getTaskMedia tools, provide clear photo information
+- For WhatsApp, photos cannot be displayed inline, so provide descriptive information about photos
+- Format photo responses clearly:
+  "📸 Found 2 photos for Bedroom 3:
+  
+  Photo 1: https://property-stewards.sgp1.digitaloceanspaces.com/data/hang-822121/bedroom-3/photos/ed888645-7270-452c-9d01-fde5656d3e37.jpeg
+  Photo 2: [URL if more photos exist]
+  
+  📝 Remarks: All tasks completed for Bedroom 3."
+- Always include photo count and location name in the response
+- If no photos available, clearly state "No photos found for [location name]"
+- Provide clickable URLs for photos so inspectors can view them directly`,
     model: 'gpt-4o-mini', // Fast model for quick responses
     tools: assistantTools
   });
@@ -553,6 +653,48 @@ const assistantTools = [
           }
         },
         required: ['name', 'phone']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'getTaskMedia',
+      description: 'Get photos and videos for a specific task',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'The ContractChecklistItem ID'
+          }
+        },
+        required: ['taskId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'getLocationMedia',
+      description: 'Get photos and videos for a specific location by selection number or name',
+      parameters: {
+        type: 'object',
+        properties: {
+          locationNumber: {
+            type: 'number',
+            description: 'The selection number for the location (e.g., 4 for "[4] Bedroom 3")'
+          },
+          locationName: {
+            type: 'string',
+            description: 'The name of the location (e.g., "Bedroom 3")'
+          },
+          workOrderId: {
+            type: 'string',
+            description: 'The work order ID'
+          }
+        },
+        required: ['workOrderId']
       }
     }
   }
@@ -827,6 +969,155 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           }
         });
 
+      case 'getTaskMedia':
+        try {
+          console.log('🔧 WhatsApp getTaskMedia called with taskId:', args.taskId);
+          
+          // Check if the taskId is actually an inspector ID (common mistake)
+          if (args.taskId === metadata.inspectorId) {
+            console.log('⚠️ TaskId is inspector ID, need to find actual ContractChecklistItem');
+            console.log('🔍 Current location from metadata:', metadata.currentLocation);
+            console.log('🔍 Work order from metadata:', metadata.workOrderId);
+            
+            if (metadata.currentLocation && metadata.workOrderId) {
+              // Use the imported helper function
+              const { getContractChecklistItemIdByLocation } = await import('@/lib/services/inspectorService');
+              const actualTaskId = await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation);
+              
+              if (actualTaskId) {
+                console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
+                const { getTaskMedia } = await import('@/lib/services/inspectorService');
+                const mediaInfo = await getTaskMedia(actualTaskId);
+                
+                if (mediaInfo) {
+                  console.log('📸 Found media for location:', metadata.currentLocation, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
+                  return JSON.stringify({
+                    success: true,
+                    taskId: actualTaskId,
+                    taskName: mediaInfo.name,
+                    remarks: mediaInfo.remarks,
+                    photos: mediaInfo.photos,
+                    videos: mediaInfo.videos,
+                    photoCount: mediaInfo.photoCount,
+                    videoCount: mediaInfo.videoCount
+                  });
+                } else {
+                  console.log('❌ No media found for ContractChecklistItem ID:', actualTaskId);
+                }
+              } else {
+                console.log('❌ Could not find ContractChecklistItem for location:', metadata.currentLocation);
+              }
+            }
+            
+            return JSON.stringify({
+              success: false,
+              error: 'Could not find media for the current location. Please make sure you are in a specific room/location first.',
+            });
+          }
+          
+          // Normal case - try with the provided taskId
+          const { getTaskMedia } = await import('@/lib/services/inspectorService');
+          const mediaInfo = await getTaskMedia(args.taskId);
+          
+          if (!mediaInfo) {
+            console.log('❌ No media found for taskId:', args.taskId);
+            return JSON.stringify({
+              success: false,
+              error: 'Task not found or no media available.',
+            });
+          }
+          
+          console.log('📸 Found media for taskId:', args.taskId, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
+          return JSON.stringify({
+            success: true,
+            taskId: args.taskId,
+            taskName: mediaInfo.name,
+            remarks: mediaInfo.remarks,
+            photos: mediaInfo.photos,
+            videos: mediaInfo.videos,
+            photoCount: mediaInfo.photoCount,
+            videoCount: mediaInfo.videoCount
+          });
+        } catch (error) {
+          console.error('❌ Error in WhatsApp getTaskMedia:', error);
+          return JSON.stringify({
+            success: false,
+            error: 'Failed to get media.'
+          });
+        }
+
+      case 'getLocationMedia':
+        try {
+          console.log('🔧 WhatsApp getLocationMedia called with:', { 
+            locationNumber: args.locationNumber, 
+            locationName: args.locationName, 
+            workOrderId: args.workOrderId 
+          });
+          
+          const locationsWithStatus = await getLocationsWithCompletionStatus(args.workOrderId);
+          console.log('📍 Available locations in WhatsApp webhook:', locationsWithStatus.map((loc, index) => ({
+            number: index + 1,
+            name: loc.name,
+            id: loc.contractChecklistItemId
+          })));
+          
+          let targetLocation = null;
+          
+          // Find by number if provided
+          if (args.locationNumber && args.locationNumber > 0 && args.locationNumber <= locationsWithStatus.length) {
+            targetLocation = locationsWithStatus[args.locationNumber - 1];
+            console.log('🎯 WhatsApp found location by number', args.locationNumber, ':', targetLocation.name);
+          }
+          // Find by name if number not found or not provided
+          else if (args.locationName) {
+            targetLocation = locationsWithStatus.find((loc: any) => 
+              loc.name.toLowerCase() === args.locationName.toLowerCase()
+            );
+            console.log('🎯 WhatsApp found location by name', args.locationName, ':', targetLocation?.name);
+          }
+          
+          if (!targetLocation) {
+            console.log('❌ WhatsApp location not found');
+            return JSON.stringify({
+              success: false,
+              error: `Location not found. Available locations: ${locationsWithStatus.map((loc: any, index: number) => `[${index + 1}] ${loc.name}`).join(', ')}`
+            });
+          }
+          
+          // Get media using the ContractChecklistItem ID
+          console.log('📎 Getting media for ContractChecklistItem ID:', targetLocation.contractChecklistItemId);
+          const { getTaskMedia: getTaskMediaFunc } = await import('@/lib/services/inspectorService');
+          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId);
+          
+          if (!locationMediaInfo) {
+            console.log('❌ No media found for WhatsApp location:', targetLocation.name);
+            return JSON.stringify({
+              success: false,
+              error: `No media found for ${targetLocation.name}.`
+            });
+          }
+          
+          console.log('📸 WhatsApp found media for location:', targetLocation.name, 'photos:', locationMediaInfo.photoCount, 'videos:', locationMediaInfo.videoCount);
+          return JSON.stringify({
+            success: true,
+            location: targetLocation.name,
+            locationNumber: locationsWithStatus.indexOf(targetLocation) + 1,
+            taskId: targetLocation.contractChecklistItemId,
+            taskName: locationMediaInfo.name,
+            remarks: locationMediaInfo.remarks,
+            photos: locationMediaInfo.photos,
+            videos: locationMediaInfo.videos,
+            photoCount: locationMediaInfo.photoCount,
+            videoCount: locationMediaInfo.videoCount
+          });
+        } catch (error) {
+          console.error('❌ Error in WhatsApp getLocationMedia:', error);
+          return JSON.stringify({
+            success: false,
+            error: 'Failed to get location media.'
+          });
+        }
+
       default:
         return JSON.stringify({
           success: false,
@@ -839,5 +1130,181 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
       success: false,
       error: 'Tool execution failed'
     });
+  }
+}
+
+// Handle WhatsApp media messages (photos/videos)
+async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
+  try {
+    console.log('🔄 Processing WhatsApp media message');
+    
+    // Get thread for this phone number
+    let threadId = whatsappThreads.get(phoneNumber);
+    if (!threadId) {
+      console.log('❌ No thread found for media upload');
+      return 'Please start a conversation first before uploading media.';
+    }
+    
+    // Get thread metadata for context
+    const thread = await openai.beta.threads.retrieve(threadId);
+    const metadata = thread.metadata || {};
+    console.log('📋 Thread metadata for media upload:', metadata);
+    
+    // Check if we have work order context
+    const workOrderId = metadata.workOrderId;
+    const currentLocation = metadata.currentLocation;
+    
+    if (!workOrderId) {
+      return 'Please select a job first before uploading media.';
+    }
+    
+    if (!currentLocation) {
+      return 'Please select a location/room first before uploading media.';
+    }
+    
+    // Extract media URL from WhatsApp data
+    let mediaUrl: string | null = null;
+    let mediaType: 'photo' | 'video' = 'photo';
+    
+    // Check various possible media fields from Wassenger
+    if (data.media && data.media.url) {
+      mediaUrl = data.media.url;
+      mediaType = data.media.mimetype?.startsWith('video/') ? 'video' : 'photo';
+    } else if (data.message?.imageMessage) {
+      mediaUrl = data.message.imageMessage.url;
+      mediaType = 'photo';
+    } else if (data.message?.videoMessage) {
+      mediaUrl = data.message.videoMessage.url;
+      mediaType = 'video';
+    }
+    
+    if (!mediaUrl) {
+      console.log('❌ No media URL found in WhatsApp message');
+      return 'Media upload failed - could not find media URL.';
+    }
+    
+    console.log('📎 Found media:', { mediaUrl, mediaType });
+    
+    // Download media from WhatsApp/Wassenger
+    console.log('⬇️ Downloading media from:', mediaUrl);
+    const response = await fetch(mediaUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to download media: ${response.status}`);
+    }
+    
+    const buffer = await response.arrayBuffer();
+    const uint8Array = new Uint8Array(buffer);
+    
+    // Extract context from metadata for DigitalOcean path
+    let customerName = 'unknown';
+    let postalCode = 'unknown';
+    let roomName = currentLocation || 'general';
+    
+    if (metadata.customerName) {
+      customerName = metadata.customerName
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/gi, '')
+        .replace(/\s+/g, '-')
+        .substring(0, 50);
+    }
+    
+    postalCode = metadata.postalCode || 'unknown';
+    roomName = roomName
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/gi, '')
+      .replace(/\s+/g, '-');
+    
+    // Generate unique filename
+    const uuid = randomUUID();
+    const timestamp = Date.now();
+    const extension = mediaType === 'video' ? 'mp4' : 'jpeg';
+    const filename = `${uuid}-${timestamp}.${extension}`;
+    
+    // Create S3/DO Spaces path
+    const key = `${SPACE_DIRECTORY}/data/${customerName}-${postalCode}/${roomName}/${mediaType === 'photo' ? 'photos' : 'videos'}/${filename}`;
+    
+    console.log('📤 Uploading to DigitalOcean Spaces:', key);
+    
+    // Upload to DigitalOcean Spaces
+    const uploadParams = {
+      Bucket: BUCKET_NAME,
+      Key: key,
+      Body: uint8Array,
+      ContentType: mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+      ACL: 'public-read' as const,
+      Metadata: {
+        workOrderId: workOrderId,
+        location: roomName,
+        mediaType: mediaType,
+        originalName: filename,
+        uploadedAt: new Date().toISOString(),
+        source: 'whatsapp'
+      },
+    };
+    
+    const command = new PutObjectCommand(uploadParams);
+    await s3Client.send(command);
+    
+    const publicUrl = `${PUBLIC_URL}/${key}`;
+    console.log('✅ Uploaded to DigitalOcean Spaces:', publicUrl);
+    
+    // Save to database - find ContractChecklistItem for this location
+    if (workOrderId && roomName !== 'general') {
+      const normalizedRoomName = roomName.replace(/-/g, ' ');
+      const workOrder = await prisma.workOrder.findUnique({
+        where: { id: workOrderId },
+        include: {
+          contract: {
+            include: {
+              contractChecklist: {
+                include: {
+                  items: true
+                }
+              }
+            }
+          }
+        }
+      });
+      
+      if (workOrder?.contract.contractChecklist) {
+        // Find ContractChecklistItem for this location
+        const matchingItem = workOrder.contract.contractChecklist.items.find(
+          (item: any) => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
+        );
+        
+        if (matchingItem) {
+          // Update ContractChecklistItem with new media
+          const currentPhotos = matchingItem.photos || [];
+          const currentVideos = matchingItem.videos || [];
+          
+          if (mediaType === 'photo') {
+            await prisma.contractChecklistItem.update({
+              where: { id: matchingItem.id },
+              data: {
+                photos: [...currentPhotos, publicUrl]
+              }
+            });
+            console.log('💾 Saved photo to database');
+          } else {
+            await prisma.contractChecklistItem.update({
+              where: { id: matchingItem.id },
+              data: {
+                videos: [...currentVideos, publicUrl]
+              }
+            });
+            console.log('💾 Saved video to database');
+          }
+        } else {
+          console.log('⚠️ No matching ContractChecklistItem found for location:', normalizedRoomName);
+        }
+      }
+    }
+    
+    // Return success message
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${currentLocation}!\n\nYou can continue with your inspection or upload more media.`;
+    
+  } catch (error) {
+    console.error('❌ Error handling WhatsApp media:', error);
+    return 'Failed to upload media. Please try again.';
   }
 }
