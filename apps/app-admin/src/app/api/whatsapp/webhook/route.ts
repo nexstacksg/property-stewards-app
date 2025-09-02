@@ -1405,13 +1405,13 @@ export async function POST(request: NextRequest) {
       // Continue processing in background
       assistantPromise.then(async (finalResponse) => {
         // Send the actual response via Wassenger API
-        if (process.env.WASSENGER_API_KEY) {
+        if (process.env.WASSENGER_API_KEY && finalResponse && typeof finalResponse === 'string') {
           try {
             await fetch('https://api.wassenger.com/v1/messages', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.WASSENGER_API_KEY}`
+                'Token': process.env.WASSENGER_API_KEY  // Use Token header like testRoute
               },
               body: JSON.stringify({
                 phone: phone,
@@ -1423,6 +1423,8 @@ export async function POST(request: NextRequest) {
             console.error('❌ Failed to send delayed response:', error);
           }
         }
+      }).catch(error => {
+        console.error('❌ Error in delayed assistant processing:', error);
       });
     } else {
       responseText = result as string;
@@ -1430,14 +1432,34 @@ export async function POST(request: NextRequest) {
     
     console.log('📤 Sending response:', responseText);
     
-    // Return response in Wassenger's expected format
-    // Wassenger expects just the message text or an array of messages
-    return new Response(responseText, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/plain',
-      },
-    });
+    // Send via Wassenger API (like testRoute does)
+    if (process.env.WASSENGER_API_KEY) {
+      try {
+        const sendResponse = await fetch('https://api.wassenger.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Token': process.env.WASSENGER_API_KEY
+          },
+          body: JSON.stringify({
+            phone: phone,
+            message: responseText
+          })
+        });
+        
+        if (!sendResponse.ok) {
+          const error = await sendResponse.text();
+          console.error('❌ Wassenger API error:', sendResponse.status, error);
+        } else {
+          console.log('✅ Message sent via Wassenger API');
+        }
+      } catch (error) {
+        console.error('❌ Failed to send via Wassenger:', error);
+      }
+    }
+    
+    // Return success to webhook
+    return NextResponse.json({ success: true });
     
   } catch (error) {
     console.error('❌ Webhook error:', error);
