@@ -398,10 +398,10 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
                           <div className="flex items-start justify-between">
                             <div>
                               <p className="font-medium">
-                                {item.order}. {item.name}
+                                {item.order}. {item.name || item.item}
                               </p>
-                              {item.action && (
-                                <p className="text-sm text-muted-foreground">{item.action}</p>
+                              {item.action || item.description && (
+                                <p className="text-sm text-muted-foreground">{item.action || item.description}</p>
                               )}
                               <div className="flex gap-2 mt-1">
                                 {/* <Badge variant="outline">{item.category}</Badge> */}
