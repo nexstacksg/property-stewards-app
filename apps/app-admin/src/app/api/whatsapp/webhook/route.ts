@@ -161,21 +161,28 @@ export async function POST(request: NextRequest) {
     if (hasMedia) {
       console.log('🔄 Processing media message...');
       
-      // Ensure we have a thread for this phone number BEFORE processing media
+      // Use existing thread if available, don't create new one to preserve context
       let threadId = whatsappThreads.get(phoneNumber);
+      
       if (!threadId) {
-        console.log('🆕 Creating new thread for media upload from phone:', phoneNumber);
-        const thread = await openai.beta.threads.create({
-          metadata: {
-            phoneNumber: phoneNumber,
-            createdAt: new Date().toISOString(),
-            source: 'whatsapp_media_upload'
-          }
-        });
-        threadId = thread.id;
-        whatsappThreads.set(phoneNumber, threadId);
-        console.log('✅ Created new thread for media:', threadId);
+        console.log('⚠️ No existing thread found for media upload from phone:', phoneNumber);
+        console.log('📝 User needs to start a conversation first to establish context');
+        
+        // Send helpful message instead of creating new thread
+        await sendWhatsAppResponse(phoneNumber, 
+          'Please start a conversation first before uploading media. Try saying "What are my jobs today?" to get started.'
+        );
+        
+        const msgData = processedMessages.get(messageId);
+        if (msgData) {
+          msgData.responded = true;
+          processedMessages.set(messageId, msgData);
+        }
+        
+        return NextResponse.json({ success: true });
       }
+      
+      console.log('✅ Using existing thread for media upload:', threadId);
       
       const mediaResponse = await handleMediaMessage(data, phoneNumber);
       if (mediaResponse) {
@@ -1206,7 +1213,7 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     // Check if we have work order context
     const workOrderId = metadata.workOrderId;
-    const currentLocation = metadata.currentLocation;
+    let currentLocation = metadata.currentLocation;
     
     console.log('🔍 Media upload context check:', {
       workOrderId: workOrderId,
@@ -1221,9 +1228,53 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     }
     
     if (!currentLocation) {
-      console.log('⚠️ No location context - will save to general folder');
-      // Don't block upload, but save to general folder
-      // return 'Please select a location/room first before uploading media.';
+      console.log('⚠️ No specific location context - will try to find the active location or use general');
+      
+      // Try to find the most recent location from work order
+      if (workOrderId) {
+        try {
+          const workOrder = await prisma.workOrder.findUnique({
+            where: { id: workOrderId },
+            include: {
+              contract: {
+                include: {
+                  contractChecklist: {
+                    include: {
+                      items: {
+                        orderBy: { order: 'asc' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          });
+          
+          if (workOrder?.contract.contractChecklist?.items.length) {
+            // Find the first location that has some progress but isn't completed
+            const activeItem = workOrder.contract.contractChecklist.items.find(
+              item => item.enteredOn === null // Not completed yet
+            );
+            
+            if (activeItem) {
+              currentLocation = activeItem.name;
+              console.log('✅ Found active location from work order:', currentLocation);
+            } else {
+              // All items are complete, use the last one
+              const lastItem = workOrder.contract.contractChecklist.items[workOrder.contract.contractChecklist.items.length - 1];
+              currentLocation = lastItem.name;
+              console.log('✅ Using last location from work order:', currentLocation);
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ Could not determine location from work order:', error);
+        }
+      }
+      
+      if (!currentLocation) {
+        currentLocation = 'general';
+        console.log('⚠️ Using general folder for media upload');
+      }
     }
     
     // Extract media URL from WhatsApp data - Enhanced for multiple Wassenger formats
@@ -1411,7 +1462,8 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     }
     
     // Return success message
-    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${currentLocation}!\n\nYou can continue with your inspection or upload more media.`;
+    const locationName = currentLocation === 'general' ? 'your current job' : currentLocation;
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nYou can continue with your inspection or upload more media.`;
     
   } catch (error) {
     console.error('❌ Error handling WhatsApp media:', error);
