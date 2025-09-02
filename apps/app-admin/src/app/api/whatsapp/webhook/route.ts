@@ -1216,16 +1216,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'No phone number' }, { status: 400 });
     }
     
+    // Normalize phone for consistent storage
+    const normalizedPhone = phone.replace(/[^\d+]/g, ''); // Keep only digits and +
+    console.log('📞 Normalized phone:', normalizedPhone);
+    
     // Get or create thread for this phone number
-    let threadId = phoneThreadStore.get(phone);
+    let threadId = phoneThreadStore.get(normalizedPhone);
     
     if (!threadId) {
-      console.log('Creating new thread for phone:', phone);
+      console.log('Creating new thread for phone:', normalizedPhone);
       
       // Try to identify inspector by phone
       let inspectorInfo = null;
-      const normalizedPhone = phone.startsWith('+') ? phone : `+65${phone}`;
-      const inspector = await getInspectorByPhone(normalizedPhone);
+      const phoneWithCountryCode = normalizedPhone.startsWith('+') ? normalizedPhone : `+65${normalizedPhone}`;
+      const inspector = await getInspectorByPhone(phoneWithCountryCode);
       
       if (inspector) {
         inspectorInfo = {
@@ -1253,7 +1257,7 @@ export async function POST(request: NextRequest) {
       });
       
       threadId = thread.id;
-      phoneThreadStore.set(phone, threadId);
+      phoneThreadStore.set(normalizedPhone, threadId);
       console.log('Created thread:', threadId);
     } else {
       console.log('Using existing thread:', threadId);
@@ -1426,11 +1430,13 @@ export async function POST(request: NextRequest) {
     
     console.log('📤 Sending response:', responseText);
     
-    // Return response
-    return NextResponse.json({
-      success: true,
-      reply: responseText,
-      threadId: threadId
+    // Return response in Wassenger's expected format
+    // Wassenger expects just the message text or an array of messages
+    return new Response(responseText, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/plain',
+      },
     });
     
   } catch (error) {
@@ -1447,9 +1453,14 @@ export async function POST(request: NextRequest) {
 }
 
 // Handle GET requests (for webhook verification)
-export async function GET() {
-  return NextResponse.json({ 
-    status: 'ok',
-    message: 'WhatsApp webhook endpoint is active'
-  });
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const secret = searchParams.get('secret');
+  
+  if (secret === process.env.WASSENGER_WEBHOOK_SECRET) {
+    console.log('✅ Wassenger webhook verified');
+    return new Response('OK', { status: 200 });
+  }
+  
+  return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
 }
