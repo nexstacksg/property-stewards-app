@@ -190,13 +190,21 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       return []
     }
 
-    // Group items by location and check if all tasks for each location are completed
-    const locationMap = new Map<string, { total: number, completed: number }>()
+    // Group items by location and track both completion status and item ID
+    const locationMap = new Map<string, { 
+      total: number, 
+      completed: number, 
+      contractChecklistItemId: string 
+    }>()
     
     for (const item of workOrder.contract.contractChecklist.items) {
       const location = item.name
       if (!locationMap.has(location)) {
-        locationMap.set(location, { total: 0, completed: 0 })
+        locationMap.set(location, { 
+          total: 0, 
+          completed: 0, 
+          contractChecklistItemId: item.id 
+        })
       }
       const locData = locationMap.get(location)!
       locData.total++
@@ -205,7 +213,7 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       }
     }
 
-    // Convert to array with completion status
+    // Convert to array with completion status and ContractChecklistItem ID
     const locationsWithStatus = Array.from(locationMap.entries()).map(([name, data]) => {
       const isCompleted = data.completed === data.total && data.total > 0
       return {
@@ -213,9 +221,15 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
         displayName: isCompleted ? `${name} (Done)` : name,
         isCompleted: isCompleted,
         totalTasks: data.total,
-        completedTasks: data.completed
+        completedTasks: data.completed,
+        contractChecklistItemId: data.contractChecklistItemId  // Add the ID!
       }
     })
+
+    console.log('🏠 Locations with ContractChecklistItem IDs:', locationsWithStatus.map(loc => ({
+      name: loc.name,
+      id: loc.contractChecklistItemId
+    })));
 
     return locationsWithStatus
   } catch (error) {
@@ -467,31 +481,102 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
   }
 }
 
+// New function to get ContractChecklistItem ID by location name
+export async function getContractChecklistItemIdByLocation(workOrderId: string, location: string): Promise<string | null> {
+  try {
+    console.log('🔍 Finding ContractChecklistItem ID for workOrder:', workOrderId, 'location:', location);
+    
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      include: {
+        contract: {
+          include: {
+            contractChecklist: {
+              include: {
+                items: {
+                  where: {
+                    name: location
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    const checklistItem = workOrder?.contract?.contractChecklist?.items[0];
+    if (checklistItem) {
+      console.log('✅ Found ContractChecklistItem ID:', checklistItem.id, 'for location:', location);
+      return checklistItem.id;
+    }
+    
+    console.log('❌ No ContractChecklistItem found for location:', location);
+    return null;
+  } catch (error) {
+    console.error('❌ Error finding ContractChecklistItem:', error);
+    return null;
+  }
+}
+
 export async function getTaskMedia(taskId: string) {
   try {
+    console.log('🔍 getTaskMedia called with taskId:', taskId);
+    
+    // Handle virtual task IDs by extracting base checklist item ID
+    let actualTaskId = taskId;
+    if (taskId.includes('_task_')) {
+      actualTaskId = taskId.split('_task_')[0];
+      console.log('📝 Extracted base taskId from virtual ID:', actualTaskId);
+    }
+    
+    console.log('🔍 Querying database for ContractChecklistItem with id:', actualTaskId);
+    
     const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId },
+      where: { id: actualTaskId }, // Use actual ID, not virtual ID
       select: {
+        id: true,
+        name: true,
+        remarks: true,
         photos: true,
         videos: true,
-        name: true,
-        remarks: true
+        enteredOn: true,
+        enteredById: true,
+        contractChecklistId: true,
+        order: true
       }
     })
 
-    if (!item) return null
+    console.log('📊 Database query result:', item);
 
-    return {
-      taskId: taskId,
+    if (!item) {
+      console.log('❌ No ContractChecklistItem found with id:', actualTaskId);
+      console.log('💡 This might be an inspector ID instead of a ContractChecklistItem ID');
+      return null;
+    }
+
+    console.log('✅ Found ContractChecklistItem:');
+    console.log('  - ID:', item.id);
+    console.log('  - Name:', item.name);
+    console.log('  - Photos array length:', item.photos?.length || 0);
+    console.log('  - Photos array:', item.photos);
+    console.log('  - Videos array length:', item.videos?.length || 0);
+    console.log('  - Videos array:', item.videos);
+
+    const result = {
+      taskId: taskId, // Return original taskId for consistency
       name: item.name,
       remarks: item.remarks,
       photos: item.photos || [],
       videos: item.videos || [],
       photoCount: item.photos?.length || 0,
       videoCount: item.videos?.length || 0
-    }
+    };
+
+    console.log('📤 Returning result:', result);
+    return result;
   } catch (error) {
-    console.error('Error getting task media:', error)
+    console.error('❌ Error getting task media:', error)
     return null
   }
 }
