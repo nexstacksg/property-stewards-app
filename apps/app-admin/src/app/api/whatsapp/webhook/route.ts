@@ -380,16 +380,25 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       assistant_id: assistantId
     });
 
-    // Wait for completion
+    // Wait for completion and handle multiple rounds of tool calls
     let runStatus = await waitForRunCompletion(threadId, run.id);
+    let toolCallRounds = 0;
+    const maxToolCallRounds = 5; // Prevent infinite loops
 
-    // Handle tool calls
-    if (runStatus.status === 'requires_action') {
-      console.log('🔧 Run requires action, handling tool calls...');
+    // Handle tool calls in a loop until run completes
+    while (runStatus.status === 'requires_action' && toolCallRounds < maxToolCallRounds) {
+      console.log(`🔧 Run requires action (round ${toolCallRounds + 1}), handling tool calls...`);
       await handleToolCalls(threadId, run.id, runStatus, cleanPhone);
       console.log('⏳ Waiting for run completion after tool execution...');
       runStatus = await waitForRunCompletion(threadId, run.id);
       console.log('📋 Run status after tool execution:', runStatus.status);
+      toolCallRounds++;
+    }
+
+    // Check if we hit the max rounds limit
+    if (toolCallRounds >= maxToolCallRounds) {
+      console.error('❌ Too many tool call rounds, aborting');
+      return 'Sorry, the request is taking too long to process. Please try again.';
     }
 
     // Check if run completed successfully
