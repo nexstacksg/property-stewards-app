@@ -1,27 +1,14 @@
 import { prisma } from '@/lib/prisma'
 import { WorkOrderStatus, Status } from '@prisma/client'
-import { cacheHelpers, cache, CACHE_TTL } from '@/lib/redis-cache'
 
 export async function getInspectorByPhone(phone: string) {
   try {
-    // Check Redis cache first
-    const cached = await cacheHelpers.getInspector(phone)
-    if (cached) {
-      return cached
-    }
-    
     const inspector = await prisma.inspector.findUnique({
       where: {
         mobilePhone: phone,
         status: Status.ACTIVE
       }
     })
-    
-    // Cache the result
-    if (inspector) {
-      await cacheHelpers.setInspector(phone, inspector)
-    }
-    
     return inspector
   } catch (error) {
     console.error('Error fetching inspector by phone:', error)
@@ -36,17 +23,6 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     
     const endOfDay = new Date()
     endOfDay.setHours(23, 59, 59, 999)
-    
-    // Create cache key with date to ensure fresh data per day
-    const dateKey = startOfDay.toISOString().split('T')[0]
-    const cacheKey = `todayjobs:${inspectorId}:${dateKey}`
-    
-    // Check cache first
-    const cachedJobs = await cache.get(cacheKey)
-    if (cachedJobs) {
-      console.log('✅ Returning cached today jobs for inspector:', inspectorId)
-      return cachedJobs
-    }
 
     const workOrders = await prisma.workOrder.findMany({
       where: {
@@ -69,7 +45,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       }
     })
 
-    const todayJobs = workOrders.map(wo => ({
+    return workOrders.map(wo => ({
       id: wo.id,
       property_address: `${wo.contract.address.address}, ${wo.contract.address.postalCode}`,
       customer_name: wo.contract.customer.name,
@@ -79,11 +55,6 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',
       notes: wo.remarks || ''
     }))
-    
-    // Cache for 60 seconds (short TTL since it's date/time sensitive)
-    await cache.set(cacheKey, todayJobs, 60)
-    
-    return todayJobs
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
     return []
@@ -92,12 +63,6 @@ export async function getTodayJobsForInspector(inspectorId: string) {
 
 export async function getWorkOrderById(workOrderId: string) {
   try {
-    // Check Redis cache first
-    const cached = await cacheHelpers.getWorkOrder(workOrderId)
-    if (cached) {
-      return cached
-    }
-    
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
       include: {
@@ -118,7 +83,7 @@ export async function getWorkOrderById(workOrderId: string) {
 
     if (!workOrder) return null
 
-    const result = {
+    return {
       id: workOrder.id,
       property_address: `${workOrder.contract.address.address}, ${workOrder.contract.address.postalCode}`,
       customer_name: workOrder.contract.customer.name,
@@ -129,11 +94,6 @@ export async function getWorkOrderById(workOrderId: string) {
       scheduled_end: workOrder.scheduledEndDateTime,
       checklist_items: workOrder.contract.contractChecklist?.items || []
     }
-    
-    // Cache the result
-    await cacheHelpers.setWorkOrder(workOrderId, result)
-    
-    return result
   } catch (error) {
     console.error('Error fetching work order:', error)
     return null
@@ -207,13 +167,6 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
 
 export async function getLocationsWithCompletionStatus(workOrderId: string) {
   try {
-    // Check cache first
-    const cachedLocations = await cacheHelpers.getLocations(workOrderId)
-    if (cachedLocations) {
-      console.log('✅ Returning cached locations for work order:', workOrderId)
-      return cachedLocations
-    }
-
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
       include: {
@@ -278,9 +231,6 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       id: loc.contractChecklistItemId
     })));
 
-    // Cache the locations
-    await cacheHelpers.setLocations(workOrderId, locationsWithStatus)
-    
     return locationsWithStatus
   } catch (error) {
     console.error('Error fetching locations with status:', error)
@@ -290,14 +240,6 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
 export async function getTasksByLocation(workOrderId: string, location: string) {
   try {
-    // Create cache key for tasks
-    const cacheKey = `tasks:${workOrderId}:${location}`
-    const cachedTasks = await cache.get(cacheKey)
-    if (cachedTasks) {
-      console.log('✅ Returning cached tasks for location:', location)
-      return cachedTasks
-    }
-
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
       include: {
@@ -335,7 +277,7 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
       const tasks = Array.isArray(checklistItem.tasks) ? checklistItem.tasks : []
       
       // Return individual tasks from the tasks array
-      const taskList = tasks.map((task: any, index: number) => ({
+      return tasks.map((task: any, index: number) => ({
         id: `${checklistItem.id}_task_${index}`,
         location: checklistItem.name,
         action: typeof task === 'string' ? task : (task.task || 'Inspect area'),
@@ -349,14 +291,10 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
         taskIndex: index,
         locationEnteredOn: checklistItem.enteredOn  // Pass the enteredOn for overall status
       }))
-      
-      // Cache the tasks
-      await cache.set(cacheKey, taskList, CACHE_TTL.LOCATIONS)
-      return taskList
     }
     
     // Fallback to old behavior if no tasks JSON - treat remarks as single task
-    const singleTask = [{
+    return [{
       id: checklistItem.id,
       location: checklistItem.name,
       action: checklistItem.remarks || 'Inspect area',
@@ -368,10 +306,6 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
       completed_by: checklistItem.enteredById,
       isSubTask: false
     }]
-    
-    // Cache the single task
-    await cache.set(cacheKey, singleTask, CACHE_TTL.LOCATIONS)
-    return singleTask
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
     return []
@@ -414,29 +348,6 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
           data: updateData
         })
         
-        // Get workOrderId from item to clear cache
-        const workOrderItem = await prisma.contractChecklistItem.findUnique({
-          where: { id: checklistItemId },
-          include: {
-            contractChecklist: {
-              include: {
-                contract: {
-                  include: {
-                    workOrders: true
-                  }
-                }
-              }
-            }
-          }
-        })
-        
-        if (workOrderItem?.contractChecklist?.contract?.workOrders?.[0]?.id) {
-          const workOrderId = workOrderItem.contractChecklist.contract.workOrders[0].id
-          // Clear caches
-          await cacheHelpers.clearWorkOrder(workOrderId)
-          await cache.del(`tasks:${workOrderId}:${item.name}`)
-        }
-        
         return true
       }
       return false
@@ -455,33 +366,10 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
       updateData.enteredById = null
     }
 
-    await prisma.contractChecklistItem.update({
+    const updated = await prisma.contractChecklistItem.update({
       where: { id: taskId },
       data: updateData
     })
-    
-    // Get workOrderId to clear cache
-    const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId },
-      include: {
-        contractChecklist: {
-          include: {
-            contract: {
-              include: {
-                workOrders: true
-              }
-            }
-          }
-        }
-      }
-    })
-    
-    if (item?.contractChecklist?.contract?.workOrders?.[0]?.id) {
-      const workOrderId = item.contractChecklist.contract.workOrders[0].id
-      // Clear caches  
-      await cacheHelpers.clearWorkOrder(workOrderId)
-      await cache.del(`tasks:${workOrderId}:${item.name}`)
-    }
 
     return true
   } catch (error) {
@@ -537,10 +425,6 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
         enteredById: inspectorId || checklistItem.enteredById
       }
     })
-    
-    // Clear caches
-    await cacheHelpers.clearWorkOrder(workOrderId)
-    await cache.del(`tasks:${workOrderId}:${location}`)
 
     return true
   } catch (error) {
@@ -557,7 +441,7 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
 
     if (!item) return false
 
-    await prisma.contractChecklistItem.update({
+    const updated = await prisma.contractChecklistItem.update({
       where: { id: taskId },
       data: {
         photos: {
@@ -565,28 +449,6 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
         }
       }
     })
-    
-    // Clear related caches
-    const workOrderItem = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId },
-      include: {
-        contractChecklist: {
-          include: {
-            contract: {
-              include: {
-                workOrders: true
-              }
-            }
-          }
-        }
-      }
-    })
-    
-    if (workOrderItem?.contractChecklist?.contract?.workOrders?.[0]?.id) {
-      const workOrderId = workOrderItem.contractChecklist.contract.workOrders[0].id
-      await cacheHelpers.clearWorkOrder(workOrderId)
-      await cache.del(`tasks:${workOrderId}:${item.name}`)
-    }
 
     return true
   } catch (error) {
@@ -611,28 +473,6 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
         }
       }
     })
-    
-    // Clear related caches
-    const workOrderItem = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId },
-      include: {
-        contractChecklist: {
-          include: {
-            contract: {
-              include: {
-                workOrders: true
-              }
-            }
-          }
-        }
-      }
-    })
-    
-    if (workOrderItem?.contractChecklist?.contract?.workOrders?.[0]?.id) {
-      const workOrderId = workOrderItem.contractChecklist.contract.workOrders[0].id
-      await cacheHelpers.clearWorkOrder(workOrderId)
-      await cache.del(`tasks:${workOrderId}:${item.name}`)
-    }
 
     return true
   } catch (error) {
@@ -645,14 +485,6 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
 export async function getContractChecklistItemIdByLocation(workOrderId: string, location: string): Promise<string | null> {
   try {
     console.log('🔍 Finding ContractChecklistItem ID for workOrder:', workOrderId, 'location:', location);
-    
-    // Check cache first
-    const cacheKey = `checklistitem:${workOrderId}:${location}`
-    const cachedId = await cache.get<string>(cacheKey)
-    if (cachedId) {
-      console.log('✅ Returning cached ContractChecklistItem ID:', cachedId)
-      return cachedId
-    }
     
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
@@ -676,8 +508,6 @@ export async function getContractChecklistItemIdByLocation(workOrderId: string, 
     const checklistItem = workOrder?.contract?.contractChecklist?.items[0];
     if (checklistItem) {
       console.log('✅ Found ContractChecklistItem ID:', checklistItem.id, 'for location:', location);
-      // Cache the ID
-      await cache.set(cacheKey, checklistItem.id, CACHE_TTL.LOCATIONS)
       return checklistItem.id;
     }
     
@@ -698,15 +528,6 @@ export async function getTaskMedia(taskId: string) {
     if (taskId.includes('_task_')) {
       actualTaskId = taskId.split('_task_')[0];
       console.log('📝 Extracted base taskId from virtual ID:', actualTaskId);
-    }
-    
-    // Check cache first
-    const cacheKey = `taskmedia:${actualTaskId}`
-    const cachedMedia = await cache.get(cacheKey)
-    if (cachedMedia) {
-      console.log('✅ Returning cached task media for:', actualTaskId)
-      // Return with original taskId for consistency
-      return { ...cachedMedia, taskId }
     }
     
     console.log('🔍 Querying database for ContractChecklistItem with id:', actualTaskId);
@@ -751,11 +572,6 @@ export async function getTaskMedia(taskId: string) {
       photoCount: item.photos?.length || 0,
       videoCount: item.videos?.length || 0
     };
-
-    // Cache the result (without taskId as it varies)
-    const cacheData = { ...result }
-    delete (cacheData as any).taskId
-    await cache.set(cacheKey, cacheData, CACHE_TTL.LOCATIONS)
 
     console.log('📤 Returning result:', result);
     return result;

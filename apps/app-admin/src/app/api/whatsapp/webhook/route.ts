@@ -16,24 +16,23 @@ import {
   getWorkOrderProgress
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
-import { cacheHelpers } from '@/lib/redis-cache';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Cache for processed messages (prevents duplicates) - kept in memory for speed
+// Cache for processed messages (prevents duplicates)
 const processedMessages = new Map<string, {
   timestamp: number;
   responseId: string;
   responded: boolean;
 }>();
 
-// Thread management - will use Redis for persistence
-const whatsappThreads = new Map<string, string>(); // Local cache for speed
+// Thread management for WhatsApp conversations
+const whatsappThreads = new Map<string, string>();
 
-// Reuse assistant ID - will check Redis first
+// Reuse assistant ID - reset to force recreation with media tools
 let assistantId: string | null = null;
 
 // Clean up old processed messages every 5 minutes
@@ -62,11 +61,6 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  
-  console.log('🌐 ===========================================');
-  console.log('🌐 WEBHOOK REQUEST RECEIVED');
-  console.log('🌐 Time:', new Date().toISOString());
-  console.log('🌐 ===========================================');
   
   try {
     // Verify webhook secret
@@ -221,7 +215,8 @@ export async function POST(request: NextRequest) {
     console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`);
 
     // Process with OpenAI Assistant with timeout and fallback
-    const TIMEOUT_MS = 25000; // 25 seconds timeout for faster fallback
+    const TIMEOUT_MS = 30000; // 30 seconds timeout
+    const QUICK_RESPONSE_MS = 5000; // 5 seconds for quick response check
     
     try {
       // Start the assistant processing
@@ -287,20 +282,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log('🏁 ===========================================');
-    console.log('🏁 WEBHOOK PROCESSING COMPLETE');
-    console.log('🏁 Total time:', Date.now() - startTime, 'ms');
-    console.log('🏁 ===========================================');
-
     return NextResponse.json({ success: true });
     
   } catch (error) {
     console.error('❌ Webhook error:', error);
-    console.error('❌ Error details:', {
-      name: error instanceof Error ? error.name : 'Unknown',
-      message: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined
-    });
     // Return success to prevent webhook retries
     return NextResponse.json({ success: true });
   }
@@ -311,28 +296,11 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   try {
     const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
     
-    // Get thread from local cache first, then Redis
+    // Get or create thread
     let threadId = whatsappThreads.get(cleanPhone);
     
     if (!threadId) {
-      // Try Redis cache
-      const cachedThreadId = await cacheHelpers.getThread(cleanPhone);
-      if (cachedThreadId) {
-        threadId = cachedThreadId;
-        whatsappThreads.set(cleanPhone, threadId); // Update local cache
-      }
-    }
-    
-    if (!threadId) {
-      // Check Redis cache for inspector first
-      let inspector = await cacheHelpers.getInspector(cleanPhone);
-      
-      if (!inspector) {
-        inspector = await getInspectorByPhone(cleanPhone);
-        if (inspector) {
-          await cacheHelpers.setInspector(cleanPhone, inspector);
-        }
-      }
+      const inspector = await getInspectorByPhone(cleanPhone);
       
       const thread = await openai.beta.threads.create({
         metadata: {
@@ -348,7 +316,6 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       
       threadId = thread.id;
       whatsappThreads.set(cleanPhone, threadId);
-      await cacheHelpers.setThread(cleanPhone, threadId); // Save to Redis
       console.log(`🆕 Created thread ${threadId} for ${cleanPhone}`);
     }
 
@@ -358,15 +325,9 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       content: message
     });
 
-    // Get or create assistant - check Redis first
+    // Get or create assistant
     if (!assistantId) {
-      const cachedAssistantId = await cacheHelpers.getAssistantId();
-      if (cachedAssistantId) {
-        assistantId = cachedAssistantId;
-      } else {
-        assistantId = await createAssistant();
-        await cacheHelpers.setAssistantId(assistantId);
-      }
+      assistantId = await createAssistant();
     }
 
     // Run assistant
@@ -402,20 +363,17 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - optimized polling
+// Wait for run completion - maximum speed
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 100; // 10 seconds max
+  const maxAttempts = 50; // 5 seconds max (100ms intervals)
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    // Progressive delay: start fast, slow down over time
-    const delay = attempts < 10 ? 50 : attempts < 30 ? 100 : 200;
-    await new Promise(resolve => setTimeout(resolve, delay));
-    
+    await new Promise(resolve => setTimeout(resolve, 100)); // Very fast polling
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
@@ -460,65 +418,29 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
 // Send WhatsApp response via Wassenger
 async function sendWhatsAppResponse(to: string, message: string) {
   try {
-    console.log('📤 Attempting to send WhatsApp message:', {
-      to: to,
-      messageLength: message.length,
-      messagePreview: message.substring(0, 100),
-      hasApiKey: !!process.env.WASSENGER_API_KEY,
-      apiKeyLength: process.env.WASSENGER_API_KEY?.length
-    });
-
-    if (!process.env.WASSENGER_API_KEY) {
-      console.error('❌ WASSENGER_API_KEY is not configured!');
-      throw new Error('WASSENGER_API_KEY not configured');
-    }
-
-    const requestBody = {
-      phone: to,
-      message: message // Wassenger uses 'message' field
-    };
-
-    console.log('🔍 Sending request to Wassenger API:', {
-      url: 'https://api.wassenger.com/v1/messages',
-      body: requestBody
-    });
-
     const response = await fetch('https://api.wassenger.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Token': process.env.WASSENGER_API_KEY!
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify({
+        phone: to,
+        message: message // Wassenger uses 'message' field
+      })
     });
 
-    console.log('📡 Wassenger API response status:', response.status);
-
-    const responseText = await response.text();
-    console.log('📡 Wassenger API response body:', responseText);
-
     if (!response.ok) {
-      throw new Error(`Wassenger API error: ${response.status} - ${responseText}`);
+      const error = await response.text();
+      throw new Error(`Wassenger API error: ${response.status} - ${error}`);
     }
 
-    let result;
-    try {
-      result = JSON.parse(responseText);
-    } catch (e) {
-      console.log('⚠️ Response is not JSON:', responseText);
-      result = { success: true, raw: responseText };
-    }
-
-    console.log(`✅ Message successfully sent to ${to}`);
-    console.log('📦 Wassenger API result:', result);
+    const result = await response.json();
+    console.log(`✅ Message sent to ${to}`);
     return result;
     
   } catch (error) {
-    console.error('❌ Error sending WhatsApp message:', {
-      error: error,
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
-    });
+    console.error('❌ Error sending WhatsApp message:', error);
     throw error;
   }
 }
@@ -917,16 +839,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         if (!finalInspectorId && inspectorPhone) {
-          // Check Redis cache first
-          let inspector = await cacheHelpers.getInspector(inspectorPhone);
-          
-          if (!inspector) {
-            inspector = await getInspectorByPhone(inspectorPhone);
-            if (inspector) {
-              await cacheHelpers.setInspector(inspectorPhone, inspector);
-            }
-          }
-          
+          const inspector = await getInspectorByPhone(inspectorPhone);
           if (!inspector) {
             return JSON.stringify({
               success: false,
@@ -943,11 +856,11 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
 
-        const jobs = await getTodayJobsForInspector(finalInspectorId) as any[];
+        const jobs = await getTodayJobsForInspector(finalInspectorId);
         
         return JSON.stringify({
           success: true,
-          jobs: jobs.map((job: any, index: number) => ({
+          jobs: jobs.map((job, index) => ({
             id: job.id,
             jobNumber: index + 1,
             property: job.property_address,
@@ -964,15 +877,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'confirmJobSelection':
-        // Check Redis cache first
-        let workOrder = await cacheHelpers.getWorkOrder(args.jobId);
-        
-        if (!workOrder) {
-          workOrder = await getWorkOrderById(args.jobId);
-          if (workOrder) {
-            await cacheHelpers.setWorkOrder(args.jobId, workOrder);
-          }
-        }
+        const workOrder = await getWorkOrderById(args.jobId);
         
         if (!workOrder) {
           return JSON.stringify({
@@ -1013,15 +918,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'startJob':
-        // Run parallel operations for better performance
-        const [, locations, progress] = await Promise.all([
-          updateWorkOrderStatus(args.jobId, 'in_progress'),
-          getLocationsWithCompletionStatus(args.jobId),
-          getWorkOrderProgress(args.jobId)
-        ]);
-        
-        // Clear work order cache since status changed
-        await cacheHelpers.clearWorkOrder(args.jobId);
+        await updateWorkOrderStatus(args.jobId, 'in_progress');
         
         if (threadId) {
           await openai.beta.threads.update(threadId, {
@@ -1032,6 +929,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             }
           });
         }
+        
+        const locations = await getLocationsWithCompletionStatus(args.jobId);
+        const progress = await getWorkOrderProgress(args.jobId);
         
         return JSON.stringify({
           success: true,
@@ -1046,14 +946,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'getJobLocations':
-        // Check Redis cache first
-        let locs = await cacheHelpers.getLocations(args.jobId);
-        
-        if (!locs) {
-          locs = await getLocationsWithCompletionStatus(args.jobId);
-          await cacheHelpers.setLocations(args.jobId, locs);
-        }
-        
+        const locs = await getLocationsWithCompletionStatus(args.jobId);
         return JSON.stringify({
           success: true,
           locations: locs.map(loc => ({
@@ -1135,26 +1028,12 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           normalizedPhone = '+65' + normalizedPhone;
         }
         
-        // Check Redis cache first for both phone formats
-        let inspector = await cacheHelpers.getInspector(normalizedPhone) || 
-                        await cacheHelpers.getInspector(phone);
+        // Try to find inspector by normalized phone first
+        let inspector = await getInspectorByPhone(normalizedPhone);
         
+        // Also try original phone format
         if (!inspector) {
-          // Try parallel lookups for speed
-          const [inspectorByNormalized, inspectorByOriginal] = await Promise.all([
-            getInspectorByPhone(normalizedPhone),
-            getInspectorByPhone(phone)
-          ]);
-          
-          inspector = inspectorByNormalized || inspectorByOriginal;
-          
-          // Cache the result
-          if (inspector) {
-            await Promise.all([
-              cacheHelpers.setInspector(normalizedPhone, inspector),
-              phone !== normalizedPhone ? cacheHelpers.setInspector(phone, inspector) : null
-            ]);
-          }
+          inspector = await getInspectorByPhone(phone);
         }
         
         // If not found by phone, try by name
@@ -1220,9 +1099,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
               if (actualTaskId) {
                 console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
                 const { getTaskMedia } = await import('@/lib/services/inspectorService');
-                const mediaInfo = await getTaskMedia(actualTaskId) as any;
+                const mediaInfo = await getTaskMedia(actualTaskId);
                 
-                if (mediaInfo && mediaInfo.name) {
+                if (mediaInfo) {
                   console.log('📸 Found media for location:', metadata.currentLocation, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
                   return JSON.stringify({
                     success: true,
@@ -1250,9 +1129,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           
           // Normal case - try with the provided taskId
           const { getTaskMedia } = await import('@/lib/services/inspectorService');
-          const mediaInfo = await getTaskMedia(args.taskId) as any;
+          const mediaInfo = await getTaskMedia(args.taskId);
           
-          if (!mediaInfo || !mediaInfo.name) {
+          if (!mediaInfo) {
             console.log('❌ No media found for taskId:', args.taskId);
             return JSON.stringify({
               success: false,
@@ -1320,9 +1199,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           // Get media using the ContractChecklistItem ID
           console.log('📎 Getting media for ContractChecklistItem ID:', targetLocation.contractChecklistItemId);
           const { getTaskMedia: getTaskMediaFunc } = await import('@/lib/services/inspectorService');
-          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId) as any;
+          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId);
           
-          if (!locationMediaInfo || !locationMediaInfo.name) {
+          if (!locationMediaInfo) {
             console.log('❌ No media found for WhatsApp location:', targetLocation.name);
             return JSON.stringify({
               success: false,
@@ -1371,18 +1250,8 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
   try {
     console.log('🔄 Processing WhatsApp media message');
     
-    // Get thread from local cache first, then Redis
+    // Get thread for this phone number
     let threadId = whatsappThreads.get(phoneNumber);
-    
-    if (!threadId) {
-      // Try Redis
-      const cachedThreadId = await cacheHelpers.getThread(phoneNumber);
-      if (cachedThreadId) {
-        threadId = cachedThreadId;
-        whatsappThreads.set(phoneNumber, threadId); // Update local cache
-      }
-    }
-    
     if (!threadId) {
       console.log('❌ No thread found for media upload');
       return 'Please start a conversation first before uploading media.';
