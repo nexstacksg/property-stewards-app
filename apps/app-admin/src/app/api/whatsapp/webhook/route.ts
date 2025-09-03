@@ -47,20 +47,34 @@ setInterval(() => {
 
 // GET - Webhook verification
 export async function GET(request: NextRequest) {
+  console.log('🎯 WEBHOOK GET REQUEST RECEIVED at', new Date().toISOString());
   const { searchParams } = new URL(request.url);
   const secret = searchParams.get('secret');
   
+  console.log('🔐 GET verification - Secret provided:', secret ? 'yes' : 'no');
+  console.log('🔐 GET verification - Expected configured:', process.env.WASSENGER_WEBHOOK_SECRET ? 'yes' : 'no');
+  
   if (secret === process.env.WASSENGER_WEBHOOK_SECRET) {
-    console.log('✅ Wassenger webhook verified');
+    console.log('✅ Wassenger webhook verified successfully');
     return new Response('OK', { status: 200 });
   }
   
+  console.log('❌ Webhook verification failed - secret mismatch');
   return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
 }
 
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
+  // Immediate logging - this should always appear in logs
+  console.log('🎯 POST HIT at', new Date().toISOString());
+  
   const startTime = Date.now();
+  console.log('🚀 ===========================================');
+  console.log('🚀 WEBHOOK POST REQUEST RECEIVED');
+  console.log('🚀 Time:', new Date().toISOString());
+  console.log('🚀 URL:', request.url);
+  console.log('🚀 Headers:', Object.fromEntries(request.headers.entries()));
+  console.log('🚀 ===========================================');
   
   try {
     // Verify webhook secret
@@ -74,14 +88,35 @@ export async function POST(request: NextRequest) {
     });
     
     if (secret !== process.env.WASSENGER_WEBHOOK_SECRET) {
-      console.log('❌ Webhook secret mismatch or missing');
+      console.error('❌ Webhook secret mismatch:', {
+        provided: secret,
+        expected: process.env.WASSENGER_WEBHOOK_SECRET?.substring(0, 8) + '...'
+      });
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const body = await request.json();
-    const event = body.event;
     
-    // Log all events for debugging
+    console.log('✅ Webhook secret verified');
+
+    // Handle empty or invalid JSON body
+    let body;
+    try {
+      const text = await request.text();
+      console.log('📝 Raw body received:', text);
+      
+      if (!text || text.trim() === '') {
+        console.log('⚠️ Empty body received, returning success');
+        return NextResponse.json({ success: true });
+      }
+      
+      body = JSON.parse(text);
+      console.log('📦 Webhook body parsed:', JSON.stringify(body, null, 2));
+    } catch (parseError) {
+      console.error('❌ Failed to parse webhook body:', parseError);
+      console.log('⚠️ Returning success to prevent webhook retries');
+      return NextResponse.json({ success: true });
+    }
+    
+    const event = body.event;
     console.log(`📨 Received webhook event: ${event}`);
     
     // Process both text and media messages
@@ -216,7 +251,6 @@ export async function POST(request: NextRequest) {
 
     // Process with OpenAI Assistant with timeout and fallback
     const TIMEOUT_MS = 30000; // 30 seconds timeout
-    const QUICK_RESPONSE_MS = 5000; // 5 seconds for quick response check
     
     try {
       // Start the assistant processing
@@ -285,9 +319,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
     
   } catch (error) {
-    console.error('❌ Webhook error:', error);
-    // Return success to prevent webhook retries
-    return NextResponse.json({ success: true });
+    console.error('❌ CRITICAL WEBHOOK ERROR:', error);
+    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('Error type:', typeof error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
+    // Always return success to prevent webhook retries
+    return NextResponse.json({ success: true, error: 'Internal error handled' });
   }
 }
 
@@ -418,29 +455,61 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
 // Send WhatsApp response via Wassenger
 async function sendWhatsAppResponse(to: string, message: string) {
   try {
+    console.log('📤 Attempting to send WhatsApp message:', {
+      to: to,
+      messageLength: message.length,
+      messagePreview: message.substring(0, 100),
+      hasApiKey: !!process.env.WASSENGER_API_KEY
+    });
+
+    if (!process.env.WASSENGER_API_KEY) {
+      console.error('❌ WASSENGER_API_KEY is not configured!');
+      throw new Error('WASSENGER_API_KEY not configured');
+    }
+
+    const requestBody = {
+      phone: to,
+      message: message
+    };
+
+    console.log('🔄 Sending request to Wassenger API...');
+    
     const response = await fetch('https://api.wassenger.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Token': process.env.WASSENGER_API_KEY!
+        'Token': process.env.WASSENGER_API_KEY
       },
-      body: JSON.stringify({
-        phone: to,
-        message: message // Wassenger uses 'message' field
-      })
+      body: JSON.stringify(requestBody)
+    });
+
+    const responseText = await response.text();
+    console.log('📡 Wassenger API response:', {
+      status: response.status,
+      statusText: response.statusText,
+      body: responseText
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Wassenger API error: ${response.status} - ${error}`);
+      throw new Error(`Wassenger API error: ${response.status} - ${responseText}`);
     }
 
-    const result = await response.json();
-    console.log(`✅ Message sent to ${to}`);
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      console.log('⚠️ Response is not JSON:', responseText);
+      result = { success: true, raw: responseText };
+    }
+
+    console.log(`✅ Message sent successfully to ${to}`);
     return result;
     
   } catch (error) {
-    console.error('❌ Error sending WhatsApp message:', error);
+    console.error('❌ Error sending WhatsApp message:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined
+    });
     throw error;
   }
 }
