@@ -216,7 +216,6 @@ export async function POST(request: NextRequest) {
 
     // Process with OpenAI Assistant with timeout and fallback
     const TIMEOUT_MS = 30000; // 30 seconds timeout
-    const QUICK_RESPONSE_MS = 5000; // 5 seconds for quick response check
     
     try {
       // Start the assistant processing
@@ -300,7 +299,7 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     let threadId = whatsappThreads.get(cleanPhone);
     
     if (!threadId) {
-      const inspector = await getInspectorByPhone(cleanPhone);
+      const inspector = await getInspectorByPhone(cleanPhone) as any;
       
       const thread = await openai.beta.threads.create({
         metadata: {
@@ -839,7 +838,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         if (!finalInspectorId && inspectorPhone) {
-          const inspector = await getInspectorByPhone(inspectorPhone);
+          const inspector = await getInspectorByPhone(inspectorPhone) as any;
           if (!inspector) {
             return JSON.stringify({
               success: false,
@@ -856,7 +855,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
 
-        const jobs = await getTodayJobsForInspector(finalInspectorId);
+        const jobs = await getTodayJobsForInspector(finalInspectorId) as any[];
         
         return JSON.stringify({
           success: true,
@@ -877,7 +876,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'confirmJobSelection':
-        const workOrder = await getWorkOrderById(args.jobId);
+        const workOrder = await getWorkOrderById(args.jobId) as any;
         
         if (!workOrder) {
           return JSON.stringify({
@@ -930,8 +929,8 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        const locations = await getLocationsWithCompletionStatus(args.jobId);
-        const progress = await getWorkOrderProgress(args.jobId);
+        const locations = await getLocationsWithCompletionStatus(args.jobId) as any[];
+        const progress = await getWorkOrderProgress(args.jobId) as any;
         
         return JSON.stringify({
           success: true,
@@ -946,7 +945,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'getJobLocations':
-        const locs = await getLocationsWithCompletionStatus(args.jobId);
+        const locs = await getLocationsWithCompletionStatus(args.jobId) as any[];
         return JSON.stringify({
           success: true,
           locations: locs.map(loc => ({
@@ -1029,11 +1028,11 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         // Try to find inspector by normalized phone first
-        let inspector = await getInspectorByPhone(normalizedPhone);
+        let inspector = await getInspectorByPhone(normalizedPhone) as any;
         
         // Also try original phone format
         if (!inspector) {
-          inspector = await getInspectorByPhone(phone);
+          inspector = await getInspectorByPhone(phone) as any;
         }
         
         // If not found by phone, try by name
@@ -1099,7 +1098,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
               if (actualTaskId) {
                 console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
                 const { getTaskMedia } = await import('@/lib/services/inspectorService');
-                const mediaInfo = await getTaskMedia(actualTaskId);
+                const mediaInfo = await getTaskMedia(actualTaskId) as any;
                 
                 if (mediaInfo) {
                   console.log('📸 Found media for location:', metadata.currentLocation, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
@@ -1129,7 +1128,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           
           // Normal case - try with the provided taskId
           const { getTaskMedia } = await import('@/lib/services/inspectorService');
-          const mediaInfo = await getTaskMedia(args.taskId);
+          const mediaInfo = await getTaskMedia(args.taskId) as any;
           
           if (!mediaInfo) {
             console.log('❌ No media found for taskId:', args.taskId);
@@ -1166,7 +1165,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             workOrderId: args.workOrderId 
           });
           
-          const locationsWithStatus = await getLocationsWithCompletionStatus(args.workOrderId);
+          const locationsWithStatus = await getLocationsWithCompletionStatus(args.workOrderId) as any[];
           console.log('📍 Available locations in WhatsApp webhook:', locationsWithStatus.map((loc, index) => ({
             number: index + 1,
             name: loc.name,
@@ -1199,7 +1198,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           // Get media using the ContractChecklistItem ID
           console.log('📎 Getting media for ContractChecklistItem ID:', targetLocation.contractChecklistItemId);
           const { getTaskMedia: getTaskMediaFunc } = await import('@/lib/services/inspectorService');
-          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId);
+          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId) as any;
           
           if (!locationMediaInfo) {
             console.log('❌ No media found for WhatsApp location:', targetLocation.name);
