@@ -32,8 +32,11 @@ const processedMessages = new Map<string, {
 // Thread management for WhatsApp conversations
 const whatsappThreads = new Map<string, string>();
 
-// Reuse assistant ID - reset to force recreation with media tools
+// Global assistant ID - created ONCE and reused for ALL users
+// DO NOT RESET THIS TO NULL - it causes recreating assistant every time
 let assistantId: string | null = null;
+let isCreatingAssistant = false;
+let assistantCreationPromise: Promise<string> | null = null;
 
 // Clean up old processed messages every 5 minutes
 setInterval(() => {
@@ -99,7 +102,9 @@ export async function POST(request: NextRequest) {
     }
     
     const messageId = data.id || `${Date.now()}-${Math.random()}`;
-    const phoneNumber = data.fromNumber || data.from;
+    // Normalize phone number to consistent format (remove + and spaces)
+    const rawPhone = data.fromNumber || data.from;
+    const phoneNumber = rawPhone?.replace(/[\s+-]/g, '').replace(/^0+/, '') || '';
     const message = data.body || data.message?.text?.body || '';
     
     // Debug: Log key message properties first
@@ -184,6 +189,7 @@ export async function POST(request: NextRequest) {
       
       console.log('✅ Using existing thread for media upload:', threadId);
       
+      // Pass normalized phone number to media handler
       const mediaResponse = await handleMediaMessage(data, phoneNumber);
       if (mediaResponse) {
         // Send response via Wassenger
@@ -216,10 +222,9 @@ export async function POST(request: NextRequest) {
 
     // Process with OpenAI Assistant with timeout and fallback
     const TIMEOUT_MS = 30000; // 30 seconds timeout
-    const QUICK_RESPONSE_MS = 5000; // 5 seconds for quick response check
     
     try {
-      // Start the assistant processing
+      // Start the assistant processing with normalized phone number
       const assistantPromise = processWithAssistant(phoneNumber, message || 'User uploaded media');
       
       // Race between assistant response and timeout
@@ -294,13 +299,19 @@ export async function POST(request: NextRequest) {
 // Process message with OpenAI Assistant
 async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
-    const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
+    // Phone number is already normalized from the caller
+    const cleanPhone = phoneNumber;
     
-    // Get or create thread
+    // Get or create thread - use consistent phone format
     let threadId = whatsappThreads.get(cleanPhone);
     
     if (!threadId) {
-      const inspector = await getInspectorByPhone(cleanPhone);
+      console.log(`🔍 No thread found for ${cleanPhone}, creating new one...`);
+      // Try to find inspector by phone (with and without +)
+      let inspector = await getInspectorByPhone('+' + cleanPhone) as any;
+      if (!inspector) {
+        inspector = await getInspectorByPhone(cleanPhone) as any;
+      }
       
       const thread = await openai.beta.threads.create({
         metadata: {
@@ -325,10 +336,26 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       content: message
     });
 
-    // Get or create assistant
+    // Get or create assistant - SINGLETON PATTERN with proper promise handling
     if (!assistantId) {
-      assistantId = await createAssistant();
+      if (!assistantCreationPromise) {
+        console.log('🔧 Creating assistant for first time...');
+        assistantCreationPromise = createAssistant();
+      } else {
+        console.log('⏳ Waiting for assistant creation from another request...');
+      }
+      
+      try {
+        assistantId = await assistantCreationPromise;
+        console.log('✅ Assistant ready:', assistantId);
+      } catch (error) {
+        console.error('❌ Failed to get assistant:', error);
+        assistantCreationPromise = null; // Reset to allow retry
+        return 'Service initialization failed. Please try again.';
+      }
     }
+    
+    console.log('📌 Using cached assistant:', assistantId);
 
     // Run assistant
     const run = await openai.beta.threads.runs.create(threadId, {
@@ -392,6 +419,8 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     const functionName = toolCall.function.name;
     const functionArgs = JSON.parse(toolCall.function.arguments);
     
+    console.log(`🔧 Tool call requested: ${functionName}`, functionArgs);
+    
     // Add phone number for relevant tools
     if (functionName === 'getTodayJobs' && !functionArgs.inspectorPhone) {
       functionArgs.inspectorPhone = phoneNumber;
@@ -402,6 +431,8 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     }
     
     const output = await executeTool(functionName, functionArgs, threadId);
+    
+    console.log(`✅ Tool ${functionName} executed successfully`);
     
     toolOutputs.push({
       tool_call_id: toolCall.id,
@@ -445,11 +476,14 @@ async function sendWhatsAppResponse(to: string, message: string) {
   }
 }
 
-// Create assistant optimized for WhatsApp speed
+// Create assistant - ONLY CALLED ONCE PER SERVER INSTANCE
 async function createAssistant() {
-  const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.7',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
+  console.log('🚀 ONE-TIME ASSISTANT CREATION STARTING...');
+  
+  try {
+    const assistant = await openai.beta.assistants.create({
+    name: 'Property Inspector Assistant v0.9',
+    instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -457,6 +491,13 @@ Key capabilities:
 - Allow job detail modifications before starting
 - Guide through room-by-room inspection workflow
 - Track task completion and progress
+
+CRITICAL JOB SELECTION PROCESS:
+- When showing jobs, each has a number: [1], [2], [3] and an ID (e.g., "cmeps0xtz0006m35wcrtr8wx9")
+- When user types just a number like "1", you MUST:
+  1. Look up which job was shown as [1] in the getTodayJobs result
+  2. Get that job's ID from the response
+  3. Call confirmJobSelection with the actual job ID (NOT the number "1")
 
 CRITICAL: Task ID Management
 - Tasks have two identifiers:
@@ -490,12 +531,17 @@ CONVERSATION FLOW GUIDELINES:
      ⭐ Priority: High
      Status: STARTED
    - End with numbered selection prompt like "Type [1], [2] or [3] to select"
+   - CRITICAL: Remember the mapping between job numbers and job IDs for selection
 
 2. Job Selection and Confirmation:
-   - When user selects a job, use confirmJobSelection tool
-   - Display the destination details clearly
+   - When user selects a job by typing just a number (e.g., "1", "2", "3"):
+     * Map the number to the corresponding job from getTodayJobs result
+     * Use the job's ID (NOT the number) with confirmJobSelection tool 
+     * Example: If user types "1", use the ID from jobs[0].id
+   - Display the destination details clearly  
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
+   - IMPORTANT: There is NO selectJob tool - use confirmJobSelection directly with the job ID
 
 3. Starting Inspection:
    - Once confirmed, use startJob tool
@@ -588,8 +634,13 @@ MEDIA DISPLAY FORMATTING:
     tools: assistantTools
   });
 
-  console.log('Created assistant:', assistant.id);
-  return assistant.id;
+    console.log('✅ ASSISTANT CREATED SUCCESSFULLY:', assistant.id);
+    // CRITICAL: Return the ID to be cached
+    return assistant.id;
+  } catch (error) {
+    console.error('❌ ASSISTANT CREATION FAILED:', error);
+    throw error;
+  }
 }
 
 // Tool definitions (simplified for WhatsApp)
@@ -618,25 +669,8 @@ const assistantTools = [
   {
     type: 'function' as const,
     function: {
-      name: 'selectJob',
-      description: 'Select a job to inspect',
-      parameters: {
-        type: 'object',
-        properties: {
-          jobId: {
-            type: 'string',
-            description: 'Work order ID'
-          }
-        },
-        required: ['jobId']
-      }
-    }
-  },
-  {
-    type: 'function' as const,
-    function: {
       name: 'confirmJobSelection',
-      description: 'Confirm job selection',
+      description: 'Confirm job selection and show job details',
       parameters: {
         type: 'object',
         properties: {
@@ -839,7 +873,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         if (!finalInspectorId && inspectorPhone) {
-          const inspector = await getInspectorByPhone(inspectorPhone);
+          const inspector = await getInspectorByPhone(inspectorPhone) as any;
           if (!inspector) {
             return JSON.stringify({
               success: false,
@@ -856,13 +890,14 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
 
-        const jobs = await getTodayJobsForInspector(finalInspectorId);
+        const jobs = await getTodayJobsForInspector(finalInspectorId) as any[];
         
         return JSON.stringify({
           success: true,
           jobs: jobs.map((job, index) => ({
             id: job.id,
             jobNumber: index + 1,
+            selectionNumber: `[${index + 1}]`,
             property: job.property_address,
             customer: job.customer_name,
             time: job.scheduled_date.toLocaleTimeString('en-SG', {
@@ -873,11 +908,12 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             status: job.status,
             priority: job.priority
           })),
-          count: jobs.length
+          count: jobs.length,
+          instructions: "User can select a job by typing its number (1, 2, 3, etc.)"
         });
 
       case 'confirmJobSelection':
-        const workOrder = await getWorkOrderById(args.jobId);
+        const workOrder = await getWorkOrderById(args.jobId) as any;
         
         if (!workOrder) {
           return JSON.stringify({
@@ -930,8 +966,8 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        const locations = await getLocationsWithCompletionStatus(args.jobId);
-        const progress = await getWorkOrderProgress(args.jobId);
+        const locations = await getLocationsWithCompletionStatus(args.jobId) as any[];
+        const progress = await getWorkOrderProgress(args.jobId) as any;
         
         return JSON.stringify({
           success: true,
@@ -946,7 +982,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'getJobLocations':
-        const locs = await getLocationsWithCompletionStatus(args.jobId);
+        const locs = await getLocationsWithCompletionStatus(args.jobId) as any[];
         return JSON.stringify({
           success: true,
           locations: locs.map(loc => ({
@@ -1029,11 +1065,11 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         // Try to find inspector by normalized phone first
-        let inspector = await getInspectorByPhone(normalizedPhone);
+        let inspector = await getInspectorByPhone(normalizedPhone) as any;
         
         // Also try original phone format
         if (!inspector) {
-          inspector = await getInspectorByPhone(phone);
+          inspector = await getInspectorByPhone(phone) as any;
         }
         
         // If not found by phone, try by name
@@ -1099,7 +1135,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
               if (actualTaskId) {
                 console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
                 const { getTaskMedia } = await import('@/lib/services/inspectorService');
-                const mediaInfo = await getTaskMedia(actualTaskId);
+                const mediaInfo = await getTaskMedia(actualTaskId) as any;
                 
                 if (mediaInfo) {
                   console.log('📸 Found media for location:', metadata.currentLocation, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
@@ -1129,7 +1165,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           
           // Normal case - try with the provided taskId
           const { getTaskMedia } = await import('@/lib/services/inspectorService');
-          const mediaInfo = await getTaskMedia(args.taskId);
+          const mediaInfo = await getTaskMedia(args.taskId) as any;
           
           if (!mediaInfo) {
             console.log('❌ No media found for taskId:', args.taskId);
@@ -1166,7 +1202,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             workOrderId: args.workOrderId 
           });
           
-          const locationsWithStatus = await getLocationsWithCompletionStatus(args.workOrderId);
+          const locationsWithStatus = await getLocationsWithCompletionStatus(args.workOrderId) as any[];
           console.log('📍 Available locations in WhatsApp webhook:', locationsWithStatus.map((loc, index) => ({
             number: index + 1,
             name: loc.name,
@@ -1199,7 +1235,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           // Get media using the ContractChecklistItem ID
           console.log('📎 Getting media for ContractChecklistItem ID:', targetLocation.contractChecklistItemId);
           const { getTaskMedia: getTaskMediaFunc } = await import('@/lib/services/inspectorService');
-          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId);
+          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId) as any;
           
           if (!locationMediaInfo) {
             console.log('❌ No media found for WhatsApp location:', targetLocation.name);
@@ -1248,12 +1284,13 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
 // Handle WhatsApp media messages (photos/videos)
 async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
-    console.log('🔄 Processing WhatsApp media message');
+    console.log('🔄 Processing WhatsApp media message for phone:', phoneNumber);
     
+    // Phone number is already normalized from the caller
     // Get thread for this phone number
     let threadId = whatsappThreads.get(phoneNumber);
     if (!threadId) {
-      console.log('❌ No thread found for media upload');
+      console.log('❌ No thread found for media upload for phone:', phoneNumber);
       return 'Please start a conversation first before uploading media.';
     }
     

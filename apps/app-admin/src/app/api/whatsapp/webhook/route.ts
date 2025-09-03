@@ -248,50 +248,14 @@ export async function POST(request: NextRequest) {
 
     console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`);
 
-    // Process with OpenAI Assistant with timeout and fallback
-    const TIMEOUT_MS = 30000; // 30 seconds timeout
-    
+    // Process with OpenAI Assistant - wait for actual response without timeout message
     try {
       // Start the assistant processing with normalized phone number
-      const assistantPromise = processWithAssistant(phoneNumber, message || 'User uploaded media');
+      const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media');
       
-      // Race between assistant response and timeout
-      const result = await Promise.race([
-        assistantPromise,
-        new Promise((resolve) => 
-          setTimeout(() => resolve('TIMEOUT'), TIMEOUT_MS)
-        )
-      ]);
-      
-      if (result === 'TIMEOUT') {
-        console.log(`⏰ Assistant response timed out after ${TIMEOUT_MS}ms for ${phoneNumber}`);
-        
-        // Send immediate fallback message
-        await sendWhatsAppResponse(phoneNumber, 
-          'I\'m still processing your request. This might take a moment. Please wait, and I\'ll get back to you shortly! 🤖⏳'
-        );
-        
-        // Mark as responded to prevent duplicate processing
-        const msgData = processedMessages.get(messageId);
-        if (msgData) {
-          msgData.responded = true;
-          processedMessages.set(messageId, msgData);
-        }
-        
-        // Continue processing in background and send response when ready
-        assistantPromise.then(async (assistantResponse) => {
-          if (assistantResponse && assistantResponse.trim()) {
-            await sendWhatsAppResponse(phoneNumber, assistantResponse);
-            console.log(`📤 Delayed response sent to ${phoneNumber} in ${Date.now() - startTime}ms`);
-          }
-        }).catch(error => {
-          console.error('❌ Error in delayed response:', error);
-          sendWhatsAppResponse(phoneNumber, 'Sorry, I encountered an error processing your request. Please try again.');
-        });
-        
-      } else if (result && typeof result === 'string' && result.trim()) {
-        // Quick response received
-        await sendWhatsAppResponse(phoneNumber, result);
+      if (assistantResponse && assistantResponse.trim()) {
+        // Send the response
+        await sendWhatsAppResponse(phoneNumber, assistantResponse);
         
         // Mark as responded
         const msgData = processedMessages.get(messageId);
@@ -300,7 +264,7 @@ export async function POST(request: NextRequest) {
           processedMessages.set(messageId, msgData);
         }
         
-        console.log(`✅ Quick response sent to ${phoneNumber} in ${Date.now() - startTime}ms`);
+        console.log(`✅ Response sent to ${phoneNumber} in ${Date.now() - startTime}ms`);
       }
       
     } catch (error) {
@@ -462,21 +426,30 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - maximum speed
+// Wait for run completion - extended timeout for complex operations
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 50; // 5 seconds max (100ms intervals)
+  const maxAttempts = 600; // 60 seconds max (100ms intervals) - enough time for complex operations
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 100)); // Very fast polling
+    await new Promise(resolve => setTimeout(resolve, 100)); // Fast polling
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
     attempts++;
+    
+    // Log progress every 5 seconds
+    if (attempts % 50 === 0) {
+      console.log(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`);
+    }
+  }
+  
+  if (attempts >= maxAttempts) {
+    console.log(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`);
   }
   
   return runStatus;
