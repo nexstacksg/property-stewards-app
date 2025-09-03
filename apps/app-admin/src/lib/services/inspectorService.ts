@@ -1,14 +1,76 @@
 import { prisma } from '@/lib/prisma'
-import { WorkOrderStatus, Status } from '@prisma/client'
+import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
+
+// Simple in-memory cache with TTL
+class SimpleCache<T> {
+  private cache = new Map<string, { data: T; expiry: number }>()
+  private readonly ttl: number
+
+  constructor(ttlSeconds: number = 60) {
+    this.ttl = ttlSeconds * 1000
+  }
+
+  get(key: string): T | null {
+    const item = this.cache.get(key)
+    if (!item) return null
+    if (Date.now() > item.expiry) {
+      this.cache.delete(key)
+      return null
+    }
+    return item.data
+  }
+
+  set(key: string, data: T): void {
+    this.cache.set(key, {
+      data,
+      expiry: Date.now() + this.ttl
+    })
+  }
+
+  invalidate(pattern?: string): void {
+    if (!pattern) {
+      this.cache.clear()
+      return
+    }
+    for (const key of this.cache.keys()) {
+      if (key.includes(pattern)) {
+        this.cache.delete(key)
+      }
+    }
+  }
+}
+
+// Cache instances with different TTLs
+const inspectorCache = new SimpleCache(300) // 5 minutes for inspector data
+const workOrderCache = new SimpleCache(60) // 1 minute for work orders
+const locationCache = new SimpleCache(120) // 2 minutes for locations
+
+// Optimized select fields to reduce data transfer
+const INSPECTOR_SELECT = {
+  id: true,
+  name: true,
+  mobilePhone: true,
+  status: true
+} as const
+
 
 export async function getInspectorByPhone(phone: string) {
   try {
+    const cacheKey = `inspector:${phone}`
+    const cached = inspectorCache.get(cacheKey)
+    if (cached) return cached
+
     const inspector = await prisma.inspector.findUnique({
       where: {
         mobilePhone: phone,
         status: Status.ACTIVE
-      }
+      },
+      select: INSPECTOR_SELECT
     })
+    
+    if (inspector) {
+      inspectorCache.set(cacheKey, inspector)
+    }
     return inspector
   } catch (error) {
     console.error('Error fetching inspector by phone:', error)
@@ -18,12 +80,17 @@ export async function getInspectorByPhone(phone: string) {
 
 export async function getTodayJobsForInspector(inspectorId: string) {
   try {
+    const cacheKey = `jobs:${inspectorId}:${new Date().toDateString()}`
+    const cached = workOrderCache.get(cacheKey)
+    if (cached) return cached
+
     const startOfDay = new Date()
     startOfDay.setHours(0, 0, 0, 0)
     
     const endOfDay = new Date()
     endOfDay.setHours(23, 59, 59, 999)
 
+    // Optimized query with only necessary fields
     const workOrders = await prisma.workOrder.findMany({
       where: {
         inspectorId: inspectorId,
@@ -32,11 +99,23 @@ export async function getTodayJobsForInspector(inspectorId: string) {
           lte: endOfDay
         }
       },
-      include: {
+      select: {
+        id: true,
+        status: true,
+        scheduledStartDateTime: true,
+        remarks: true,
         contract: {
-          include: {
-            customer: true,
-            address: true
+          select: {
+            customer: {
+              select: { name: true }
+            },
+            address: {
+              select: { 
+                address: true, 
+                postalCode: true,
+                propertyType: true
+              }
+            }
           }
         }
       },
@@ -45,7 +124,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       }
     })
 
-    return workOrders.map(wo => ({
+    const result = workOrders.map(wo => ({
       id: wo.id,
       property_address: `${wo.contract.address.address}, ${wo.contract.address.postalCode}`,
       customer_name: wo.contract.customer.name,
@@ -55,6 +134,9 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',
       notes: wo.remarks || ''
     }))
+
+    workOrderCache.set(cacheKey, result)
+    return result
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
     return []
@@ -63,27 +145,57 @@ export async function getTodayJobsForInspector(inspectorId: string) {
 
 export async function getWorkOrderById(workOrderId: string) {
   try {
+    const cacheKey = `wo:${workOrderId}`
+    const cached = workOrderCache.get(cacheKey)
+    if (cached) return cached
+
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
-      include: {
+      select: {
+        id: true,
+        status: true,
+        scheduledStartDateTime: true,
+        scheduledEndDateTime: true,
         contract: {
-          include: {
-            customer: true,
-            address: true,
+          select: {
+            customer: {
+              select: { name: true }
+            },
+            address: {
+              select: {
+                address: true,
+                postalCode: true,
+                propertyType: true
+              }
+            },
             contractChecklist: {
-              include: {
-                items: true
+              select: {
+                items: {
+                  select: {
+                    id: true,
+                    name: true,
+                    order: true,
+                    enteredOn: true,
+                    remarks: true,
+                    photos: true,
+                    videos: true,
+                    tasks: true
+                  },
+                  orderBy: { order: 'asc' }
+                }
               }
             }
           }
         },
-        inspector: true
+        inspector: {
+          select: { name: true }
+        }
       }
     })
 
     if (!workOrder) return null
 
-    return {
+    const result = {
       id: workOrder.id,
       property_address: `${workOrder.contract.address.address}, ${workOrder.contract.address.postalCode}`,
       customer_name: workOrder.contract.customer.name,
@@ -94,6 +206,9 @@ export async function getWorkOrderById(workOrderId: string) {
       scheduled_end: workOrder.scheduledEndDateTime,
       checklist_items: workOrder.contract.contractChecklist?.items || []
     }
+
+    workOrderCache.set(cacheKey, result)
+    return result
   } catch (error) {
     console.error('Error fetching work order:', error)
     return null
@@ -108,11 +223,17 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
       'cancelled': WorkOrderStatus.CANCELLED
     }
 
-    const updateData: any = {
+    // Single query to check and update
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: { actualStart: true }
+    })
+
+    const updateData: Prisma.WorkOrderUpdateInput = {
       status: statusMap[status]
     }
 
-    if (status === 'in_progress' && !await prisma.workOrder.findUnique({ where: { id: workOrderId }, select: { actualStart: true } }).then(wo => wo?.actualStart)) {
+    if (status === 'in_progress' && !workOrder?.actualStart) {
       updateData.actualStart = new Date()
     }
 
@@ -125,6 +246,10 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
       data: updateData
     })
 
+    // Invalidate relevant caches
+    workOrderCache.invalidate(workOrderId)
+    locationCache.invalidate(workOrderId)
+
     return updated
   } catch (error) {
     console.error('Error updating work order status:', error)
@@ -134,30 +259,27 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
 
 export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
   try {
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      include: {
-        contract: {
-          include: {
-            contractChecklist: {
-              include: {
-                items: {
-                  orderBy: {
-                    order: 'asc'
-                  }
-                }
-              }
+    const cacheKey = `locations:${workOrderId}`
+    const cached = locationCache.get(cacheKey)
+    if (cached) return cached
+
+    // Optimized query - only fetch names
+    const items = await prisma.contractChecklistItem.findMany({
+      where: {
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
             }
           }
         }
-      }
+      },
+      select: { name: true },
+      distinct: ['name']
     })
 
-    if (!workOrder?.contract.contractChecklist) {
-      return []
-    }
-
-    const locations = [...new Set(workOrder.contract.contractChecklist.items.map(item => item.name))]
+    const locations = items.map(item => item.name)
+    locationCache.set(cacheKey, locations)
     return locations
   } catch (error) {
     console.error('Error fetching locations:', error)
@@ -167,43 +289,44 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
 
 export async function getLocationsWithCompletionStatus(workOrderId: string) {
   try {
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      include: {
-        contract: {
-          include: {
-            contractChecklist: {
-              include: {
-                items: {
-                  orderBy: {
-                    order: 'asc'
-                  }
-                }
-              }
+    const cacheKey = `locations-status:${workOrderId}`
+    const cached = locationCache.get(cacheKey)
+    if (cached) return cached
+
+    // Single optimized query
+    const items = await prisma.contractChecklistItem.findMany({
+      where: {
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
             }
           }
         }
-      }
+      },
+      select: {
+        id: true,
+        name: true,
+        enteredOn: true,
+        tasks: true
+      },
+      orderBy: { order: 'asc' }
     })
 
-    if (!workOrder?.contract.contractChecklist) {
-      return []
-    }
-
-    // Group items by location and track both completion status and item ID
-    const locationMap = new Map<string, { 
-      total: number, 
-      completed: number, 
-      contractChecklistItemId: string 
+    // Process with Map for O(n) complexity
+    const locationMap = new Map<string, {
+      total: number
+      completed: number
+      contractChecklistItemId: string
     }>()
     
-    for (const item of workOrder.contract.contractChecklist.items) {
+    for (const item of items) {
       const location = item.name
       if (!locationMap.has(location)) {
-        locationMap.set(location, { 
-          total: 0, 
-          completed: 0, 
-          contractChecklistItemId: item.id 
+        locationMap.set(location, {
+          total: 0,
+          completed: 0,
+          contractChecklistItemId: item.id
         })
       }
       const locData = locationMap.get(location)!
@@ -213,24 +336,19 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       }
     }
 
-    // Convert to array with completion status and ContractChecklistItem ID
     const locationsWithStatus = Array.from(locationMap.entries()).map(([name, data]) => {
       const isCompleted = data.completed === data.total && data.total > 0
       return {
-        name: name,
+        name,
         displayName: isCompleted ? `${name} (Done)` : name,
-        isCompleted: isCompleted,
+        isCompleted,
         totalTasks: data.total,
         completedTasks: data.completed,
-        contractChecklistItemId: data.contractChecklistItemId  // Add the ID!
+        contractChecklistItemId: data.contractChecklistItemId
       }
     })
 
-    console.log('🏠 Locations with ContractChecklistItem IDs:', locationsWithStatus.map(loc => ({
-      name: loc.name,
-      id: loc.contractChecklistItemId
-    })));
-
+    locationCache.set(cacheKey, locationsWithStatus)
     return locationsWithStatus
   } catch (error) {
     console.error('Error fetching locations with status:', error)
@@ -240,44 +358,46 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
 export async function getTasksByLocation(workOrderId: string, location: string) {
   try {
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      include: {
-        contract: {
-          include: {
-            contractChecklist: {
-              include: {
-                items: {
-                  where: {
-                    name: location
-                  },
-                  orderBy: {
-                    order: 'asc'
-                  }
-                }
-              }
+    const cacheKey = `tasks:${workOrderId}:${location}`
+    const cached = locationCache.get(cacheKey)
+    if (cached) return cached
+
+    // Direct query without nested includes
+    const items = await prisma.contractChecklistItem.findMany({
+      where: {
+        name: location,
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
             }
           }
         }
-      }
+      },
+      select: {
+        id: true,
+        name: true,
+        remarks: true,
+        photos: true,
+        videos: true,
+        enteredOn: true,
+        enteredById: true,
+        tasks: true
+      },
+      orderBy: { order: 'asc' },
+      take: 1 // Only get first item since there should be one per location
     })
 
-    if (!workOrder?.contract.contractChecklist) {
-      return []
-    }
-
-    // Get the first item for this location (there should only be one per location)
-    const checklistItem = workOrder.contract.contractChecklist.items[0] as any
+    const checklistItem = items[0] as any
     if (!checklistItem) {
       return []
     }
 
-    // Parse tasks from JSON field if it exists
+    let result
     if (checklistItem.tasks && typeof checklistItem.tasks === 'object') {
       const tasks = Array.isArray(checklistItem.tasks) ? checklistItem.tasks : []
       
-      // Return individual tasks from the tasks array
-      return tasks.map((task: any, index: number) => ({
+      result = tasks.map((task: any, index: number) => ({
         id: `${checklistItem.id}_task_${index}`,
         location: checklistItem.name,
         action: typeof task === 'string' ? task : (task.task || 'Inspect area'),
@@ -289,23 +409,25 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
         completed_by: checklistItem.enteredById,
         isSubTask: true,
         taskIndex: index,
-        locationEnteredOn: checklistItem.enteredOn  // Pass the enteredOn for overall status
+        locationEnteredOn: checklistItem.enteredOn
       }))
+    } else {
+      result = [{
+        id: checklistItem.id,
+        location: checklistItem.name,
+        action: checklistItem.remarks || 'Inspect area',
+        status: checklistItem.enteredOn ? 'completed' : 'pending',
+        notes: checklistItem.remarks,
+        photos: checklistItem.photos,
+        videos: checklistItem.videos,
+        completed_at: checklistItem.enteredOn,
+        completed_by: checklistItem.enteredById,
+        isSubTask: false
+      }]
     }
-    
-    // Fallback to old behavior if no tasks JSON - treat remarks as single task
-    return [{
-      id: checklistItem.id,
-      location: checklistItem.name,
-      action: checklistItem.remarks || 'Inspect area',
-      status: checklistItem.enteredOn ? 'completed' : 'pending',
-      notes: checklistItem.remarks,
-      photos: checklistItem.photos,
-      videos: checklistItem.videos,
-      completed_at: checklistItem.enteredOn,
-      completed_by: checklistItem.enteredById,
-      isSubTask: false
-    }]
+
+    locationCache.set(cacheKey, result)
+    return result
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
     return []
@@ -314,19 +436,18 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
 
 export async function updateTaskStatus(taskId: string, status: 'completed' | 'pending', notes?: string) {
   try {
-    // Check if this is marking a single subtask
+    // Handle subtask updates
     if (taskId.includes('_task_')) {
       const [checklistItemId, , taskIndexStr] = taskId.split('_')
       const taskIndex = parseInt(taskIndexStr)
       
-      // Get the checklist item
       const item = await prisma.contractChecklistItem.findUnique({
-        where: { id: checklistItemId }
+        where: { id: checklistItemId },
+        select: { tasks: true }
       }) as any
       
       if (!item) return false
       
-      // Update the specific task in the tasks array
       let tasks = item.tasks || []
       if (Array.isArray(tasks) && tasks[taskIndex]) {
         tasks[taskIndex] = {
@@ -334,27 +455,25 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
           status: status === 'completed' ? 'done' : 'pending'
         }
         
-        // Prepare update data
         const updateData: any = { tasks }
-        
-        // If notes are provided, update the remarks field for the entire location
         if (notes) {
           updateData.remarks = notes
         }
         
-        // Update the item with new tasks array and optional remarks
         await prisma.contractChecklistItem.update({
           where: { id: checklistItemId },
           data: updateData
         })
         
+        // Invalidate cache
+        locationCache.invalidate(checklistItemId)
         return true
       }
       return false
     }
     
-    // Original behavior for completing entire location
-    const updateData: any = {}
+    // Update entire location
+    const updateData: Prisma.ContractChecklistItemUpdateInput = {}
     
     if (status === 'completed') {
       updateData.enteredOn = new Date()
@@ -363,14 +482,15 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
       }
     } else {
       updateData.enteredOn = null
-      updateData.enteredById = null
     }
 
-    const updated = await prisma.contractChecklistItem.update({
+    await prisma.contractChecklistItem.update({
       where: { id: taskId },
       data: updateData
     })
 
+    // Invalidate cache
+    locationCache.invalidate(taskId)
     return true
   } catch (error) {
     console.error('Error updating task status:', error)
@@ -378,36 +498,33 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
   }
 }
 
-// New function to mark all tasks complete for a location
 export async function completeAllTasksForLocation(workOrderId: string, location: string, inspectorId?: string) {
   try {
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      include: {
-        contract: {
-          include: {
-            contractChecklist: {
-              include: {
-                items: {
-                  where: { name: location }
-                }
-              }
+    // Direct query without nested includes
+    const items = await prisma.contractChecklistItem.findMany({
+      where: {
+        name: location,
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
             }
           }
         }
-      }
+      },
+      select: {
+        id: true,
+        tasks: true,
+        enteredById: true
+      },
+      take: 1
     })
 
-    if (!workOrder?.contract.contractChecklist) {
-      return false
-    }
-
-    const checklistItem = workOrder.contract.contractChecklist.items[0] as any
+    const checklistItem = items[0] as any
     if (!checklistItem) {
       return false
     }
 
-    // Mark all tasks in the array as done
     let tasks = checklistItem.tasks || []
     if (Array.isArray(tasks)) {
       tasks = tasks.map((task: any) => ({
@@ -416,7 +533,6 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
       }))
     }
 
-    // Update the checklist item with all tasks done and set enteredOn
     await prisma.contractChecklistItem.update({
       where: { id: checklistItem.id },
       data: {
@@ -426,6 +542,8 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
       }
     })
 
+    // Invalidate cache
+    locationCache.invalidate(workOrderId)
     return true
   } catch (error) {
     console.error('Error completing all tasks for location:', error)
@@ -435,13 +553,7 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
 
 export async function addTaskPhoto(taskId: string, photoUrl: string) {
   try {
-    const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId }
-    })
-
-    if (!item) return false
-
-    const updated = await prisma.contractChecklistItem.update({
+    await prisma.contractChecklistItem.update({
       where: { id: taskId },
       data: {
         photos: {
@@ -450,6 +562,7 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
       }
     })
 
+    locationCache.invalidate(taskId)
     return true
   } catch (error) {
     console.error('Error adding task photo:', error)
@@ -459,12 +572,6 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
 
 export async function addTaskVideo(taskId: string, videoUrl: string) {
   try {
-    const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId }
-    })
-
-    if (!item) return false
-
     await prisma.contractChecklistItem.update({
       where: { id: taskId },
       data: {
@@ -474,6 +581,7 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
       }
     })
 
+    locationCache.invalidate(taskId)
     return true
   } catch (error) {
     console.error('Error adding task video:', error)
@@ -481,102 +589,78 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
   }
 }
 
-// New function to get ContractChecklistItem ID by location name
 export async function getContractChecklistItemIdByLocation(workOrderId: string, location: string): Promise<string | null> {
   try {
-    console.log('🔍 Finding ContractChecklistItem ID for workOrder:', workOrderId, 'location:', location);
-    
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      include: {
-        contract: {
-          include: {
-            contractChecklist: {
-              include: {
-                items: {
-                  where: {
-                    name: location
-                  }
-                }
-              }
+    const cacheKey = `itemid:${workOrderId}:${location}`
+    const cached = locationCache.get(cacheKey)
+    if (cached) return cached as string
+
+    const item = await prisma.contractChecklistItem.findFirst({
+      where: {
+        name: location,
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
             }
           }
         }
-      }
-    });
+      },
+      select: { id: true }
+    })
 
-    const checklistItem = workOrder?.contract?.contractChecklist?.items[0];
-    if (checklistItem) {
-      console.log('✅ Found ContractChecklistItem ID:', checklistItem.id, 'for location:', location);
-      return checklistItem.id;
+    if (item) {
+      locationCache.set(cacheKey, item.id)
+      return item.id
     }
     
-    console.log('❌ No ContractChecklistItem found for location:', location);
-    return null;
+    return null
   } catch (error) {
-    console.error('❌ Error finding ContractChecklistItem:', error);
-    return null;
+    console.error('Error finding ContractChecklistItem:', error)
+    return null
   }
 }
 
 export async function getTaskMedia(taskId: string) {
   try {
-    console.log('🔍 getTaskMedia called with taskId:', taskId);
-    
-    // Handle virtual task IDs by extracting base checklist item ID
-    let actualTaskId = taskId;
+    const cacheKey = `media:${taskId}`
+    const cached = locationCache.get(cacheKey)
+    if (cached) return cached
+
+    let actualTaskId = taskId
     if (taskId.includes('_task_')) {
-      actualTaskId = taskId.split('_task_')[0];
-      console.log('📝 Extracted base taskId from virtual ID:', actualTaskId);
+      actualTaskId = taskId.split('_task_')[0]
     }
     
-    console.log('🔍 Querying database for ContractChecklistItem with id:', actualTaskId);
-    
     const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: actualTaskId }, // Use actual ID, not virtual ID
+      where: { id: actualTaskId },
       select: {
         id: true,
         name: true,
         remarks: true,
         photos: true,
-        videos: true,
-        enteredOn: true,
-        enteredById: true,
-        contractChecklistId: true,
-        order: true
+        videos: true
       }
     })
 
-    console.log('📊 Database query result:', item);
-
     if (!item) {
-      console.log('❌ No ContractChecklistItem found with id:', actualTaskId);
-      console.log('💡 This might be an inspector ID instead of a ContractChecklistItem ID');
-      return null;
+      return null
     }
 
-    console.log('✅ Found ContractChecklistItem:');
-    console.log('  - ID:', item.id);
-    console.log('  - Name:', item.name);
-    console.log('  - Photos array length:', item.photos?.length || 0);
-    console.log('  - Photos array:', item.photos);
-    console.log('  - Videos array length:', item.videos?.length || 0);
-    console.log('  - Videos array:', item.videos);
-
     const result = {
-      taskId: taskId, // Return original taskId for consistency
+      taskId: taskId,
       name: item.name,
       remarks: item.remarks,
       photos: item.photos || [],
       videos: item.videos || [],
       photoCount: item.photos?.length || 0,
       videoCount: item.videos?.length || 0
-    };
+    }
 
-    console.log('📤 Returning result:', result);
-    return result;
+    locationCache.set(cacheKey, result)
+    return result
   } catch (error) {
-    console.error('❌ Error getting task media:', error)
+    console.error('Error getting task media:', error)
     return null
   }
 }
@@ -584,7 +668,11 @@ export async function getTaskMedia(taskId: string) {
 export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaType: 'photo' | 'video') {
   try {
     const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: taskId }
+      where: { id: taskId },
+      select: {
+        photos: true,
+        videos: true
+      }
     })
 
     if (!item) return false
@@ -593,20 +681,17 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
       const updatedPhotos = item.photos.filter(photo => photo !== mediaUrl)
       await prisma.contractChecklistItem.update({
         where: { id: taskId },
-        data: {
-          photos: updatedPhotos
-        }
+        data: { photos: updatedPhotos }
       })
     } else {
       const updatedVideos = item.videos.filter(video => video !== mediaUrl)
       await prisma.contractChecklistItem.update({
         where: { id: taskId },
-        data: {
-          videos: updatedVideos
-        }
+        data: { videos: updatedVideos }
       })
     }
 
+    locationCache.invalidate(taskId)
     return true
   } catch (error) {
     console.error('Error deleting task media:', error)
@@ -616,44 +701,44 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
 
 export async function getWorkOrderProgress(workOrderId: string) {
   try {
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      include: {
-        contract: {
-          include: {
-            contractChecklist: {
-              include: {
-                items: true
-              }
+    const cacheKey = `progress:${workOrderId}`
+    const cached = workOrderCache.get(cacheKey)
+    if (cached) return cached
+
+    // Optimized aggregation query
+    const result = await prisma.contractChecklistItem.aggregate({
+      where: {
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
             }
           }
         }
+      },
+      _count: {
+        _all: true,
+        enteredOn: true
       }
     })
 
-    if (!workOrder?.contract.contractChecklist) {
-      return {
-        total_tasks: 0,
-        completed_tasks: 0,
-        pending_tasks: 0,
-        in_progress_tasks: 0
-      }
-    }
-
-    const items = workOrder.contract.contractChecklist.items
-    const total = items.length
-    const completed = items.filter(item => item.enteredOn !== null).length
-    const pending = total - completed
-
-    return {
-      total_tasks: total,
-      completed_tasks: completed,
-      pending_tasks: pending,
+    const progress = {
+      total_tasks: result._count._all || 0,
+      completed_tasks: result._count.enteredOn || 0,
+      pending_tasks: (result._count._all || 0) - (result._count.enteredOn || 0),
       in_progress_tasks: 0
     }
+
+    workOrderCache.set(cacheKey, progress)
+    return progress
   } catch (error) {
     console.error('Error fetching work order progress:', error)
-    throw error
+    return {
+      total_tasks: 0,
+      completed_tasks: 0,
+      pending_tasks: 0,
+      in_progress_tasks: 0
+    }
   }
 }
 
@@ -665,115 +750,107 @@ export async function updateWorkOrderDetails(
   try {
     switch (updateType) {
       case 'status':
-        // Update work order status
         const statusMap: Record<string, WorkOrderStatus> = {
           'SCHEDULED': WorkOrderStatus.SCHEDULED,
           'STARTED': WorkOrderStatus.STARTED,
           'CANCELLED': WorkOrderStatus.CANCELLED,
           'COMPLETED': WorkOrderStatus.COMPLETED
-        };
+        }
         
         await prisma.workOrder.update({
           where: { id: workOrderId },
           data: { 
             status: statusMap[newValue.toUpperCase()] || WorkOrderStatus.SCHEDULED
           }
-        });
-        break;
+        })
+        break
         
       case 'time':
-        // Update scheduled time - handle various time formats
-        const workOrderForTime = await prisma.workOrder.findUnique({
-          where: { id: workOrderId }
-        });
+        const workOrder = await prisma.workOrder.findUnique({
+          where: { id: workOrderId },
+          select: { scheduledStartDateTime: true }
+        })
         
-        if (!workOrderForTime) break;
+        if (!workOrder) break
         
-        // Get the existing date
-        const existingDate = new Date(workOrderForTime.scheduledStartDateTime);
-        
-        // Parse the time value (e.g., "10:00 am", "10am", "14:30")
-        let hours = 0;
-        let minutes = 0;
-        
-        // Remove extra spaces and convert to lowercase
-        const timeStr = newValue.trim().toLowerCase();
-        
-        // Try to parse different time formats
-        const timeMatch = timeStr.match(/(\d{1,2}):?(\d{0,2})\s*(am|pm)?/);
+        const existingDate = new Date(workOrder.scheduledStartDateTime)
+        const timeStr = newValue.trim().toLowerCase()
+        const timeMatch = timeStr.match(/(\d{1,2}):?(\d{0,2})\s*(am|pm)?/)
         
         if (timeMatch) {
-          hours = parseInt(timeMatch[1]);
-          minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+          let hours = parseInt(timeMatch[1])
+          const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0
           
-          // Handle AM/PM
           if (timeMatch[3]) {
             if (timeMatch[3] === 'pm' && hours !== 12) {
-              hours += 12;
+              hours += 12
             } else if (timeMatch[3] === 'am' && hours === 12) {
-              hours = 0;
+              hours = 0
             }
           }
+          
+          const newDateTime = new Date(existingDate)
+          newDateTime.setHours(hours, minutes, 0, 0)
+          const endDateTime = new Date(newDateTime.getTime() + 2 * 60 * 60 * 1000)
+          
+          await prisma.workOrder.update({
+            where: { id: workOrderId },
+            data: { 
+              scheduledStartDateTime: newDateTime,
+              scheduledEndDateTime: endDateTime
+            }
+          })
         }
-        
-        // Create new date with updated time
-        const newDateTime = new Date(existingDate);
-        newDateTime.setHours(hours, minutes, 0, 0);
-        
-        // Create end time (2 hours later)
-        const endDateTime = new Date(newDateTime.getTime() + 2 * 60 * 60 * 1000);
-        
-        await prisma.workOrder.update({
-          where: { id: workOrderId },
-          data: { 
-            scheduledStartDateTime: newDateTime,
-            scheduledEndDateTime: endDateTime
-          }
-        });
-        break;
+        break
         
       case 'customer':
-        // Update customer name through the contract
-        const workOrderForCustomer = await prisma.workOrder.findUnique({
+        const customerData = await prisma.workOrder.findUnique({
           where: { id: workOrderId },
-          include: { contract: true }
-        });
+          select: {
+            contract: {
+              select: { customerId: true }
+            }
+          }
+        })
         
-        if (workOrderForCustomer) {
+        if (customerData) {
           await prisma.customer.update({
-            where: { id: workOrderForCustomer.contract.customerId },
+            where: { id: customerData.contract.customerId },
             data: { name: newValue }
-          });
+          })
         }
-        break;
+        break
         
       case 'address':
-        // Update address through the contract
-        const workOrderForAddress = await prisma.workOrder.findUnique({
+        const addressData = await prisma.workOrder.findUnique({
           where: { id: workOrderId },
-          include: { contract: true }
-        });
-        
-        if (workOrderForAddress) {
-          // Parse address and postal code
-          const parts = newValue.split(',').map(p => p.trim());
-          const address = parts[0] || newValue;
-          const postalCode = parts[1] || '';
-          
-          await prisma.customerAddress.update({
-            where: { id: workOrderForAddress.contract.addressId },
-            data: { 
-              address: address,
-              postalCode: postalCode
+          select: {
+            contract: {
+              select: { addressId: true }
             }
-          });
+          }
+        })
+        
+        if (addressData) {
+          const parts = newValue.split(',').map(p => p.trim())
+          await prisma.customerAddress.update({
+            where: { id: addressData.contract.addressId },
+            data: { 
+              address: parts[0] || newValue,
+              postalCode: parts[1] || ''
+            }
+          })
         }
-        break;
+        break
     }
     
-    return true;
+    // Invalidate caches
+    workOrderCache.invalidate(workOrderId)
+    locationCache.invalidate(workOrderId)
+    
+    return true
   } catch (error) {
-    console.error('Error updating work order details:', error);
-    return false;
+    console.error('Error updating work order details:', error)
+    return false
   }
 }
