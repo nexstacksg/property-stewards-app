@@ -1,41 +1,52 @@
 import { createClient } from 'redis';
 
-// Create Redis client
-const redisClient = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379',
-  socket: {
-    connectTimeout: 5000,
-    reconnectStrategy: (retries: number) => {
-      if (retries > 10) {
-        console.error('❌ Redis: Too many reconnection attempts');
-        return new Error('Too many reconnection attempts');
+// Check if Redis is configured
+const REDIS_ENABLED = !!(process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL);
+
+// Create Redis client only if configured
+let redisClient: ReturnType<typeof createClient> | null = null;
+
+if (REDIS_ENABLED) {
+  redisClient = createClient({
+    url: process.env.REDIS_URL,
+    socket: {
+      connectTimeout: 5000,
+      reconnectStrategy: (retries: number) => {
+        if (retries > 10) {
+          console.error('❌ Redis: Too many reconnection attempts');
+          return new Error('Too many reconnection attempts');
+        }
+        return Math.min(retries * 100, 3000);
       }
-      return Math.min(retries * 100, 3000);
     }
-  }
-});
+  });
+} else {
+  console.log('⚠️ Redis not configured - caching disabled');
+}
 
 // Handle Redis connection
-redisClient.on('error', (err: Error) => {
-  console.error('❌ Redis Client Error:', err);
-});
+if (redisClient) {
+  redisClient.on('error', (err: Error) => {
+    console.error('❌ Redis Client Error:', err);
+  });
 
-redisClient.on('connect', () => {
-  console.log('✅ Redis Client Connected');
-});
+  redisClient.on('connect', () => {
+    console.log('✅ Redis Client Connected');
+  });
 
-redisClient.on('ready', () => {
-  console.log('✅ Redis Client Ready');
-});
+  redisClient.on('ready', () => {
+    console.log('✅ Redis Client Ready');
+  });
 
-// Connect on startup
-(async () => {
-  try {
-    await redisClient.connect();
-  } catch (error) {
-    console.error('❌ Failed to connect to Redis:', error);
-  }
-})();
+  // Connect on startup
+  (async () => {
+    try {
+      await redisClient!.connect();
+    } catch (error) {
+      console.error('❌ Failed to connect to Redis:', error);
+    }
+  })();
+}
 
 // Cache TTL configurations
 export const CACHE_TTL = {
@@ -60,8 +71,8 @@ export const cache = {
   // Get from cache
   async get<T>(key: string): Promise<T | null> {
     try {
-      if (!redisClient.isReady) {
-        console.warn('⚠️ Redis not ready, skipping cache get');
+      if (!redisClient || !redisClient.isReady) {
+        // Silently skip if Redis not configured or not ready
         return null;
       }
       
@@ -78,8 +89,8 @@ export const cache = {
   // Set in cache
   async set(key: string, value: any, ttl?: number): Promise<void> {
     try {
-      if (!redisClient.isReady) {
-        console.warn('⚠️ Redis not ready, skipping cache set');
+      if (!redisClient || !redisClient.isReady) {
+        // Silently skip if Redis not configured or not ready
         return;
       }
       
@@ -98,8 +109,8 @@ export const cache = {
   // Delete from cache
   async del(key: string): Promise<void> {
     try {
-      if (!redisClient.isReady) {
-        console.warn('⚠️ Redis not ready, skipping cache delete');
+      if (!redisClient || !redisClient.isReady) {
+        // Silently skip if Redis not configured or not ready
         return;
       }
       
@@ -112,8 +123,8 @@ export const cache = {
   // Delete by pattern
   async delPattern(pattern: string): Promise<void> {
     try {
-      if (!redisClient.isReady) {
-        console.warn('⚠️ Redis not ready, skipping pattern delete');
+      if (!redisClient || !redisClient.isReady) {
+        // Silently skip if Redis not configured or not ready
         return;
       }
       
@@ -129,7 +140,7 @@ export const cache = {
   // Check if exists
   async exists(key: string): Promise<boolean> {
     try {
-      if (!redisClient.isReady) {
+      if (!redisClient || !redisClient.isReady) {
         return false;
       }
       
@@ -200,8 +211,10 @@ export const cacheHelpers = {
 // Cleanup function for graceful shutdown
 export async function cleanupRedis() {
   try {
-    await redisClient.quit();
-    console.log('✅ Redis client closed');
+    if (redisClient) {
+      await redisClient.quit();
+      console.log('✅ Redis client closed');
+    }
   } catch (error) {
     console.error('❌ Error closing Redis client:', error);
   }
