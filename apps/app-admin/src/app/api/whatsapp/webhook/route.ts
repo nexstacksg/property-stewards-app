@@ -63,6 +63,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   
+  console.log('🌐 ===========================================');
+  console.log('🌐 WEBHOOK REQUEST RECEIVED');
+  console.log('🌐 Time:', new Date().toISOString());
+  console.log('🌐 ===========================================');
+  
   try {
     // Verify webhook secret
     const { searchParams } = new URL(request.url);
@@ -282,10 +287,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    console.log('🏁 ===========================================');
+    console.log('🏁 WEBHOOK PROCESSING COMPLETE');
+    console.log('🏁 Total time:', Date.now() - startTime, 'ms');
+    console.log('🏁 ===========================================');
+
     return NextResponse.json({ success: true });
     
   } catch (error) {
     console.error('❌ Webhook error:', error);
+    console.error('❌ Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined
+    });
     // Return success to prevent webhook retries
     return NextResponse.json({ success: true });
   }
@@ -445,29 +460,65 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
 // Send WhatsApp response via Wassenger
 async function sendWhatsAppResponse(to: string, message: string) {
   try {
+    console.log('📤 Attempting to send WhatsApp message:', {
+      to: to,
+      messageLength: message.length,
+      messagePreview: message.substring(0, 100),
+      hasApiKey: !!process.env.WASSENGER_API_KEY,
+      apiKeyLength: process.env.WASSENGER_API_KEY?.length
+    });
+
+    if (!process.env.WASSENGER_API_KEY) {
+      console.error('❌ WASSENGER_API_KEY is not configured!');
+      throw new Error('WASSENGER_API_KEY not configured');
+    }
+
+    const requestBody = {
+      phone: to,
+      message: message // Wassenger uses 'message' field
+    };
+
+    console.log('🔍 Sending request to Wassenger API:', {
+      url: 'https://api.wassenger.com/v1/messages',
+      body: requestBody
+    });
+
     const response = await fetch('https://api.wassenger.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Token': process.env.WASSENGER_API_KEY!
       },
-      body: JSON.stringify({
-        phone: to,
-        message: message // Wassenger uses 'message' field
-      })
+      body: JSON.stringify(requestBody)
     });
 
+    console.log('📡 Wassenger API response status:', response.status);
+
+    const responseText = await response.text();
+    console.log('📡 Wassenger API response body:', responseText);
+
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Wassenger API error: ${response.status} - ${error}`);
+      throw new Error(`Wassenger API error: ${response.status} - ${responseText}`);
     }
 
-    const result = await response.json();
-    console.log(`✅ Message sent to ${to}`);
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      console.log('⚠️ Response is not JSON:', responseText);
+      result = { success: true, raw: responseText };
+    }
+
+    console.log(`✅ Message successfully sent to ${to}`);
+    console.log('📦 Wassenger API result:', result);
     return result;
     
   } catch (error) {
-    console.error('❌ Error sending WhatsApp message:', error);
+    console.error('❌ Error sending WhatsApp message:', {
+      error: error,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
     throw error;
   }
 }
