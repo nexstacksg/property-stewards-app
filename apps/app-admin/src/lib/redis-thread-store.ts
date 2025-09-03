@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 
 // Initialize Redis client
-const redis = new Redis(process.env.REDIS_URL || 'redis://default:oiLdzKWfudvo8Ql5mEXlZj3q7LuzgvFh@redis-17975.c1.ap-southeast-1-1.ec2.redns.redis-cloud.com:17975', {
+const redis = new Redis(process.env.REDIS_URL || 'redis://default:LZ6ah1dhYjmTAI5CFgvdehzA7jCL7KWQ@redis-15869.crce185.ap-seast-1-1.ec2.redns.redis-cloud.com:15869', {
   maxRetriesPerRequest: 3,
   retryStrategy: (times: number) => {
     if (times > 3) {
