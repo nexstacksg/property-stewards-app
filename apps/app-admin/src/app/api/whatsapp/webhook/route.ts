@@ -32,18 +32,39 @@ const processedMessages = new Map<string, {
 // Thread management for WhatsApp conversations
 const whatsappThreads = new Map<string, string>();
 
+// Response cache for common queries (5 minute TTL)
+const responseCache = new Map<string, { response: string; timestamp: number }>();
+const RESPONSE_CACHE_TTL = 300000; // 5 minutes
+
+// Inspector cache for faster lookups
+const inspectorCache = new Map<string, any>();
+
 // Reuse assistant ID - reset to force recreation with media tools
 let assistantId: string | null = null;
 
-// Clean up old processed messages every 5 minutes
+// Clean up caches periodically
 setInterval(() => {
   const now = Date.now();
+  
+  // Clean processed messages
   for (const [msgId, data] of processedMessages.entries()) {
     if (now - data.timestamp > 300000) { // 5 minutes
       processedMessages.delete(msgId);
     }
   }
-}, 60000); // Check every minute
+  
+  // Clean response cache
+  for (const [key, data] of responseCache.entries()) {
+    if (now - data.timestamp > RESPONSE_CACHE_TTL) {
+      responseCache.delete(key);
+    }
+  }
+  
+  // Clear inspector cache periodically (10 minutes)
+  if (now % 600000 < 30000) {
+    inspectorCache.clear();
+  }
+}, 30000); // Check every 30 seconds
 
 // GET - Webhook verification
 export async function GET(request: NextRequest) {
@@ -99,8 +120,15 @@ export async function POST(request: NextRequest) {
     }
     
     const messageId = data.id || `${Date.now()}-${Math.random()}`;
-    const phoneNumber = data.fromNumber || data.from;
+    const rawPhoneNumber = data.fromNumber || data.from;
+    // Normalize phone number - remove all spaces, dashes, and + signs for consistent lookup
+    const phoneNumber = rawPhoneNumber ? rawPhoneNumber.replace(/[\s+\-]/g, '') : '';
     const message = data.body || data.message?.text?.body || '';
+    
+    console.log('📱 Phone number normalization:', {
+      raw: rawPhoneNumber,
+      normalized: phoneNumber
+    });
     
     // Debug: Log key message properties first
     console.log('📋 Message summary:', {
@@ -160,9 +188,33 @@ export async function POST(request: NextRequest) {
     // Handle media messages
     if (hasMedia) {
       console.log('🔄 Processing media message...');
+      console.log('📱 Looking up thread for normalized phone:', phoneNumber);
+      console.log('📋 Available threads:', Array.from(whatsappThreads.keys()));
       
       // Use existing thread if available, don't create new one to preserve context
+      // Try multiple phone formats for backward compatibility
       let threadId = whatsappThreads.get(phoneNumber);
+      
+      // If not found, try with + prefix
+      if (!threadId && !phoneNumber.startsWith('+')) {
+        const withPlus = '+' + phoneNumber;
+        threadId = whatsappThreads.get(withPlus);
+        if (threadId) {
+          console.log('✅ Found thread with + prefix:', withPlus);
+        }
+      }
+      
+      // If still not found, try without country code (last 8 digits for SG numbers)
+      if (!threadId && phoneNumber.length > 8) {
+        const lastEight = phoneNumber.slice(-8);
+        for (const [key, value] of whatsappThreads.entries()) {
+          if (key.endsWith(lastEight)) {
+            threadId = value;
+            console.log('✅ Found thread by matching last 8 digits:', key);
+            break;
+          }
+        }
+      }
       
       if (!threadId) {
         console.log('⚠️ No existing thread found for media upload from phone:', phoneNumber);
@@ -213,9 +265,26 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`);
+    
+    // Check response cache for common queries
+    const cacheKey = `${phoneNumber}:${message.toLowerCase().trim()}`;
+    const cached = responseCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < RESPONSE_CACHE_TTL)) {
+      console.log('⚡ Cache hit - returning cached response instantly');
+      await sendWhatsAppResponse(phoneNumber, cached.response);
+      
+      const msgData = processedMessages.get(messageId);
+      if (msgData) {
+        msgData.responded = true;
+        processedMessages.set(messageId, msgData);
+      }
+      
+      console.log(`✅ Cached response sent in ${Date.now() - startTime}ms`);
+      return NextResponse.json({ success: true });
+    }
 
-    // Process with OpenAI Assistant with timeout and fallback
-    const TIMEOUT_MS = 30000; // 30 seconds timeout
+    // Process with OpenAI Assistant with FAST timeout and immediate response
+    const TIMEOUT_MS = 5000; // 5 seconds timeout for ultra-fast fallback
     
     try {
       // Start the assistant processing
@@ -232,9 +301,9 @@ export async function POST(request: NextRequest) {
       if (result === 'TIMEOUT') {
         console.log(`⏰ Assistant response timed out after ${TIMEOUT_MS}ms for ${phoneNumber}`);
         
-        // Send immediate fallback message
+        // Send immediate processing message
         await sendWhatsAppResponse(phoneNumber, 
-          'I\'m still processing your request. This might take a moment. Please wait, and I\'ll get back to you shortly! 🤖⏳'
+          '⏳ Processing...'
         );
         
         // Mark as responded to prevent duplicate processing
@@ -256,6 +325,12 @@ export async function POST(request: NextRequest) {
         });
         
       } else if (result && typeof result === 'string' && result.trim()) {
+        // Cache the response for future use
+        responseCache.set(cacheKey, {
+          response: result,
+          timestamp: Date.now()
+        });
+        
         // Quick response received
         await sendWhatsAppResponse(phoneNumber, result);
         
@@ -290,16 +365,19 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Process message with OpenAI Assistant
+// Process message with OpenAI Assistant - OPTIMIZED
 async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
-    const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
+    // Phone number is already normalized from the main handler
+    const cleanPhone = phoneNumber;
     
     // Get or create thread
     let threadId = whatsappThreads.get(cleanPhone);
     
     if (!threadId) {
-      const inspector = await getInspectorByPhone(cleanPhone) as any;
+      // Quick inspector lookup with no await blocking
+      const inspectorPromise = getInspectorByPhone(cleanPhone);
+      const inspector = await inspectorPromise as any;
       
       const thread = await openai.beta.threads.create({
         metadata: {
@@ -362,17 +440,17 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - maximum speed
+// Wait for run completion - ULTRA FAST polling
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 50; // 5 seconds max (100ms intervals)
+  const maxAttempts = 100; // 5 seconds max (50ms intervals)
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 100)); // Very fast polling
+    await new Promise(resolve => setTimeout(resolve, 50)); // Ultra fast 50ms polling
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
@@ -447,8 +525,8 @@ async function sendWhatsAppResponse(to: string, message: string) {
 // Create assistant optimized for WhatsApp speed
 async function createAssistant() {
   const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.9',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
+    name: 'Property Inspector Assistant v1.2',
+    instructions: `Property Stewards inspection assistant v1.2. Help inspectors manage daily tasks via WhatsApp.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -583,7 +661,7 @@ MEDIA DISPLAY FORMATTING:
 - Always include photo count and location name in the response
 - If no photos available, clearly state "No photos found for [location name]"
 - Provide clickable URLs for photos so inspectors can view them directly`,
-    model: 'gpt-4o-mini', // Fast model for quick responses
+ model: 'gpt-4o-mini', // Fast model for quick responses
     tools: assistantTools
   });
 
@@ -838,7 +916,14 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         if (!finalInspectorId && inspectorPhone) {
-          const inspector = await getInspectorByPhone(inspectorPhone) as any;
+          // Check cache first for ultra-fast lookup
+          let inspector = inspectorCache.get(inspectorPhone);
+          if (!inspector) {
+            inspector = await getInspectorByPhone(inspectorPhone) as any;
+            if (inspector) {
+              inspectorCache.set(inspectorPhone, inspector);
+            }
+          }
           if (!inspector) {
             return JSON.stringify({
               success: false,
@@ -960,6 +1045,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
       case 'getTasksForLocation':
         // Update current location in thread
         if (threadId) {
+          console.log('📢 Updating thread metadata with location:', args.location);
           await openai.beta.threads.update(threadId, {
             metadata: {
               ...metadata,
@@ -967,6 +1053,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
               lastLocationAccessedAt: new Date().toISOString()
             }
           });
+          console.log('✅ Thread metadata updated - Current location:', args.location);
         }
         
         const tasks = await getTasksByLocation(args.workOrderId, args.location);
@@ -1027,12 +1114,24 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           normalizedPhone = '+65' + normalizedPhone;
         }
         
-        // Try to find inspector by normalized phone first
-        let inspector = await getInspectorByPhone(normalizedPhone) as any;
-        
-        // Also try original phone format
+        // Try to find inspector by normalized phone first - with caching
+        let inspector = inspectorCache.get(normalizedPhone);
         if (!inspector) {
-          inspector = await getInspectorByPhone(phone) as any;
+          inspector = await getInspectorByPhone(normalizedPhone) as any;
+          if (inspector) {
+            inspectorCache.set(normalizedPhone, inspector);
+          }
+        }
+        
+        // Also try original phone format - with caching
+        if (!inspector) {
+          inspector = inspectorCache.get(phone);
+          if (!inspector) {
+            inspector = await getInspectorByPhone(phone) as any;
+            if (inspector) {
+              inspectorCache.set(phone, inspector);
+            }
+          }
         }
         
         // If not found by phone, try by name
@@ -1247,10 +1346,16 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
 // Handle WhatsApp media messages (photos/videos)
 async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
-    console.log('🔄 Processing WhatsApp media message');
+    console.log('🔄 Processing WhatsApp media message from:', phoneNumber);
+    
+    // Phone number is already normalized from the main handler
+    const cleanPhone = phoneNumber;
     
     // Get thread for this phone number
-    let threadId = whatsappThreads.get(phoneNumber);
+    let threadId = whatsappThreads.get(cleanPhone);
+    console.log('🔍 Looking for thread with normalized phone:', cleanPhone);
+    console.log('📋 Current thread map:', Array.from(whatsappThreads.keys()));
+    console.log('🧵 Found thread ID:', threadId);
     if (!threadId) {
       console.log('❌ No thread found for media upload');
       return 'Please start a conversation first before uploading media.';
@@ -1411,6 +1516,9 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     let postalCode = 'unknown';
     let roomName = currentLocation || 'general';
     
+    console.log('📢 Current location from metadata:', currentLocation);
+    console.log('🏠 Using room name for upload:', roomName);
+    
     if (metadata.customerName) {
       customerName = metadata.customerName
         .toLowerCase()
@@ -1461,7 +1569,10 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     // Save to database - find ContractChecklistItem for this location
     if (workOrderId && roomName !== 'general') {
-      const normalizedRoomName = roomName.replace(/-/g, ' ');
+      // Normalize room name - handle both hyphenated and space-separated formats
+      const normalizedRoomName = roomName.replace(/-/g, ' ').trim();
+      console.log('🏠 Attempting to save media to location:', normalizedRoomName);
+      console.log('🔑 Work Order ID:', workOrderId);
       const workOrder = await prisma.workOrder.findUnique({
         where: { id: workOrderId },
         include: {
@@ -1478,9 +1589,9 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
       });
       
       if (workOrder?.contract.contractChecklist) {
-        // Find ContractChecklistItem for this location
+        // Find ContractChecklistItem for this location (case-insensitive, trim spaces)
         const matchingItem = workOrder.contract.contractChecklist.items.find(
-          (item: any) => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
+          (item: any) => item.name.toLowerCase().trim() === normalizedRoomName.toLowerCase().trim()
         );
         
         if (matchingItem) {
@@ -1489,24 +1600,29 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
           const currentVideos = matchingItem.videos || [];
           
           if (mediaType === 'photo') {
+            const updatedPhotos = [...currentPhotos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                photos: [...currentPhotos, publicUrl]
+                photos: updatedPhotos
               }
             });
-            console.log('💾 Saved photo to database');
+            console.log('💾 Saved photo to database for location:', matchingItem.name);
+            console.log('📷 Total photos for this location:', updatedPhotos.length);
           } else {
+            const updatedVideos = [...currentVideos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                videos: [...currentVideos, publicUrl]
+                videos: updatedVideos
               }
             });
-            console.log('💾 Saved video to database');
+            console.log('💾 Saved video to database for location:', matchingItem.name);
+            console.log('🎥 Total videos for this location:', updatedVideos.length);
           }
         } else {
           console.log('⚠️ No matching ContractChecklistItem found for location:', normalizedRoomName);
+          console.log('⚠️ Available locations:', workOrder.contract.contractChecklist.items.map((item: any) => item.name));
         }
       }
     }
