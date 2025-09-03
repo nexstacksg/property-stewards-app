@@ -99,15 +99,8 @@ export async function POST(request: NextRequest) {
     }
     
     const messageId = data.id || `${Date.now()}-${Math.random()}`;
-    const rawPhoneNumber = data.fromNumber || data.from;
-    // CRITICAL: Normalize phone number by removing +, spaces, dashes for consistent lookup
-    const phoneNumber = rawPhoneNumber ? rawPhoneNumber.replace(/[\s+\-]/g, '') : '';
+    const phoneNumber = data.fromNumber || data.from;
     const message = data.body || data.message?.text?.body || '';
-    
-    console.log('📱 Phone normalization:', {
-      raw: rawPhoneNumber,
-      normalized: phoneNumber
-    });
     
     // Debug: Log key message properties first
     console.log('📋 Message summary:', {
@@ -167,8 +160,6 @@ export async function POST(request: NextRequest) {
     // Handle media messages
     if (hasMedia) {
       console.log('🔄 Processing media message...');
-      console.log('📋 Checking for thread with normalized phone:', phoneNumber);
-      console.log('🗺️ Available threads in memory:', Array.from(whatsappThreads.keys()));
       
       // Use existing thread if available, don't create new one to preserve context
       let threadId = whatsappThreads.get(phoneNumber);
@@ -302,8 +293,7 @@ export async function POST(request: NextRequest) {
 // Process message with OpenAI Assistant
 async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
-    // Phone number already normalized in main handler
-    const cleanPhone = phoneNumber;
+    const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
     
     // Get or create thread
     let threadId = whatsappThreads.get(cleanPhone);
@@ -970,16 +960,13 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
       case 'getTasksForLocation':
         // Update current location in thread
         if (threadId) {
-          console.log('📢 UPDATING THREAD METADATA WITH LOCATION:', args.location);
-          const updatedMetadata = {
-            ...metadata,
-            currentLocation: args.location,
-            lastLocationAccessedAt: new Date().toISOString()
-          };
           await openai.beta.threads.update(threadId, {
-            metadata: updatedMetadata
+            metadata: {
+              ...metadata,
+              currentLocation: args.location,
+              lastLocationAccessedAt: new Date().toISOString()
+            }
           });
-          console.log('✅ Thread metadata updated with location:', updatedMetadata);
         }
         
         const tasks = await getTasksByLocation(args.workOrderId, args.location);
@@ -1260,38 +1247,29 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
 // Handle WhatsApp media messages (photos/videos)
 async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
-    console.log('🔄 Processing WhatsApp media message from normalized phone:', phoneNumber);
+    console.log('🔄 Processing WhatsApp media message');
     
-    // Phone number is already normalized from main handler
+    // Get thread for this phone number
     let threadId = whatsappThreads.get(phoneNumber);
-    
-    // Debug thread lookup
-    console.log('🔍 Thread lookup:', {
-      requestedPhone: phoneNumber,
-      foundThreadId: threadId,
-      availableThreads: Array.from(whatsappThreads.entries()).map(([phone, id]) => ({ phone, id: id.substring(0, 8) + '...' }))
-    });
-    
     if (!threadId) {
-      console.log('❌ No thread found for phone:', phoneNumber);
-      return 'Please start a conversation first before uploading media. Try saying "What are my jobs today?" to get started.';
+      console.log('❌ No thread found for media upload');
+      return 'Please start a conversation first before uploading media.';
     }
     
     // Get thread metadata for context
     const thread = await openai.beta.threads.retrieve(threadId);
     const metadata = thread.metadata || {};
-    console.log('📋 Thread metadata for media upload:', JSON.stringify(metadata, null, 2));
+    console.log('📋 Thread metadata for media upload:', metadata);
     
     // Check if we have work order context
     const workOrderId = metadata.workOrderId;
     let currentLocation = metadata.currentLocation;
     
-    console.log('🎯 Media upload context:', {
+    console.log('🔍 Media upload context check:', {
       workOrderId: workOrderId,
       currentLocation: currentLocation,
       hasWorkOrder: !!workOrderId,
-      hasLocation: !!currentLocation,
-      fullMetadata: metadata
+      hasLocation: !!currentLocation
     });
     
     if (!workOrderId) {
@@ -1433,12 +1411,6 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     let postalCode = 'unknown';
     let roomName = currentLocation || 'general';
     
-    console.log('🏠 Location for media upload:', {
-      currentLocation: currentLocation,
-      roomName: roomName,
-      workOrderId: workOrderId
-    });
-    
     if (metadata.customerName) {
       customerName = metadata.customerName
         .toLowerCase()
@@ -1489,13 +1461,7 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     // Save to database - find ContractChecklistItem for this location
     if (workOrderId && roomName !== 'general') {
-      // Normalize room name - convert hyphens back to spaces and trim
-      const normalizedRoomName = roomName.replace(/-/g, ' ').trim();
-      console.log('🔎 Searching for ContractChecklistItem:', {
-        workOrderId: workOrderId,
-        originalRoomName: roomName,
-        normalizedRoomName: normalizedRoomName
-      });
+      const normalizedRoomName = roomName.replace(/-/g, ' ');
       const workOrder = await prisma.workOrder.findUnique({
         where: { id: workOrderId },
         include: {
@@ -1512,77 +1478,42 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
       });
       
       if (workOrder?.contract.contractChecklist) {
-        console.log('📋 Available checklist items:', workOrder.contract.contractChecklist.items.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          currentPhotos: item.photos?.length || 0,
-          currentVideos: item.videos?.length || 0
-        })));
-        
-        // Find ContractChecklistItem for this location (case-insensitive)
+        // Find ContractChecklistItem for this location
         const matchingItem = workOrder.contract.contractChecklist.items.find(
-          (item: any) => item.name.toLowerCase().trim() === normalizedRoomName.toLowerCase().trim()
+          (item: any) => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
         );
         
         if (matchingItem) {
-          console.log('✅ Found matching ContractChecklistItem:', {
-            id: matchingItem.id,
-            name: matchingItem.name,
-            location: normalizedRoomName
-          });
-          
           // Update ContractChecklistItem with new media
           const currentPhotos = matchingItem.photos || [];
           const currentVideos = matchingItem.videos || [];
           
           if (mediaType === 'photo') {
-            const updatedPhotos = [...currentPhotos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                photos: updatedPhotos
+                photos: [...currentPhotos, publicUrl]
               }
             });
-            console.log('📷 PHOTO SAVED TO DATABASE:', {
-              location: matchingItem.name,
-              checklistItemId: matchingItem.id,
-              totalPhotos: updatedPhotos.length,
-              newPhotoUrl: publicUrl
-            });
+            console.log('💾 Saved photo to database');
           } else {
-            const updatedVideos = [...currentVideos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                videos: updatedVideos
+                videos: [...currentVideos, publicUrl]
               }
             });
-            console.log('🎥 VIDEO SAVED TO DATABASE:', {
-              location: matchingItem.name,
-              checklistItemId: matchingItem.id,
-              totalVideos: updatedVideos.length,
-              newVideoUrl: publicUrl
-            });
+            console.log('💾 Saved video to database');
           }
         } else {
-          console.log('⚠️ NO MATCHING CHECKLIST ITEM FOUND:', {
-            searchedLocation: normalizedRoomName,
-            availableLocations: workOrder.contract.contractChecklist.items.map((item: any) => item.name)
-          });
+          console.log('⚠️ No matching ContractChecklistItem found for location:', normalizedRoomName);
         }
       }
     }
     
-    // Return success message with confirmation details
+    // Return success message
     const locationName = currentLocation === 'general' ? 'your current job' : currentLocation;
-    console.log('🎆 MEDIA UPLOAD COMPLETE:', {
-      type: mediaType,
-      location: locationName,
-      url: publicUrl,
-      savedToDatabase: workOrderId && roomName !== 'general'
-    });
-    
-    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully!\n\n📍 Location: ${locationName}\n🔗 File: ${publicUrl.split('/').pop()}\n\nYou can continue with your inspection or upload more media.`;
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nYou can continue with your inspection or upload more media.`;
     
   } catch (error) {
     console.error('❌ Error handling WhatsApp media:', error);
