@@ -16,6 +16,7 @@ import {
   getWorkOrderProgress
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
+import { cacheHelpers } from '@/lib/memory-cache';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -29,10 +30,10 @@ const processedMessages = new Map<string, {
   responded: boolean;
 }>();
 
-// Thread management for WhatsApp conversations
+// Thread management for WhatsApp conversations - local cache for speed
 const whatsappThreads = new Map<string, string>();
 
-// Reuse assistant ID - reset to force recreation with media tools
+// Assistant ID - will check memory cache first
 let assistantId: string | null = null;
 
 // Clean up old processed messages every 5 minutes
@@ -216,7 +217,6 @@ export async function POST(request: NextRequest) {
 
     // Process with OpenAI Assistant with timeout and fallback
     const TIMEOUT_MS = 30000; // 30 seconds timeout
-    const QUICK_RESPONSE_MS = 5000; // 5 seconds for quick response check
     
     try {
       // Start the assistant processing
@@ -296,8 +296,19 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   try {
     const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
     
-    // Get or create thread
+    // Get thread from local cache first, then memory cache
     let threadId = whatsappThreads.get(cleanPhone);
+    
+    if (!threadId) {
+      // Check memory cache
+      const cachedThreadId = await cacheHelpers.getThread(cleanPhone);
+      if (cachedThreadId) {
+        threadId = cachedThreadId;
+        // Update local cache
+        whatsappThreads.set(cleanPhone, threadId);
+        console.log(`📦 Retrieved thread ${threadId} from cache for ${cleanPhone}`);
+      }
+    }
     
     if (!threadId) {
       const inspector = await getInspectorByPhone(cleanPhone);
@@ -315,7 +326,9 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       });
       
       threadId = thread.id;
+      // Update both local and memory cache
       whatsappThreads.set(cleanPhone, threadId);
+      await cacheHelpers.setThread(cleanPhone, threadId);
       console.log(`🆕 Created thread ${threadId} for ${cleanPhone}`);
     }
 
@@ -327,7 +340,15 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
 
     // Get or create assistant
     if (!assistantId) {
-      assistantId = await createAssistant();
+      // Check memory cache first
+      assistantId = await cacheHelpers.getAssistantId();
+      if (!assistantId) {
+        assistantId = await createAssistant();
+        // Cache the assistant ID
+        await cacheHelpers.setAssistantId(assistantId);
+      } else {
+        console.log(`🤖 Using cached assistant ID: ${assistantId}`);
+      }
     }
 
     // Run assistant
@@ -363,17 +384,19 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - maximum speed
+// Wait for run completion - optimized polling
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 50; // 5 seconds max (100ms intervals)
+  const maxAttempts = 30; // 3 seconds max
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
+  // Adaptive polling - start fast, slow down if needed  
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 100)); // Very fast polling
+    const delay = attempts < 10 ? 50 : 150; // Fast first, then slower
+    await new Promise(resolve => setTimeout(resolve, delay));
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
@@ -448,8 +471,8 @@ async function sendWhatsAppResponse(to: string, message: string) {
 // Create assistant optimized for WhatsApp speed
 async function createAssistant() {
   const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.7',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
+    name: 'Property Inspector Assistant v0.8',
+    instructions: `Property inspection assistant. Help inspectors with tasks via WhatsApp.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -585,7 +608,9 @@ MEDIA DISPLAY FORMATTING:
 - If no photos available, clearly state "No photos found for [location name]"
 - Provide clickable URLs for photos so inspectors can view them directly`,
     model: 'gpt-4o-mini', // Fast model for quick responses
-    tools: assistantTools
+    tools: assistantTools,
+      temperature: 0.3, // Lower = faster, more consistent responses
+
   });
 
   console.log('Created assistant:', assistant.id);
@@ -931,7 +956,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         }
         
         const locations = await getLocationsWithCompletionStatus(args.jobId);
-        const progress = await getWorkOrderProgress(args.jobId);
+        const progress = await getWorkOrderProgress(args.jobId) as any;
         
         return JSON.stringify({
           success: true,
@@ -939,9 +964,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           locations: locations.map(loc => loc.displayName),
           locationsDetail: locations,
           progress: {
-            total: progress.total_tasks,
-            completed: progress.completed_tasks,
-            pending: progress.pending_tasks
+            total: progress?.total_tasks || 0,
+            completed: progress?.completed_tasks || 0,
+            pending: progress?.pending_tasks || 0
           }
         });
 
