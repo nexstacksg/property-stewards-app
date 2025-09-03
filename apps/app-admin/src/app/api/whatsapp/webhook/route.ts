@@ -16,6 +16,13 @@ import {
   getWorkOrderProgress
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
+import { 
+  storeThread, 
+  getThread, 
+  getThreadMetadata, 
+  updateThreadMetadata,
+  type ThreadMetadata 
+} from '@/lib/redis-thread-store';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -104,7 +111,7 @@ export async function POST(request: NextRequest) {
     const messageId = data.id || `${Date.now()}-${Math.random()}`;
     // Normalize phone number to consistent format (remove + and spaces)
     const rawPhone = data.fromNumber || data.from;
-    const phoneNumber = rawPhone?.replace(/[\s+-]/g, '').replace(/^0+/, '') || '';
+    const phoneNumber = rawPhone?.replace(/[\s+-]/g, '').replace(/^0+/, '').replace('@c.us', '') || '';
     const message = data.body || data.message?.text?.body || '';
     
     // Debug: Log key message properties first
@@ -167,7 +174,13 @@ export async function POST(request: NextRequest) {
       console.log('🔄 Processing media message...');
       
       // Use existing thread if available, don't create new one to preserve context
-      let threadId = whatsappThreads.get(phoneNumber);
+      // First check Redis for thread
+      let threadId :any= await getThread(phoneNumber);
+      
+      // Fallback to memory cache if not in Redis
+      if (!threadId) {
+        threadId = whatsappThreads.get(phoneNumber);
+      }
       
       if (!threadId) {
         console.log('⚠️ No existing thread found for media upload from phone:', phoneNumber);
@@ -194,6 +207,21 @@ export async function POST(request: NextRequest) {
       if (mediaResponse) {
         // Send response via Wassenger
         await sendWhatsAppResponse(phoneNumber, mediaResponse);
+        
+        // Also notify the assistant about the media upload
+        // Check both Redis and memory for thread
+        let threadIdForNotify : any = await getThread(phoneNumber);
+        if (!threadIdForNotify) {
+          threadIdForNotify = whatsappThreads.get(phoneNumber);
+        }
+        
+        if (threadIdForNotify && mediaResponse.includes('successfully')) {
+          // Add a message to the thread for context
+          await openai.beta.threads.messages.create(threadIdForNotify, {
+            role: 'assistant',
+            content: mediaResponse
+          });
+        }
         
         // Mark as responded
         const msgData = processedMessages.get(messageId);
@@ -302,11 +330,24 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     // Phone number is already normalized from the caller
     const cleanPhone = phoneNumber;
     
-    // Get or create thread - use consistent phone format
-    let threadId = whatsappThreads.get(cleanPhone);
+    // First check Redis for existing thread
+    let threadId :any = await getThread(cleanPhone);
+    let metadata = await getThreadMetadata(cleanPhone);
+    
+    if (threadId) {
+      console.log(`📌 Using Redis-cached thread ${threadId} for ${cleanPhone}`);
+      // Also cache in memory for this request
+      whatsappThreads.set(cleanPhone, threadId);
+    } else {
+      // Check memory cache as fallback
+      threadId = whatsappThreads.get(cleanPhone);
+      if (threadId) {
+        console.log(`📌 Using memory-cached thread ${threadId} for ${cleanPhone}`);
+      }
+    }
     
     if (!threadId) {
-      console.log(`🔍 No thread found for ${cleanPhone}, creating new one...`);
+      console.log(`🆕 No existing thread found, creating new one for ${cleanPhone}...`);
       // Try to find inspector by phone (with and without +)
       let inspector = await getInspectorByPhone('+' + cleanPhone) as any;
       if (!inspector) {
@@ -326,8 +367,21 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       });
       
       threadId = thread.id;
+      
+      // Store in Redis for persistence
+      await storeThread(cleanPhone, threadId, {
+        phoneNumber: cleanPhone,
+        channel: 'whatsapp',
+        inspectorId: inspector?.id || '',
+        inspectorName: inspector?.name || '',
+        workOrderId: '',
+        currentLocation: '',
+        createdAt: new Date().toISOString()
+      });
+      
+      // Also cache in memory
       whatsappThreads.set(cleanPhone, threadId);
-      console.log(`🆕 Created thread ${threadId} for ${cleanPhone}`);
+      console.log(`✅ Created new thread ${threadId} for ${cleanPhone} and stored in Redis`);
     }
 
     // Add message to thread
@@ -367,22 +421,40 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
 
     // Handle tool calls
     if (runStatus.status === 'requires_action') {
+      console.log('🔧 Run requires action, handling tool calls...');
       await handleToolCalls(threadId, run.id, runStatus, cleanPhone);
+      console.log('⏳ Waiting for run completion after tool execution...');
       runStatus = await waitForRunCompletion(threadId, run.id);
+      console.log('📋 Run status after tool execution:', runStatus.status);
+    }
+
+    // Check if run completed successfully
+    if (runStatus.status !== 'completed') {
+      console.error('❌ Run did not complete successfully. Status:', runStatus.status);
+      if (runStatus.status === 'failed') {
+        console.error('❌ Run failed with error:', runStatus.last_error);
+      }
+      return 'Sorry, I encountered an issue processing your request. Please try again.';
     }
 
     // Get assistant's response
+    console.log('📨 Getting assistant response from thread:', threadId);
     const messages = await openai.beta.threads.messages.list(threadId);
     const lastMessage = messages.data[0];
+    
+    console.log('📋 Messages count:', messages.data.length);
+    console.log('📋 Last message role:', lastMessage?.role);
     
     if (lastMessage && lastMessage.role === 'assistant') {
       const content = lastMessage.content[0];
       if (content.type === 'text') {
+        console.log('✅ Assistant response found:', content.text.value.substring(0, 100) + '...');
         return content.text.value;
       }
     }
 
-    return '';
+    console.error('❌ No assistant response found in messages');
+    return 'I processed your information but couldn\'t generate a response. Please try again.';
     
   } catch (error) {
     console.error('Error processing with assistant:', error);
@@ -433,6 +505,7 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     const output = await executeTool(functionName, functionArgs, threadId);
     
     console.log(`✅ Tool ${functionName} executed successfully`);
+    console.log(`📊 Tool output length: ${output.length} characters`);
     
     toolOutputs.push({
       tool_call_id: toolCall.id,
@@ -440,10 +513,12 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     });
   }
 
+  console.log(`📤 Submitting ${toolOutputs.length} tool outputs to OpenAI`);
   await openai.beta.threads.runs.submitToolOutputs(runId, {
     thread_id: threadId,
     tool_outputs: toolOutputs
   });
+  console.log('✅ Tool outputs submitted successfully');
 }
 
 // Send WhatsApp response via Wassenger
@@ -922,19 +997,28 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        // Update thread metadata
+        // Update thread metadata in both OpenAI and Redis
         if (threadId) {
           const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/);
+          const updatedMetadata = {
+            ...metadata,
+            workOrderId: args.jobId,
+            customerName: workOrder.customer_name,
+            propertyAddress: workOrder.property_address,
+            postalCode: postalCodeMatch ? postalCodeMatch[1] : 'unknown',
+            jobStatus: 'confirming'
+          };
+          
+          // Update OpenAI thread metadata
           await openai.beta.threads.update(threadId, {
-            metadata: {
-              ...metadata,
-              workOrderId: args.jobId,
-              customerName: workOrder.customer_name,
-              propertyAddress: workOrder.property_address,
-              postalCode: postalCodeMatch ? postalCodeMatch[1] : 'unknown',
-              jobStatus: 'confirming'
-            }
+            metadata: updatedMetadata
           });
+          
+          // Get phone number from metadata and update Redis
+          const phoneNumber = metadata.phoneNumber;
+          if (phoneNumber) {
+            await updateThreadMetadata(phoneNumber, updatedMetadata);
+          }
         }
         
         return JSON.stringify({
@@ -957,13 +1041,22 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         await updateWorkOrderStatus(args.jobId, 'in_progress');
         
         if (threadId) {
+          const updatedMetadata = {
+            ...metadata,
+            jobStatus: 'started',
+            jobStartedAt: new Date().toISOString()
+          };
+          
+          // Update OpenAI thread metadata
           await openai.beta.threads.update(threadId, {
-            metadata: {
-              ...metadata,
-              jobStatus: 'started',
-              jobStartedAt: new Date().toISOString()
-            }
+            metadata: updatedMetadata
           });
+          
+          // Update Redis metadata
+          const phoneNumber = metadata.phoneNumber;
+          if (phoneNumber) {
+            await updateThreadMetadata(phoneNumber, updatedMetadata);
+          }
         }
         
         const locations = await getLocationsWithCompletionStatus(args.jobId) as any[];
@@ -995,15 +1088,24 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'getTasksForLocation':
-        // Update current location in thread
+        // Update current location in thread and Redis
         if (threadId) {
+          const updatedMetadata = {
+            ...metadata,
+            currentLocation: args.location,
+            lastLocationAccessedAt: new Date().toISOString()
+          };
+          
+          // Update OpenAI thread metadata
           await openai.beta.threads.update(threadId, {
-            metadata: {
-              ...metadata,
-              currentLocation: args.location,
-              lastLocationAccessedAt: new Date().toISOString()
-            }
+            metadata: updatedMetadata
           });
+          
+          // Update Redis metadata
+          const phoneNumber = metadata.phoneNumber;
+          if (phoneNumber) {
+            await updateThreadMetadata(phoneNumber, updatedMetadata);
+          }
         }
         
         const tasks = await getTasksByLocation(args.workOrderId, args.location);
@@ -1092,19 +1194,27 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        // Store inspector details in thread metadata (non-blocking)
+        // Store inspector details in thread metadata and Redis
         if (threadId) {
-          // Fast metadata update
+          const inspectorMetadata = {
+            channel: 'whatsapp',
+            phoneNumber: normalizedPhone,
+            inspectorId: inspector.id,
+            inspectorName: inspector.name,
+            inspectorPhone: inspector.mobilePhone || normalizedPhone,
+            identifiedAt: new Date().toISOString()
+          };
+          
+          // Update OpenAI thread metadata
           await openai.beta.threads.update(threadId, {
-            metadata: {
-              channel: 'whatsapp',
-              phoneNumber: normalizedPhone,
-              inspectorId: inspector.id,
-              inspectorName: inspector.name,
-              inspectorPhone: inspector.mobilePhone || normalizedPhone,
-              identifiedAt: new Date().toISOString()
-            }
+            metadata: inspectorMetadata
           });
+          
+          // Update Redis metadata
+          const phoneNumberForRedis = metadata.phoneNumber || normalizedPhone.replace(/[^\d]/g, '');
+          if (phoneNumberForRedis) {
+            await updateThreadMetadata(phoneNumberForRedis, inspectorMetadata);
+          }
         }
         
         return JSON.stringify({
@@ -1287,16 +1397,27 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     console.log('🔄 Processing WhatsApp media message for phone:', phoneNumber);
     
     // Phone number is already normalized from the caller
-    // Get thread for this phone number
-    let threadId = whatsappThreads.get(phoneNumber);
+    // First check Redis for thread
+    let threadId:any = await getThread(phoneNumber);
+    
+    // Fallback to memory cache if not in Redis
+    if (!threadId) {
+      threadId = whatsappThreads.get(phoneNumber);
+    }
+    
     if (!threadId) {
       console.log('❌ No thread found for media upload for phone:', phoneNumber);
       return 'Please start a conversation first before uploading media.';
     }
     
-    // Get thread metadata for context
-    const thread = await openai.beta.threads.retrieve(threadId);
-    const metadata = thread.metadata || {};
+    // Get thread metadata from Redis for better persistence
+    let metadata: any = await getThreadMetadata(phoneNumber);
+    
+    // Fallback to OpenAI thread metadata if Redis is empty
+    if (!metadata || Object.keys(metadata).length === 0) {
+      const thread = await openai.beta.threads.retrieve(threadId);
+      metadata = thread.metadata || {};
+    }
     console.log('📋 Thread metadata for media upload:', metadata);
     
     // Check if we have work order context
@@ -1316,53 +1437,8 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     }
     
     if (!currentLocation) {
-      console.log('⚠️ No specific location context - will try to find the active location or use general');
-      
-      // Try to find the most recent location from work order
-      if (workOrderId) {
-        try {
-          const workOrder = await prisma.workOrder.findUnique({
-            where: { id: workOrderId },
-            include: {
-              contract: {
-                include: {
-                  contractChecklist: {
-                    include: {
-                      items: {
-                        orderBy: { order: 'asc' }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          });
-          
-          if (workOrder?.contract.contractChecklist?.items.length) {
-            // Find the first location that has some progress but isn't completed
-            const activeItem = workOrder.contract.contractChecklist.items.find(
-              item => item.enteredOn === null // Not completed yet
-            );
-            
-            if (activeItem) {
-              currentLocation = activeItem.name;
-              console.log('✅ Found active location from work order:', currentLocation);
-            } else {
-              // All items are complete, use the last one
-              const lastItem = workOrder.contract.contractChecklist.items[workOrder.contract.contractChecklist.items.length - 1];
-              currentLocation = lastItem.name;
-              console.log('✅ Using last location from work order:', currentLocation);
-            }
-          }
-        } catch (error) {
-          console.log('⚠️ Could not determine location from work order:', error);
-        }
-      }
-      
-      if (!currentLocation) {
-        currentLocation = 'general';
-        console.log('⚠️ Using general folder for media upload');
-      }
+      console.log('❌ No location selected for media upload');
+      return '📍 Please select a location first before uploading photos.\n\nExample: Select "Living Room" from the locations list, then upload your photos.';
     }
     
     // Extract media URL from WhatsApp data - Enhanced for multiple Wassenger formats
@@ -1498,8 +1574,11 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     console.log('✅ Uploaded to DigitalOcean Spaces:', publicUrl);
     
     // Save to database - find ContractChecklistItem for this location
-    if (workOrderId && roomName !== 'general') {
+    if (workOrderId && currentLocation) {
       const normalizedRoomName = roomName.replace(/-/g, ' ');
+      console.log('💾 Saving media to database for location:', normalizedRoomName);
+      console.log('📍 Work Order ID:', workOrderId);
+      
       const workOrder = await prisma.workOrder.findUnique({
         where: { id: workOrderId },
         include: {
@@ -1516,37 +1595,53 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
       });
       
       if (workOrder?.contract.contractChecklist) {
+        console.log('✅ Found contract checklist with', workOrder.contract.contractChecklist.items.length, 'items');
+        
         // Find ContractChecklistItem for this location
         const matchingItem = workOrder.contract.contractChecklist.items.find(
           (item: any) => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
         );
         
         if (matchingItem) {
+          console.log('✅ Found matching checklist item:', matchingItem.id, 'for location:', matchingItem.name);
+          
           // Update ContractChecklistItem with new media
           const currentPhotos = matchingItem.photos || [];
           const currentVideos = matchingItem.videos || [];
           
+          console.log('📷 Current photos count:', currentPhotos.length);
+          console.log('🎥 Current videos count:', currentVideos.length);
+          
           if (mediaType === 'photo') {
+            const updatedPhotos = [...currentPhotos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                photos: [...currentPhotos, publicUrl]
+                photos: updatedPhotos
               }
             });
-            console.log('💾 Saved photo to database');
+            console.log('✅ Photo saved to database. Total photos now:', updatedPhotos.length);
+            console.log('📸 Photo URL added:', publicUrl);
           } else {
+            const updatedVideos = [...currentVideos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                videos: [...currentVideos, publicUrl]
+                videos: updatedVideos
               }
             });
-            console.log('💾 Saved video to database');
+            console.log('✅ Video saved to database. Total videos now:', updatedVideos.length);
+            console.log('🎬 Video URL added:', publicUrl);
           }
         } else {
-          console.log('⚠️ No matching ContractChecklistItem found for location:', normalizedRoomName);
+          console.log('❌ No matching ContractChecklistItem found for location:', normalizedRoomName);
+          console.log('📋 Available locations:', workOrder.contract.contractChecklist.items.map((item: any) => item.name));
         }
+      } else {
+        console.log('❌ No contract checklist found for work order');
       }
+    } else {
+      console.log('⚠️ Skipping database save - missing workOrderId or currentLocation');
     }
     
     // Return success message
