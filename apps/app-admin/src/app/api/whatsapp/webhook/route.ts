@@ -195,6 +195,16 @@ export async function POST(request: NextRequest) {
         // Send response via Wassenger
         await sendWhatsAppResponse(phoneNumber, mediaResponse);
         
+        // Also notify the assistant about the media upload
+        const threadId = whatsappThreads.get(phoneNumber);
+        if (threadId && mediaResponse.includes('successfully')) {
+          // Add a message to the thread for context
+          await openai.beta.threads.messages.create(threadId, {
+            role: 'assistant',
+            content: mediaResponse
+          });
+        }
+        
         // Mark as responded
         const msgData = processedMessages.get(messageId);
         if (msgData) {
@@ -1316,53 +1326,8 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     }
     
     if (!currentLocation) {
-      console.log('⚠️ No specific location context - will try to find the active location or use general');
-      
-      // Try to find the most recent location from work order
-      if (workOrderId) {
-        try {
-          const workOrder = await prisma.workOrder.findUnique({
-            where: { id: workOrderId },
-            include: {
-              contract: {
-                include: {
-                  contractChecklist: {
-                    include: {
-                      items: {
-                        orderBy: { order: 'asc' }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          });
-          
-          if (workOrder?.contract.contractChecklist?.items.length) {
-            // Find the first location that has some progress but isn't completed
-            const activeItem = workOrder.contract.contractChecklist.items.find(
-              item => item.enteredOn === null // Not completed yet
-            );
-            
-            if (activeItem) {
-              currentLocation = activeItem.name;
-              console.log('✅ Found active location from work order:', currentLocation);
-            } else {
-              // All items are complete, use the last one
-              const lastItem = workOrder.contract.contractChecklist.items[workOrder.contract.contractChecklist.items.length - 1];
-              currentLocation = lastItem.name;
-              console.log('✅ Using last location from work order:', currentLocation);
-            }
-          }
-        } catch (error) {
-          console.log('⚠️ Could not determine location from work order:', error);
-        }
-      }
-      
-      if (!currentLocation) {
-        currentLocation = 'general';
-        console.log('⚠️ Using general folder for media upload');
-      }
+      console.log('❌ No location selected for media upload');
+      return '📍 Please select a location first before uploading photos.\n\nExample: Select "Living Room" from the locations list, then upload your photos.';
     }
     
     // Extract media URL from WhatsApp data - Enhanced for multiple Wassenger formats
@@ -1498,8 +1463,11 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     console.log('✅ Uploaded to DigitalOcean Spaces:', publicUrl);
     
     // Save to database - find ContractChecklistItem for this location
-    if (workOrderId && roomName !== 'general') {
+    if (workOrderId && currentLocation) {
       const normalizedRoomName = roomName.replace(/-/g, ' ');
+      console.log('💾 Saving media to database for location:', normalizedRoomName);
+      console.log('📍 Work Order ID:', workOrderId);
+      
       const workOrder = await prisma.workOrder.findUnique({
         where: { id: workOrderId },
         include: {
@@ -1516,37 +1484,53 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
       });
       
       if (workOrder?.contract.contractChecklist) {
+        console.log('✅ Found contract checklist with', workOrder.contract.contractChecklist.items.length, 'items');
+        
         // Find ContractChecklistItem for this location
         const matchingItem = workOrder.contract.contractChecklist.items.find(
           (item: any) => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
         );
         
         if (matchingItem) {
+          console.log('✅ Found matching checklist item:', matchingItem.id, 'for location:', matchingItem.name);
+          
           // Update ContractChecklistItem with new media
           const currentPhotos = matchingItem.photos || [];
           const currentVideos = matchingItem.videos || [];
           
+          console.log('📷 Current photos count:', currentPhotos.length);
+          console.log('🎥 Current videos count:', currentVideos.length);
+          
           if (mediaType === 'photo') {
+            const updatedPhotos = [...currentPhotos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                photos: [...currentPhotos, publicUrl]
+                photos: updatedPhotos
               }
             });
-            console.log('💾 Saved photo to database');
+            console.log('✅ Photo saved to database. Total photos now:', updatedPhotos.length);
+            console.log('📸 Photo URL added:', publicUrl);
           } else {
+            const updatedVideos = [...currentVideos, publicUrl];
             await prisma.contractChecklistItem.update({
               where: { id: matchingItem.id },
               data: {
-                videos: [...currentVideos, publicUrl]
+                videos: updatedVideos
               }
             });
-            console.log('💾 Saved video to database');
+            console.log('✅ Video saved to database. Total videos now:', updatedVideos.length);
+            console.log('🎬 Video URL added:', publicUrl);
           }
         } else {
-          console.log('⚠️ No matching ContractChecklistItem found for location:', normalizedRoomName);
+          console.log('❌ No matching ContractChecklistItem found for location:', normalizedRoomName);
+          console.log('📋 Available locations:', workOrder.contract.contractChecklist.items.map((item: any) => item.name));
         }
+      } else {
+        console.log('❌ No contract checklist found for work order');
       }
+    } else {
+      console.log('⚠️ Skipping database save - missing workOrderId or currentLocation');
     }
     
     // Return success message
