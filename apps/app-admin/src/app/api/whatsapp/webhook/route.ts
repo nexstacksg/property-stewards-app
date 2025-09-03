@@ -32,8 +32,10 @@ const processedMessages = new Map<string, {
 // Thread management for WhatsApp conversations
 const whatsappThreads = new Map<string, string>();
 
-// Reuse assistant ID - reset to force recreation with media tools
+// Global assistant ID - created ONCE and reused for ALL users
+// DO NOT RESET THIS TO NULL - it causes recreating assistant every time
 let assistantId: string | null = null;
+let isCreatingAssistant = false;
 
 // Clean up old processed messages every 5 minutes
 setInterval(() => {
@@ -324,10 +326,40 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       content: message
     });
 
-    // Get or create assistant
+    // Get or create assistant - SINGLETON PATTERN
     if (!assistantId) {
-      assistantId = await createAssistant();
+      // Check if another request is already creating
+      if (isCreatingAssistant) {
+        console.log('⏳ Waiting for assistant creation by another request...');
+        // Wait up to 15 seconds for assistant to be created
+        let waitCount = 0;
+        while (!assistantId && isCreatingAssistant && waitCount < 150) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          waitCount++;
+        }
+        
+        if (!assistantId) {
+          console.error('❌ Assistant creation timeout');
+          return 'Service is starting up. Please try again in a moment.';
+        }
+      } else {
+        // This request will create the assistant
+        isCreatingAssistant = true;
+        console.log('🔧 Creating assistant for first time...');
+        
+        try {
+          assistantId = await createAssistant();
+          console.log('✅ Assistant created and cached:', assistantId);
+        } catch (error) {
+          console.error('❌ Failed to create assistant:', error);
+          return 'Service initialization failed. Please try again.';
+        } finally {
+          isCreatingAssistant = false;
+        }
+      }
     }
+    
+    console.log('📌 Using assistant:', assistantId);
 
     // Run assistant
     const run = await openai.beta.threads.runs.create(threadId, {
@@ -391,6 +423,8 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     const functionName = toolCall.function.name;
     const functionArgs = JSON.parse(toolCall.function.arguments);
     
+    console.log(`🔧 Tool call requested: ${functionName}`, functionArgs);
+    
     // Add phone number for relevant tools
     if (functionName === 'getTodayJobs' && !functionArgs.inspectorPhone) {
       functionArgs.inspectorPhone = phoneNumber;
@@ -401,6 +435,8 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
     }
     
     const output = await executeTool(functionName, functionArgs, threadId);
+    
+    console.log(`✅ Tool ${functionName} executed successfully`);
     
     toolOutputs.push({
       tool_call_id: toolCall.id,
@@ -444,9 +480,12 @@ async function sendWhatsAppResponse(to: string, message: string) {
   }
 }
 
-// Create assistant optimized for WhatsApp speed
+// Create assistant - ONLY CALLED ONCE PER SERVER INSTANCE
 async function createAssistant() {
-  const assistant = await openai.beta.assistants.create({
+  console.log('🚀 ONE-TIME ASSISTANT CREATION STARTING...');
+  
+  try {
+    const assistant = await openai.beta.assistants.create({
     name: 'Property Inspector Assistant v0.9',
     instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
 
@@ -456,6 +495,13 @@ Key capabilities:
 - Allow job detail modifications before starting
 - Guide through room-by-room inspection workflow
 - Track task completion and progress
+
+CRITICAL JOB SELECTION PROCESS:
+- When showing jobs, each has a number: [1], [2], [3] and an ID (e.g., "cmeps0xtz0006m35wcrtr8wx9")
+- When user types just a number like "1", you MUST:
+  1. Look up which job was shown as [1] in the getTodayJobs result
+  2. Get that job's ID from the response
+  3. Call confirmJobSelection with the actual job ID (NOT the number "1")
 
 CRITICAL: Task ID Management
 - Tasks have two identifiers:
@@ -489,12 +535,17 @@ CONVERSATION FLOW GUIDELINES:
      ⭐ Priority: High
      Status: STARTED
    - End with numbered selection prompt like "Type [1], [2] or [3] to select"
+   - CRITICAL: Remember the mapping between job numbers and job IDs for selection
 
 2. Job Selection and Confirmation:
-   - When user selects a job, use confirmJobSelection tool
-   - Display the destination details clearly
+   - When user selects a job by typing just a number (e.g., "1", "2", "3"):
+     * Map the number to the corresponding job from getTodayJobs result
+     * Use the job's ID (NOT the number) with confirmJobSelection tool 
+     * Example: If user types "1", use the ID from jobs[0].id
+   - Display the destination details clearly  
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
+   - IMPORTANT: There is NO selectJob tool - use confirmJobSelection directly with the job ID
 
 3. Starting Inspection:
    - Once confirmed, use startJob tool
@@ -587,8 +638,13 @@ MEDIA DISPLAY FORMATTING:
     tools: assistantTools
   });
 
-  console.log('Created assistant:', assistant.id);
-  return assistant.id;
+    console.log('✅ ASSISTANT CREATED SUCCESSFULLY:', assistant.id);
+    // CRITICAL: Return the ID to be cached
+    return assistant.id;
+  } catch (error) {
+    console.error('❌ ASSISTANT CREATION FAILED:', error);
+    throw error;
+  }
 }
 
 // Tool definitions (simplified for WhatsApp)
@@ -617,25 +673,8 @@ const assistantTools = [
   {
     type: 'function' as const,
     function: {
-      name: 'selectJob',
-      description: 'Select a job to inspect',
-      parameters: {
-        type: 'object',
-        properties: {
-          jobId: {
-            type: 'string',
-            description: 'Work order ID'
-          }
-        },
-        required: ['jobId']
-      }
-    }
-  },
-  {
-    type: 'function' as const,
-    function: {
       name: 'confirmJobSelection',
-      description: 'Confirm job selection',
+      description: 'Confirm job selection and show job details',
       parameters: {
         type: 'object',
         properties: {
@@ -862,6 +901,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           jobs: jobs.map((job, index) => ({
             id: job.id,
             jobNumber: index + 1,
+            selectionNumber: `[${index + 1}]`,
             property: job.property_address,
             customer: job.customer_name,
             time: job.scheduled_date.toLocaleTimeString('en-SG', {
@@ -872,7 +912,8 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             status: job.status,
             priority: job.priority
           })),
-          count: jobs.length
+          count: jobs.length,
+          instructions: "User can select a job by typing its number (1, 2, 3, etc.)"
         });
 
       case 'confirmJobSelection':
