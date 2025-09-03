@@ -36,6 +36,7 @@ const whatsappThreads = new Map<string, string>();
 // DO NOT RESET THIS TO NULL - it causes recreating assistant every time
 let assistantId: string | null = null;
 let isCreatingAssistant = false;
+let assistantCreationPromise: Promise<string> | null = null;
 
 // Clean up old processed messages every 5 minutes
 setInterval(() => {
@@ -101,7 +102,9 @@ export async function POST(request: NextRequest) {
     }
     
     const messageId = data.id || `${Date.now()}-${Math.random()}`;
-    const phoneNumber = data.fromNumber || data.from;
+    // Normalize phone number to consistent format (remove + and spaces)
+    const rawPhone = data.fromNumber || data.from;
+    const phoneNumber = rawPhone?.replace(/[\s+-]/g, '').replace(/^0+/, '') || '';
     const message = data.body || data.message?.text?.body || '';
     
     // Debug: Log key message properties first
@@ -186,6 +189,7 @@ export async function POST(request: NextRequest) {
       
       console.log('✅ Using existing thread for media upload:', threadId);
       
+      // Pass normalized phone number to media handler
       const mediaResponse = await handleMediaMessage(data, phoneNumber);
       if (mediaResponse) {
         // Send response via Wassenger
@@ -220,7 +224,7 @@ export async function POST(request: NextRequest) {
     const TIMEOUT_MS = 30000; // 30 seconds timeout
     
     try {
-      // Start the assistant processing
+      // Start the assistant processing with normalized phone number
       const assistantPromise = processWithAssistant(phoneNumber, message || 'User uploaded media');
       
       // Race between assistant response and timeout
@@ -295,13 +299,19 @@ export async function POST(request: NextRequest) {
 // Process message with OpenAI Assistant
 async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
-    const cleanPhone = phoneNumber.replace(/[\s+]/g, '');
+    // Phone number is already normalized from the caller
+    const cleanPhone = phoneNumber;
     
-    // Get or create thread
+    // Get or create thread - use consistent phone format
     let threadId = whatsappThreads.get(cleanPhone);
     
     if (!threadId) {
-      const inspector = await getInspectorByPhone(cleanPhone) as any;
+      console.log(`🔍 No thread found for ${cleanPhone}, creating new one...`);
+      // Try to find inspector by phone (with and without +)
+      let inspector = await getInspectorByPhone('+' + cleanPhone) as any;
+      if (!inspector) {
+        inspector = await getInspectorByPhone(cleanPhone) as any;
+      }
       
       const thread = await openai.beta.threads.create({
         metadata: {
@@ -326,40 +336,26 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       content: message
     });
 
-    // Get or create assistant - SINGLETON PATTERN
+    // Get or create assistant - SINGLETON PATTERN with proper promise handling
     if (!assistantId) {
-      // Check if another request is already creating
-      if (isCreatingAssistant) {
-        console.log('⏳ Waiting for assistant creation by another request...');
-        // Wait up to 15 seconds for assistant to be created
-        let waitCount = 0;
-        while (!assistantId && isCreatingAssistant && waitCount < 150) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          waitCount++;
-        }
-        
-        if (!assistantId) {
-          console.error('❌ Assistant creation timeout');
-          return 'Service is starting up. Please try again in a moment.';
-        }
-      } else {
-        // This request will create the assistant
-        isCreatingAssistant = true;
+      if (!assistantCreationPromise) {
         console.log('🔧 Creating assistant for first time...');
-        
-        try {
-          assistantId = await createAssistant();
-          console.log('✅ Assistant created and cached:', assistantId);
-        } catch (error) {
-          console.error('❌ Failed to create assistant:', error);
-          return 'Service initialization failed. Please try again.';
-        } finally {
-          isCreatingAssistant = false;
-        }
+        assistantCreationPromise = createAssistant();
+      } else {
+        console.log('⏳ Waiting for assistant creation from another request...');
+      }
+      
+      try {
+        assistantId = await assistantCreationPromise;
+        console.log('✅ Assistant ready:', assistantId);
+      } catch (error) {
+        console.error('❌ Failed to get assistant:', error);
+        assistantCreationPromise = null; // Reset to allow retry
+        return 'Service initialization failed. Please try again.';
       }
     }
     
-    console.log('📌 Using assistant:', assistantId);
+    console.log('📌 Using cached assistant:', assistantId);
 
     // Run assistant
     const run = await openai.beta.threads.runs.create(threadId, {
@@ -1288,12 +1284,13 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
 // Handle WhatsApp media messages (photos/videos)
 async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
-    console.log('🔄 Processing WhatsApp media message');
+    console.log('🔄 Processing WhatsApp media message for phone:', phoneNumber);
     
+    // Phone number is already normalized from the caller
     // Get thread for this phone number
     let threadId = whatsappThreads.get(phoneNumber);
     if (!threadId) {
-      console.log('❌ No thread found for media upload');
+      console.log('❌ No thread found for media upload for phone:', phoneNumber);
       return 'Please start a conversation first before uploading media.';
     }
     
