@@ -31,14 +31,10 @@ const openai = new OpenAI({
 // Create assistant once and reuse - reset to null to force recreation with new formatting
 let assistantId: string | null = null; // Reset to force numbered location formatting recreation
 
-async function getOrCreateAssistant() {
-  if (assistantId) {
-    return assistantId;
-  }
-
+async function createAssistant() {
   const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.7',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
+    name: 'Property Inspector Assistant v0.9',
+    instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -86,18 +82,7 @@ CONVERSATION FLOW GUIDELINES:
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
 
-3. Handling Changes:
-   - If user says no or wants changes, be helpful
-   - Offer options to modify:
-     * Different job selection
-     * Customer name update
-     * Property address change
-     * Time rescheduling
-     * Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
-   - Use updateJobDetails tool to save changes
-   - Show updated job list after modifications
-
-4. Starting Inspection:
+3. Starting Inspection:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
@@ -120,7 +105,7 @@ CONVERSATION FLOW GUIDELINES:
      * Show list of pending locations
    - Guide through task completion workflow
 
-5. Task Inspection Flow:
+4. Task Inspection Flow:
    - When showing tasks for a location, ALWAYS format them with brackets:
      * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
      * [2] Check ceiling (done) - if task.displayStatus is 'done'
@@ -153,10 +138,9 @@ CONVERSATION FLOW GUIDELINES:
      * After marking tasks, show updated list with (done) indicators
    - ALWAYS include "Mark ALL tasks complete" as the last numbered option when showing tasks
 
-6. General Guidelines:
+5. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
    - Be friendly and professional
-   - Adapt your language naturally while following the flow
    - Remember context from previous messages
    - Handle errors gracefully with helpful messages
 
@@ -167,31 +151,30 @@ INSPECTOR IDENTIFICATION:
   [2] Your phone number (with country code, e.g., +65 for Singapore)"
 - If no country code provided, assume Singapore (+65)
 - Use the collectInspectorInfo tool to process this information
+- Inspector phone number is automatically extracted from WhatsApp message
 - Inspector can be found by either name OR phone number
 - Once identified, provide helpful suggestions for next steps
 - Be conversational and helpful throughout the identification process
 
 MEDIA DISPLAY FORMATTING:
-- When showing photos from getLocationMedia or getTaskMedia tools, format images for inline display
-- For each photo URL, create a markdown image reference: ![Image](URL)
-- Group multiple photos with clear labels: "**Photo 1:**", "**Photo 2:**", etc.
-- Example format for media responses:
-  "Here are the photos for Bedroom 3:
+- When showing photos from getLocationMedia or getTaskMedia tools, provide clear photo information
+- For WhatsApp, photos cannot be displayed inline, so provide descriptive information about photos
+- Format photo responses clearly:
+  "📸 Found 2 photos for Bedroom 3:
   
-  **Photo 1:**
-  ![Bedroom 3 Photo 1](https://property-stewards.sgp1.digitaloceanspaces.com/data/hang-82212/bedroom-3/photos/ed888645-7270-452c-9d01-fde5656d3e37.jpeg)
+  Photo 1: https://property-stewards.sgp1.digitaloceanspaces.com/data/hang-822121/bedroom-3/photos/ed888645-7270-452c-9d01-fde5656d3e37.jpeg
+  Photo 2: [URL if more photos exist]
   
-  **Remarks:** All tasks completed for Bedroom 3.
-  "
+  📝 Remarks: All tasks completed for Bedroom 3."
 - Always include photo count and location name in the response
-- If no photos available, clearly state "No photos found for [location name]"`,
-    model: 'gpt-4o-mini',
+- If no photos available, clearly state "No photos found for [location name]"
+- Provide clickable URLs for photos so inspectors can view them directly`,
+    model: 'gpt-4o-mini', // Fast model for quick responses
     tools: assistantTools
   });
 
-  assistantId = assistant.id;
-  console.log('Created assistant:', assistantId);
-  return assistantId;
+  console.log('Created assistant:', assistant.id);
+  return assistant.id;
 }
 
 // Define tools for OpenAI Assistant API
@@ -527,7 +510,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         }
         
         if (!finalInspectorId && inspectorPhone) {
-          const inspector = await getInspectorByPhone(inspectorPhone);
+          const inspector = (await getInspectorByPhone(inspectorPhone)) as any;
           if (!inspector) {
             return JSON.stringify({
               success: false,
@@ -544,7 +527,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
           });
         }
 
-        const jobs = await getTodayJobsForInspector(finalInspectorId);
+        const jobs = (await getTodayJobsForInspector(finalInspectorId)) as any[];
         
         return JSON.stringify({
           success: true,
@@ -575,7 +558,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
     case 'selectJob':
       try {
         const { jobId } = args;
-        const workOrder = await getWorkOrderById(jobId);
+        const workOrder = (await getWorkOrderById(jobId)) as any;
         if (!workOrder) {
           return JSON.stringify({
             success: false,
@@ -605,7 +588,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
     case 'getJobLocations':
       try {
         const { jobId } = args;
-        const locationsWithStatus = await getLocationsWithCompletionStatus(jobId);
+        const locationsWithStatus = (await getLocationsWithCompletionStatus(jobId)) as any[];
         
         return JSON.stringify({
           success: true,
@@ -641,7 +624,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
           console.log(`📍 Current location set to: ${location}`);
         }
         
-        const tasks = await getTasksByLocation(workOrderId, location);
+        const tasks = (await getTasksByLocation(workOrderId, location)) as any[];
         
         // Don't skip if all tasks are completed - show them with (done) markers
         // Format tasks with status indicators - ALWAYS show all tasks
@@ -756,7 +739,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
           });
         }
 
-        const progress = await getWorkOrderProgress(workOrderId);
+        const progress = (await getWorkOrderProgress(workOrderId)) as any;
         
         return JSON.stringify({
           success: true,
@@ -780,7 +763,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
     case 'confirmJobSelection':
       try {
         const { jobId } = args;
-        const workOrder = await getWorkOrderById(jobId);
+        const workOrder = (await getWorkOrderById(jobId)) as any;
         
         if (!workOrder) {
           return JSON.stringify({
@@ -845,8 +828,8 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         }
         
         // Get locations with completion status
-        const locationsWithStatus = await getLocationsWithCompletionStatus(jobId);
-        const progress = await getWorkOrderProgress(jobId);
+        const locationsWithStatus = (await getLocationsWithCompletionStatus(jobId)) as any[];
+        const progress = (await getWorkOrderProgress(jobId)) as any;
         
         // Extract display names for the response
         const locationDisplayNames = locationsWithStatus.map(loc => loc.displayName);
@@ -916,11 +899,11 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
           
           if (metadata.currentLocation && metadata.workOrderId) {
             // Use the imported helper function
-            const actualTaskId = await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation);
+            const actualTaskId = (await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation)) as string | null;
             
             if (actualTaskId) {
               console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
-              const mediaInfo = await getTaskMedia(actualTaskId);
+              const mediaInfo = (await getTaskMedia(actualTaskId)) as any;
               
               if (mediaInfo) {
                 return JSON.stringify({
@@ -944,7 +927,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         }
         
         // Normal case - try with the provided taskId
-        const mediaInfo = await getTaskMedia(taskId);
+        const mediaInfo = (await getTaskMedia(taskId)) as any;
         
         if (!mediaInfo) {
           return JSON.stringify({
@@ -976,7 +959,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         console.log('🔧 getLocationMedia called with:', { locationNumber, locationName, workOrderId });
         
         // First get all locations to map the number to the ContractChecklistItem ID
-        const locationsWithStatus = await getLocationsWithCompletionStatus(workOrderId);
+        const locationsWithStatus = (await getLocationsWithCompletionStatus(workOrderId)) as any[];
         console.log('📍 Available locations:', locationsWithStatus.map((loc, index) => ({
           number: index + 1,
           name: loc.name,
@@ -1006,7 +989,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         }
         
         // Get media using the ContractChecklistItem ID
-        const mediaInfo = await getTaskMedia(targetLocation.contractChecklistItemId);
+        const mediaInfo = (await getTaskMedia(targetLocation.contractChecklistItemId)) as any;
         
         if (!mediaInfo) {
           return JSON.stringify({
@@ -1074,7 +1057,7 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         }
         
         // Get updated job details
-        const updatedJob = await getWorkOrderById(jobId);
+        const updatedJob = (await getWorkOrderById(jobId)) as any;
         
         return JSON.stringify({
           success: true,
@@ -1109,11 +1092,11 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         }
         
         // Try to find inspector by normalized phone first
-        let inspector = await getInspectorByPhone(normalizedPhone);
+        let inspector = (await getInspectorByPhone(normalizedPhone)) as any;
         
         // Also try original phone format
         if (!inspector) {
-          inspector = await getInspectorByPhone(phone);
+          inspector = (await getInspectorByPhone(phone)) as any;
         }
         
         // If not found by phone, try by name
@@ -1393,7 +1376,10 @@ export async function POST(request: NextRequest) {
     });
 
     // Get or create assistant
-    const currentAssistantId = await getOrCreateAssistant();
+    if (!assistantId) {
+      assistantId = await createAssistant();
+    }
+    const currentAssistantId = assistantId;
 
     // Run the assistant
     const run = await openai.beta.threads.runs.create(threadId, {

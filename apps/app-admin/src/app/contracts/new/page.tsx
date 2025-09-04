@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Search } from "lucide-react"
+import { DatePicker } from "@/components/ui/date-picker"
 
 interface Customer {
   id: string
@@ -76,12 +77,15 @@ function NewContractPageContent() {
     }
   }
 
-  const searchCustomers = async () => {
-    if (!searchTerm) return
+  const searchCustomers = async (term: string) => {
+    if (!term) {
+      setCustomers([])
+      return
+    }
     
     setSearching(true)
     try {
-      const response = await fetch(`/api/customers?search=${encodeURIComponent(searchTerm)}&limit=10`)
+      const response = await fetch(`/api/customers?search=${encodeURIComponent(term)}&limit=10`)
       if (!response.ok) throw new Error("Failed to search customers")
       
       const data = await response.json()
@@ -92,6 +96,19 @@ function NewContractPageContent() {
       setSearching(false)
     }
   }
+
+  // Debounce search to avoid too many API calls
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (searchTerm) {
+        searchCustomers(searchTerm)
+      } else {
+        setCustomers([])
+      }
+    }, 300) // 300ms delay
+
+    return () => clearTimeout(delayDebounceFn)
+  }, [searchTerm])
 
   const selectCustomer = (customer: Customer) => {
     setSelectedCustomer(customer)
@@ -180,25 +197,20 @@ function NewContractPageContent() {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label>Search Customer *</Label>
-                      <div className="flex gap-2">
+                      <div className="relative">
                         <Input
                           value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), searchCustomers())}
-                          placeholder="Search by name, email, or phone"
+                          placeholder="Start typing to search by name, email, or phone"
+                          className="pr-10"
                         />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={searchCustomers}
-                          disabled={searching || !searchTerm}
-                        >
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
                           {searching ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Search className="h-4 w-4" />
-                          )}
-                        </Button>
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          ) : searchTerm ? (
+                            <Search className="h-4 w-4 text-muted-foreground" />
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
@@ -300,33 +312,29 @@ function NewContractPageContent() {
 
                   <div className="space-y-2">
                     <Label htmlFor="scheduledStartDate">Scheduled Start Date *</Label>
-                    <Input
-                      id="scheduledStartDate"
-                      type="date"
+                    <DatePicker
                       value={scheduledStartDate}
-                      onChange={(e) => setScheduledStartDate(e.target.value)}
+                      onChange={(date) => setScheduledStartDate(date ? date.toISOString().split('T')[0] : '')}
+                      placeholder="Select start date"
                       required
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="scheduledEndDate">Scheduled End Date</Label>
-                    <Input
-                      id="scheduledEndDate"
-                      type="date"
+                    <DatePicker
                       value={scheduledEndDate}
-                      onChange={(e) => setScheduledEndDate(e.target.value)}
-                      min={scheduledStartDate}
+                      onChange={(date) => setScheduledEndDate(date ? date.toISOString().split('T')[0] : '')}
+                      placeholder="Select end date"
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="firstPaymentOn">First Payment Due</Label>
-                    <Input
-                      id="firstPaymentOn"
-                      type="date"
+                    <DatePicker
                       value={firstPaymentOn}
-                      onChange={(e) => setFirstPaymentOn(e.target.value)}
+                      onChange={(date) => setFirstPaymentOn(date ? date.toISOString().split('T')[0] : '')}
+                      placeholder="Select payment due date"
                     />
                   </div>
                 </div>
