@@ -214,36 +214,9 @@ export async function getCachedInspector(phoneNumber: string): Promise<any | nul
   }
 }
 
-/**
- * Cache work order data for faster lookups
- */
-export async function cacheWorkOrder(workOrderId: string, workOrderData: any): Promise<void> {
-  try {
-    const key = `whatsapp:workorder:${workOrderId}`;
-    await redis.set(key, JSON.stringify(workOrderData), 'EX', CACHE_TTL);
-    console.log(`💾 Cached work order data for ${workOrderId}`);
-  } catch (error) {
-    console.error('Error caching work order:', error);
-  }
-}
-
-/**
- * Get cached work order data
- */
-export async function getCachedWorkOrder(workOrderId: string): Promise<any | null> {
-  try {
-    const key = `whatsapp:workorder:${workOrderId}`;
-    const data = await redis.get(key);
-    if (data) {
-      console.log(`📖 Retrieved cached work order data for ${workOrderId}`);
-      return JSON.parse(data);
-    }
-    return null;
-  } catch (error) {
-    console.error('Error getting cached work order:', error);
-    return null;
-  }
-}
+// REMOVED: Work order caching functions
+// Work orders should NEVER be cached as they change based on date/time/status
+// Only cache static data like inspector info
 
 /**
  * Close Redis connection
