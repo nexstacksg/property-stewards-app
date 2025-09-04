@@ -51,8 +51,8 @@ export default function CustomersPage() {
       const response = await fetch(`/api/customers?${params}`)
       const data = await response.json()
       
-      setCustomers(data.customers)
-      setTotalPages(data.pagination.totalPages)
+      setCustomers(data?.customers)
+      setTotalPages(data?.pagination?.totalPages || 1)
     } catch (error) {
       console.error('Error fetching customers:', error)
     } finally {
