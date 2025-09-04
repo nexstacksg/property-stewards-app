@@ -33,26 +33,43 @@ export function DatePicker({
   disabled = false,
   required = false
 }: DatePickerProps) {
-  const [date, setDate] = React.useState<Date | undefined>(
-    value ? new Date(value) : undefined
-  )
-  const [currentMonth, setCurrentMonth] = React.useState<Date>(
-    value ? new Date(value) : new Date()
-  )
+  const [date, setDate] = React.useState<Date | undefined>(() => {
+    if (value) {
+      const d = new Date(value)
+      d.setHours(12, 0, 0, 0) // Normalize to noon to avoid timezone issues
+      return d
+    }
+    return undefined
+  })
+  const [currentMonth, setCurrentMonth] = React.useState<Date>(() => {
+    if (value) {
+      const d = new Date(value)
+      d.setHours(12, 0, 0, 0)
+      return d
+    }
+    const now = new Date()
+    now.setHours(12, 0, 0, 0)
+    return now
+  })
   const [isOpen, setIsOpen] = React.useState(false)
 
   React.useEffect(() => {
     if (value) {
       const newDate = new Date(value)
+      newDate.setHours(12, 0, 0, 0) // Normalize to noon
       setDate(newDate)
       setCurrentMonth(newDate)
     }
   }, [value])
 
   const handleSelect = (selectedDate: Date) => {
-    setDate(selectedDate)
+    // Set to Singapore timezone (UTC+8) at noon to avoid date shifting
+    const sgDate = new Date(selectedDate)
+    sgDate.setHours(12, 0, 0, 0) // Set to noon Singapore time
+    
+    setDate(sgDate)
     if (onChange) {
-      onChange(selectedDate)
+      onChange(sgDate)
     }
     setIsOpen(false)
   }
@@ -104,7 +121,9 @@ export function DatePicker({
     
     // Add all days of the month
     for (let i = 1; i <= daysInMonth; i++) {
-      days.push(new Date(year, month, i))
+      const day = new Date(year, month, i)
+      day.setHours(12, 0, 0, 0) // Set to noon to avoid timezone issues
+      days.push(day)
     }
 
     return days
@@ -242,10 +261,12 @@ export function DatePicker({
           <div className="mt-4 pt-3 border-t text-center">
             <button
               onClick={() => {
-                setDate(today)
-                setCurrentMonth(today)
+                const todaySG = new Date()
+                todaySG.setHours(12, 0, 0, 0) // Set to noon Singapore time
+                setDate(todaySG)
+                setCurrentMonth(todaySG)
                 if (onChange) {
-                  onChange(today)
+                  onChange(todaySG)
                 }
                 setIsOpen(false)
               }}
