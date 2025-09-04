@@ -9,43 +9,34 @@ export const revalidate = 0
 async function getDashboardStats() {
   
   try {
-    // Split queries into smaller batches to avoid connection overload
-    // Batch 1: Basic counts
-    const [customerCount, inspectorCount, contractCount, workOrderCount] = await Promise.all([
-      prisma.customer.count({ where: { status: 'ACTIVE' } }),
-      prisma.inspector.count({ where: { status: 'ACTIVE' } }),
-      prisma.contract.count(),
-      prisma.workOrder.count()
-    ])
+    // Execute queries sequentially to avoid connection overload on Vercel
+    const customerCount = await prisma.customer.count({ where: { status: 'ACTIVE' } })
+    const inspectorCount = await prisma.inspector.count({ where: { status: 'ACTIVE' } })
+    const contractCount = await prisma.contract.count()
+    const workOrderCount = await prisma.workOrder.count()
     
-
-    // Batch 2: Status counts
-    const [activeContracts, completedWorkOrders, scheduledWorkOrders] = await Promise.all([
-      prisma.contract.count({ where: { status: { in: ['CONFIRMED', 'SCHEDULED'] } } }),
-      prisma.workOrder.count({ where: { status: 'COMPLETED' } }),
-      prisma.workOrder.count({ where: { status: 'SCHEDULED' } })
-    ])
-
-    // Batch 3: Aggregation and recent items
-    const [totalRevenue, recentWorkOrders] = await Promise.all([
-      prisma.contract.aggregate({
-        _sum: { value: true },
-        where: { status: { not: 'CANCELLED' } }
-      }),
-      prisma.workOrder.findMany({
-        take: 5,
-        orderBy: { scheduledStartDateTime: 'desc' },
-        include: {
-          contract: {
-            include: {
-              customer: true,
-              address: true
-            }
-          },
-          inspector: true
-        }
-      })
-    ])
+    const activeContracts = await prisma.contract.count({ where: { status: { in: ['CONFIRMED', 'SCHEDULED'] } } })
+    const completedWorkOrders = await prisma.workOrder.count({ where: { status: 'COMPLETED' } })
+    const scheduledWorkOrders = await prisma.workOrder.count({ where: { status: 'SCHEDULED' } })
+    
+    const totalRevenue = await prisma.contract.aggregate({
+      _sum: { value: true },
+      where: { status: { not: 'CANCELLED' } }
+    })
+    
+    const recentWorkOrders = await prisma.workOrder.findMany({
+      take: 5,
+      orderBy: { scheduledStartDateTime: 'desc' },
+      include: {
+        contract: {
+          include: {
+            customer: true,
+            address: true
+          }
+        },
+        inspector: true
+      }
+    })
 
     return {
       customerCount,
