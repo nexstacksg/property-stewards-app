@@ -2,7 +2,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Users, UserCheck, FileText, Calendar, DollarSign, Clock, CheckCircle } from "lucide-react"
 import prisma from "@/lib/prisma"
 
+// Force dynamic rendering - no caching
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 async function getDashboardStats() {
+  
   try {
     // Split queries into smaller batches to avoid connection overload
     // Batch 1: Basic counts
@@ -12,6 +17,7 @@ async function getDashboardStats() {
       prisma.contract.count(),
       prisma.workOrder.count()
     ])
+    
 
     // Batch 2: Status counts
     const [activeContracts, completedWorkOrders, scheduledWorkOrders] = await Promise.all([
@@ -50,7 +56,8 @@ async function getDashboardStats() {
       completedWorkOrders,
       scheduledWorkOrders,
       totalRevenue: totalRevenue._sum.value || 0,
-      recentWorkOrders
+      recentWorkOrders,
+      fetchedAt: new Date().toISOString()
     }
   } catch (error) {
     console.error('Dashboard stats error:', error)
@@ -64,7 +71,8 @@ async function getDashboardStats() {
       completedWorkOrders: 0,
       scheduledWorkOrders: 0,
       totalRevenue: 0,
-      recentWorkOrders: []
+      recentWorkOrders: [],
+      fetchedAt: new Date().toISOString()
     }
   }
 }
@@ -101,7 +109,8 @@ export default async function DashboardPage() {
       completedWorkOrders: 0,
       scheduledWorkOrders: 0,
       totalRevenue: 0,
-      recentWorkOrders: []
+      recentWorkOrders: [],
+      fetchedAt: new Date().toISOString()
     }
   }
 
