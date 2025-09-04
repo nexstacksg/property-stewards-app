@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma'
+import prisma from '@/lib/prisma'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
