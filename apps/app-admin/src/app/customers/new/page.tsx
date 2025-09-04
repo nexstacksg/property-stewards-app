@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
+import { PhoneInput } from "@/components/ui/phone-input"
+import { DatePicker } from "@/components/ui/date-picker"
 
 interface Address {
   address: string
@@ -120,6 +122,13 @@ export default function NewCustomerPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
+    
+    // Validate that at least one address is provided
+    if (addresses.length === 0) {
+      setError("At least one property address is required")
+      return
+    }
+    
     setLoading(true)
 
     try {
@@ -236,12 +245,9 @@ export default function NewCustomerPage() {
 
                   <div className="space-y-2">
                     <Label htmlFor="phone">Phone *</Label>
-                    <Input
-                      id="phone"
-                      type="tel"
+                    <PhoneInput
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="+65XXXXXXXX"
+                      onChange={setPhone}
                       required
                     />
                   </div>
@@ -275,8 +281,8 @@ export default function NewCustomerPage() {
               <CardHeader>
                 <div className="flex justify-between items-center">
                   <div>
-                    <CardTitle>Property Addresses</CardTitle>
-                    <CardDescription>Add property addresses for this customer</CardDescription>
+                    <CardTitle>Property Addresses <span className="text-destructive">*</span></CardTitle>
+                    <CardDescription>At least one property address is required</CardDescription>
                   </div>
                   {!showAddressForm && (
                     <Button
@@ -292,6 +298,11 @@ export default function NewCustomerPage() {
                 </div>
               </CardHeader>
               <CardContent>
+                {error && error.includes("address") && (
+                  <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md mb-4">
+                    {error}
+                  </div>
+                )}
                 {showAddressForm && (
                   <div className="border rounded-lg p-4 mb-4 space-y-4">
                     <div className="grid gap-4 md:grid-cols-2">
@@ -469,21 +480,19 @@ export default function NewCustomerPage() {
 
                     <div className="space-y-2">
                       <Label htmlFor="memberSince">Member Since</Label>
-                      <Input
-                        id="memberSince"
-                        type="date"
+                      <DatePicker
                         value={memberSince}
-                        onChange={(e) => setMemberSince(e.target.value)}
+                        onChange={(date) => setMemberSince(date ? date.toISOString().split('T')[0] : '')}
+                        placeholder="Select member since date"
                       />
                     </div>
 
                     <div className="space-y-2">
                       <Label htmlFor="memberExpiredOn">Expires On</Label>
-                      <Input
-                        id="memberExpiredOn"
-                        type="date"
+                      <DatePicker
                         value={memberExpiredOn}
-                        onChange={(e) => setMemberExpiredOn(e.target.value)}
+                        onChange={(date) => setMemberExpiredOn(date ? date.toISOString().split('T')[0] : '')}
+                        placeholder="Select expiry date"
                       />
                     </div>
                   </>

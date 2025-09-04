@@ -20,7 +20,7 @@ async function main() {
   const inspector1 = await prisma.inspector.create({
     data: {
       name: 'John Tan',
-      mobilePhone: '+6591234567',
+      mobilePhone: '91234567',
       type: 'FULL_TIME',
       specialization: ['HDB', 'Condo', 'Electrical'],
       remarks: 'Senior inspector with 5 years experience',
@@ -31,7 +31,7 @@ async function main() {
   const inspector2 = await prisma.inspector.create({
     data: {
       name: 'Sarah Lim',
-      mobilePhone: '+6598765432',
+      mobilePhone: '98765432',
       type: 'FULL_TIME',
       specialization: ['Condo', 'Landed', 'Plumbing'],
       remarks: 'Specializes in high-end properties',
@@ -42,7 +42,7 @@ async function main() {
   const inspector3 = await prisma.inspector.create({
     data: {
       name: 'Ahmad Rahman',
-      mobilePhone: '+6592345678',
+      mobilePhone: '92345678',
       type: 'PART_TIME',
       specialization: ['HDB', 'General'],
       remarks: 'Available weekends only',
@@ -59,7 +59,7 @@ async function main() {
       type: 'COMPANY',
       personInCharge: 'Mr. Tan Wei Ming',
       email: 'tan.weiming@tanholdings.sg',
-      phone: '+6562345678',
+      phone: '62345678',
       isMember: true,
       memberSince: new Date('2023-01-15'),
       memberTier: 'GOLD',
@@ -75,7 +75,7 @@ async function main() {
       type: 'INDIVIDUAL',
       personInCharge: 'Rachel Wong',
       email: 'rachel.wong@gmail.com',
-      phone: '+6597465867',
+      phone: '97465867',
       isMember: true,
       memberSince: new Date('2024-03-01'),
       memberTier: 'SILVER',
@@ -91,7 +91,7 @@ async function main() {
       type: 'INDIVIDUAL',
       personInCharge: 'Bala Krishnan',
       email: 'bala.k@outlook.com',
-      phone: '+6594657354',
+      phone: '94657354',
       isMember: false,
       billingAddress: '29 Jurong West Street 42, #15-09, Singapore 640029',
       status: 'ACTIVE'

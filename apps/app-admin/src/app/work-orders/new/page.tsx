@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ArrowLeft, Loader2, Search, User, MapPin, Calendar, Clock, AlertCircle } from "lucide-react"
+import { DatePicker } from "@/components/ui/date-picker"
 
 interface Contract {
   id: string
@@ -458,11 +459,10 @@ function NewWorkOrderPageContent() {
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label htmlFor="scheduledStartDate">Scheduled Start Date *</Label>
-                        <Input
-                          id="scheduledStartDate"
-                          type="date"
+                        <DatePicker
                           value={scheduledStartDateTime}
-                          onChange={(e) => setScheduledStartDateTime(e.target.value)}
+                          onChange={(date) => setScheduledStartDateTime(date ? date.toISOString().split('T')[0] : '')}
+                          placeholder="Select start date"
                           required
                         />
                       </div>
@@ -480,12 +480,10 @@ function NewWorkOrderPageContent() {
 
                       <div className="space-y-2">
                         <Label htmlFor="scheduledEndDate">Scheduled End Date *</Label>
-                        <Input
-                          id="scheduledEndDate"
-                          type="date"
+                        <DatePicker
                           value={scheduledEndDateTime}
-                          onChange={(e) => setScheduledEndDateTime(e.target.value)}
-                          min={scheduledStartDateTime}
+                          onChange={(date) => setScheduledEndDateTime(date ? date.toISOString().split('T')[0] : '')}
+                          placeholder="Select end date"
                           required
                         />
                       </div>

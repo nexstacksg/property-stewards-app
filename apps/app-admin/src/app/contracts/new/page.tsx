@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Search } from "lucide-react"
+import { DatePicker } from "@/components/ui/date-picker"
 
 interface Customer {
   id: string
@@ -300,33 +301,29 @@ function NewContractPageContent() {
 
                   <div className="space-y-2">
                     <Label htmlFor="scheduledStartDate">Scheduled Start Date *</Label>
-                    <Input
-                      id="scheduledStartDate"
-                      type="date"
+                    <DatePicker
                       value={scheduledStartDate}
-                      onChange={(e) => setScheduledStartDate(e.target.value)}
+                      onChange={(date) => setScheduledStartDate(date ? date.toISOString().split('T')[0] : '')}
+                      placeholder="Select start date"
                       required
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="scheduledEndDate">Scheduled End Date</Label>
-                    <Input
-                      id="scheduledEndDate"
-                      type="date"
+                    <DatePicker
                       value={scheduledEndDate}
-                      onChange={(e) => setScheduledEndDate(e.target.value)}
-                      min={scheduledStartDate}
+                      onChange={(date) => setScheduledEndDate(date ? date.toISOString().split('T')[0] : '')}
+                      placeholder="Select end date"
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="firstPaymentOn">First Payment Due</Label>
-                    <Input
-                      id="firstPaymentOn"
-                      type="date"
+                    <DatePicker
                       value={firstPaymentOn}
-                      onChange={(e) => setFirstPaymentOn(e.target.value)}
+                      onChange={(date) => setFirstPaymentOn(date ? date.toISOString().split('T')[0] : '')}
+                      placeholder="Select payment due date"
                     />
                   </div>
                 </div>

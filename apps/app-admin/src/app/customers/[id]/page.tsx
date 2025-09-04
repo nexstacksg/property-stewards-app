@@ -1,8 +1,15 @@
-import { notFound } from "next/navigation"
+"use client"
+
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { PhoneInput } from "@/components/ui/phone-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { 
   ArrowLeft, 
@@ -17,36 +24,45 @@ import {
   FileText,
   Crown,
   Plus,
-  Home
+  Home,
+  Loader2
 } from "lucide-react"
-import prisma from "@/lib/prisma"
 
-async function getCustomer(id: string) {
-  const customer = await prisma.customer.findUnique({
-    where: { id },
-    include: {
-      addresses: {
-        orderBy: { createdOn: 'desc' }
-      },
-      contracts: {
-        include: {
-          address: true,
-          workOrders: {
-            include: {
-              inspector: true
-            }
-          }
-        },
-        orderBy: { createdOn: 'desc' }
-      }
-    }
-  })
+interface Address {
+  id: string
+  address: string
+  postalCode: string
+  propertyType: string
+  propertySize: string
+  remarks?: string | null
+  status: string
+}
 
-  if (!customer) {
-    notFound()
-  }
+interface NewAddress {
+  address: string
+  postalCode: string
+  propertyType: string
+  propertySize: string
+  remarks?: string
+}
 
-  return customer
+interface Customer {
+  id: string
+  name: string
+  type: string
+  personInCharge: string
+  email: string
+  phone: string
+  billingAddress: string
+  status: string
+  isMember: boolean
+  memberTier?: string | null
+  memberSince?: string | null
+  memberExpiredOn?: string | null
+  remarks?: string | null
+  createdOn: string
+  addresses: Address[]
+  contracts: any[]
 }
 
 function formatDate(date: Date | string | null) {
@@ -85,9 +101,133 @@ function getPropertyTypeIcon(type: string) {
   }
 }
 
-export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const resolvedParams = await params
-  const customer = await getCustomer(resolvedParams.id)
+const getPropertySizeOptions = (propertyType: string) => {
+  switch (propertyType) {
+    case "HDB":
+      return [
+        { value: "HDB_1_ROOM", label: "1 Room" },
+        { value: "HDB_2_ROOM", label: "2 Room" },
+        { value: "HDB_3_ROOM", label: "3 Room" },
+        { value: "HDB_4_ROOM", label: "4 Room" },
+        { value: "HDB_5_ROOM", label: "5 Room" },
+        { value: "HDB_EXECUTIVE", label: "Executive" },
+        { value: "HDB_JUMBO", label: "Jumbo" }
+      ]
+    case "CONDO":
+    case "EC":
+    case "APARTMENT":
+      return [
+        { value: "STUDIO", label: "Studio" },
+        { value: "ONE_BEDROOM", label: "1 Bedroom" },
+        { value: "TWO_BEDROOM", label: "2 Bedroom" },
+        { value: "THREE_BEDROOM", label: "3 Bedroom" },
+        { value: "FOUR_BEDROOM", label: "4 Bedroom" },
+        { value: "PENTHOUSE", label: "Penthouse" }
+      ]
+    case "LANDED":
+      return [
+        { value: "TERRACE", label: "Terrace" },
+        { value: "SEMI_DETACHED", label: "Semi-Detached" },
+        { value: "DETACHED", label: "Detached" },
+        { value: "BUNGALOW", label: "Bungalow" },
+        { value: "GOOD_CLASS_BUNGALOW", label: "Good Class Bungalow" }
+      ]
+    default:
+      return []
+  }
+}
+
+export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const router = useRouter()
+  const [customerId, setCustomerId] = useState<string>('')
+  const [customer, setCustomer] = useState<Customer | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [showAddressForm, setShowAddressForm] = useState(false)
+  const [addingAddress, setAddingAddress] = useState(false)
+  const [newAddress, setNewAddress] = useState<NewAddress>({
+    address: "",
+    postalCode: "",
+    propertyType: "HDB",
+    propertySize: "HDB_3_ROOM",
+    remarks: ""
+  })
+
+  useEffect(() => {
+    params.then(p => setCustomerId(p.id))
+  }, [params])
+
+  useEffect(() => {
+    if (customerId) {
+      fetchCustomer()
+    }
+  }, [customerId])
+
+  const fetchCustomer = async () => {
+    try {
+      const response = await fetch(`/api/customers/${customerId}`)
+      if (!response.ok) {
+        throw new Error('Customer not found')
+      }
+      const data = await response.json()
+      setCustomer(data)
+    } catch (error) {
+      console.error('Error fetching customer:', error)
+      router.push('/customers')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addAddress = async () => {
+    if (!newAddress.address || !newAddress.postalCode) return
+
+    setAddingAddress(true)
+    try {
+      const response = await fetch(`/api/customers/${customerId}/addresses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newAddress)
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || "Failed to add address")
+      }
+
+      // Reset form
+      setNewAddress({
+        address: "",
+        postalCode: "",
+        propertyType: "HDB",
+        propertySize: "HDB_3_ROOM",
+        remarks: ""
+      })
+      setShowAddressForm(false)
+      
+      // Refresh customer data
+      await fetchCustomer()
+    } catch (err) {
+      console.error('Error adding address:', err)
+    } finally {
+      setAddingAddress(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    )
+  }
+
+  if (!customer) {
+    return (
+      <div className="p-6">
+        <p>Customer not found</p>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -199,7 +339,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Member Since</p>
-                  <p className="font-medium">{formatDate(customer.memberSince)}</p>
+                  <p className="font-medium">{formatDate(customer?.memberSince)}</p>
                 </div>
                 {customer.memberExpiredOn && (
                   <div>
@@ -222,20 +362,128 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
                   <CardTitle>Property Addresses</CardTitle>
                   <CardDescription>{customer.addresses.length} registered properties</CardDescription>
                 </div>
-                <Link href={`/customers/${customer.id}/addresses/new`}>
-                  <Button size="sm">
+                {!showAddressForm && (
+                  <Button
+                    size="sm"
+                    onClick={() => setShowAddressForm(true)}
+                  >
                     <Plus className="h-4 w-4 mr-2" />
                     Add Address
                   </Button>
-                </Link>
+                )}
               </div>
             </CardHeader>
             <CardContent>
-              {customer.addresses.length === 0 ? (
+              {showAddressForm && (
+                <div className="border rounded-lg p-4 mb-4 space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Address</Label>
+                      <Input
+                        value={newAddress.address}
+                        onChange={(e) => setNewAddress({ ...newAddress, address: e.target.value })}
+                        placeholder="Block 123, Street Name, #01-01"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Postal Code</Label>
+                      <Input
+                        value={newAddress.postalCode}
+                        onChange={(e) => setNewAddress({ ...newAddress, postalCode: e.target.value })}
+                        placeholder="123456"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Property Type</Label>
+                      <Select
+                        value={newAddress.propertyType}
+                        onValueChange={(value) => {
+                          setNewAddress({ 
+                            ...newAddress, 
+                            propertyType: value,
+                            propertySize: getPropertySizeOptions(value)[0]?.value || ""
+                          })
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="HDB">HDB</SelectItem>
+                          <SelectItem value="CONDO">Condo</SelectItem>
+                          <SelectItem value="EC">EC</SelectItem>
+                          <SelectItem value="APARTMENT">Apartment</SelectItem>
+                          <SelectItem value="LANDED">Landed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Property Size</Label>
+                      <Select
+                        value={newAddress.propertySize}
+                        onValueChange={(value) => setNewAddress({ ...newAddress, propertySize: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getPropertySizeOptions(newAddress.propertyType).map(option => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Remarks</Label>
+                      <Input
+                        value={newAddress.remarks}
+                        onChange={(e) => setNewAddress({ ...newAddress, remarks: e.target.value })}
+                        placeholder="Optional notes about this property"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddressForm(false)
+                        setNewAddress({
+                          address: "",
+                          postalCode: "",
+                          propertyType: "HDB",
+                          propertySize: "HDB_3_ROOM",
+                          remarks: ""
+                        })
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={addAddress}
+                      disabled={!newAddress.address || !newAddress.postalCode || addingAddress}
+                    >
+                      {addingAddress && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Add Address
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {customer.addresses.length === 0 && !showAddressForm ? (
                 <p className="text-muted-foreground text-center py-4">No addresses registered</p>
               ) : (
-                <div className="space-y-3">
-                  {customer.addresses.map((address) => (
+                customer.addresses.length > 0 && (
+                  <div className="space-y-3">
+                    {customer.addresses.map((address) => (
                     <div key={address.id} className="border rounded-lg p-4">
                       <div className="flex justify-between items-start">
                         <div className="space-y-2">
@@ -263,7 +511,8 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
                       </div>
                     </div>
                   ))}
-                </div>
+                  </div>
+                )
               )}
             </CardContent>
           </Card>
