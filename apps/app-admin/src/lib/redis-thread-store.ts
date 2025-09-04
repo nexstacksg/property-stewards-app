@@ -21,11 +21,16 @@ const redis = new Redis(process.env.REDIS_URL || 'dp9', {
 // Log connection status
 redis.on('connect', () => {
   console.log('✅ Redis connected successfully');
+  // Pre-warm the connection with a ping
+  redis.ping().catch(() => {});
 });
 
 redis.on('error', (error: Error) => {
   console.error('❌ Redis error:', error.message);
 });
+
+// Pre-warm Redis connection on module load
+redis.ping().catch(() => {});
 
 // Thread storage with TTL (15 hours)
 const THREAD_TTL = 15 * 60 * 60; // 15 hours in seconds
