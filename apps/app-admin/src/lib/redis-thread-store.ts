@@ -1,7 +1,7 @@
 import Redis from 'ioredis';
 
 // Initialize Redis client
-const redis = new Redis(process.env.REDIS_URL || 'redis://default:LZ6ah1dhYjmTAI5CFgvdehzA7jCL7KWQ@redis-15869.crce185.ap-seast-1-1.ec2.redns.redis-cloud.com:15869', {
+const redis = new Redis(process.env.REDIS_URL || 'dp9', {
   maxRetriesPerRequest: 3,
   retryStrategy: (times: number) => {
     if (times > 3) {
@@ -27,10 +27,12 @@ redis.on('error', (error: Error) => {
   console.error('❌ Redis error:', error.message);
 });
 
-// Thread storage with TTL (7 days)
-const THREAD_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
+// Thread storage with TTL (15 hours)
+const THREAD_TTL = 15 * 60 * 60; // 15 hours in seconds
 const THREAD_PREFIX = 'whatsapp:thread:';
 const METADATA_PREFIX = 'whatsapp:metadata:';
+const INSPECTOR_PREFIX = 'whatsapp:inspector:';
+const CACHE_TTL = 15 * 60 * 60; // 15 hours cache for inspector data (same as thread TTL)
 
 export interface ThreadMetadata {
   threadId: string;
@@ -174,6 +176,68 @@ export async function deleteThread(phoneNumber: string): Promise<void> {
  */
 export function isRedisConnected(): boolean {
   return redis.status === 'ready';
+}
+
+/**
+ * Cache inspector data for faster lookups
+ */
+export async function cacheInspector(phoneNumber: string, inspectorData: any): Promise<void> {
+  try {
+    const key = `${INSPECTOR_PREFIX}${phoneNumber}`;
+    await redis.set(key, JSON.stringify(inspectorData), 'EX', CACHE_TTL);
+    console.log(`💾 Cached inspector data for ${phoneNumber}`);
+  } catch (error) {
+    console.error('Error caching inspector:', error);
+  }
+}
+
+/**
+ * Get cached inspector data
+ */
+export async function getCachedInspector(phoneNumber: string): Promise<any | null> {
+  try {
+    const key = `${INSPECTOR_PREFIX}${phoneNumber}`;
+    const data = await redis.get(key);
+    if (data) {
+      console.log(`📖 Retrieved cached inspector data for ${phoneNumber}`);
+      return JSON.parse(data);
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting cached inspector:', error);
+    return null;
+  }
+}
+
+/**
+ * Cache work order data for faster lookups
+ */
+export async function cacheWorkOrder(workOrderId: string, workOrderData: any): Promise<void> {
+  try {
+    const key = `whatsapp:workorder:${workOrderId}`;
+    await redis.set(key, JSON.stringify(workOrderData), 'EX', CACHE_TTL);
+    console.log(`💾 Cached work order data for ${workOrderId}`);
+  } catch (error) {
+    console.error('Error caching work order:', error);
+  }
+}
+
+/**
+ * Get cached work order data
+ */
+export async function getCachedWorkOrder(workOrderId: string): Promise<any | null> {
+  try {
+    const key = `whatsapp:workorder:${workOrderId}`;
+    const data = await redis.get(key);
+    if (data) {
+      console.log(`📖 Retrieved cached work order data for ${workOrderId}`);
+      return JSON.parse(data);
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting cached work order:', error);
+    return null;
+  }
 }
 
 /**
