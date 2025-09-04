@@ -4,11 +4,12 @@ import prisma from '@/lib/prisma'
 // GET /api/customers/[id] - Get a single customer
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const customer = await prisma.customer.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         addresses: true,
         contracts: {
@@ -45,9 +46,10 @@ export async function GET(
 // PATCH /api/customers/[id] - Update a customer
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json()
     
     const {
@@ -66,7 +68,7 @@ export async function PATCH(
     } = body
 
     const customer = await prisma.customer.update({
-      where: { id: params.id },
+      where: { id: id },
       data: {
         name,
         type,
@@ -99,9 +101,10 @@ export async function PATCH(
 // PUT /api/customers/[id] - Full update of customer with addresses
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json()
     const { 
       name, 
@@ -124,7 +127,7 @@ export async function PUT(
     const customer = await prisma.$transaction(async (tx) => {
       // Update customer
       const updatedCustomer = await tx.customer.update({
-        where: { id: params.id },
+        where: { id: id },
         data: {
           name,
           type,
@@ -146,7 +149,7 @@ export async function PUT(
         await tx.customerAddress.updateMany({
           where: {
             id: { in: deletedAddressIds },
-            customerId: params.id
+            customerId: id
           },
           data: { status: 'INACTIVE' }
         })
@@ -172,7 +175,7 @@ export async function PUT(
             // Create new address
             await tx.customerAddress.create({
               data: {
-                customerId: params.id,
+                customerId: id,
                 address: address.address,
                 postalCode: address.postalCode,
                 propertyType: address.propertyType,
@@ -187,7 +190,7 @@ export async function PUT(
 
       // Return updated customer with addresses
       return await tx.customer.findUnique({
-        where: { id: params.id },
+        where: { id: id },
         include: {
           addresses: {
             where: { status: 'ACTIVE' },
@@ -210,18 +213,19 @@ export async function PUT(
 // DELETE /api/customers/[id] - Delete a customer (soft delete)
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     // Check if customer has contracts
     const contractCount = await prisma.contract.count({
-      where: { customerId: params.id }
+      where: { customerId: id }
     })
 
     if (contractCount > 0) {
       // Soft delete - mark as inactive
       const customer = await prisma.customer.update({
-        where: { id: params.id },
+        where: { id: id },
         data: { status: 'INACTIVE' }
       })
       
@@ -232,7 +236,7 @@ export async function DELETE(
     } else {
       // Hard delete if no contracts
       await prisma.customer.delete({
-        where: { id: params.id }
+        where: { id: id }
       })
       
       return NextResponse.json({ 

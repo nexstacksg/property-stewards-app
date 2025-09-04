@@ -67,8 +67,19 @@ interface Customer {
 
 function formatDate(date: Date | string | null) {
   if (!date) return 'N/A'
-  return new Date(date).toLocaleDateString('en-SG', {
-    dateStyle: 'medium'
+  
+  // Parse the date and adjust for Singapore timezone
+  const d = new Date(date)
+  
+  // If the date appears to be at midnight UTC, it's likely a date-only value
+  // Add 12 hours to ensure we're displaying the correct date in Singapore
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
+    d.setUTCHours(12)
+  }
+  
+  return d.toLocaleDateString('en-SG', {
+    dateStyle: 'medium',
+    timeZone: 'Asia/Singapore'
   })
 }
 
@@ -339,7 +350,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Member Since</p>
-                  <p className="font-medium">{formatDate(customer?.memberSince)}</p>
+                  <p className="font-medium">{formatDate(customer?.memberSince || "")}</p>
                 </div>
                 {customer.memberExpiredOn && (
                   <div>
@@ -628,7 +639,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               </CardHeader>
               <CardContent>
                 <div className="text-xl font-bold">
-                  {formatDate(customer.createdOn)}
+                  {formatDate(customer.memberSince || "")}
                 </div>
               </CardContent>
             </Card>

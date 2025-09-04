@@ -4,9 +4,10 @@ import prisma from '@/lib/prisma'
 // PATCH /api/customer-addresses/[id] - Update a customer address
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const body = await request.json()
     
     const {
@@ -19,7 +20,7 @@ export async function PATCH(
     } = body
 
     const customerAddress = await prisma.customerAddress.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         address,
         postalCode,
@@ -43,18 +44,19 @@ export async function PATCH(
 // DELETE /api/customer-addresses/[id] - Delete a customer address
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     // Check if address has contracts
     const contractCount = await prisma.contract.count({
-      where: { addressId: params.id }
+      where: { addressId: id }
     })
 
     if (contractCount > 0) {
       // Soft delete - mark as inactive
       const address = await prisma.customerAddress.update({
-        where: { id: params.id },
+        where: { id: id },
         data: { status: 'INACTIVE' }
       })
       
@@ -65,7 +67,7 @@ export async function DELETE(
     } else {
       // Hard delete if no contracts
       await prisma.customerAddress.delete({
-        where: { id: params.id }
+        where: { id: id }
       })
       
       return NextResponse.json({ 
