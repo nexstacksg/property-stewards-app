@@ -3,10 +3,21 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Calendar, Clock, CheckCircle, XCircle, AlertCircle, ChevronLeft, ChevronRight, Filter } from "lucide-react"
+import { 
+  Plus, 
+  Calendar, 
+  Clock, 
+  CheckCircle, 
+  XCircle, 
+  AlertCircle, 
+  ChevronLeft, 
+  ChevronRight, 
+  Filter,
+  MapPin,
+  User
+} from "lucide-react"
 
 interface WorkOrder {
   id: string
@@ -75,13 +86,13 @@ export default function WorkOrdersPage() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'SCHEDULED':
-        return <Clock className="h-4 w-4" />
+        return <Clock className="h-3.5 w-3.5" />
       case 'STARTED':
-        return <AlertCircle className="h-4 w-4" />
+        return <AlertCircle className="h-3.5 w-3.5" />
       case 'COMPLETED':
-        return <CheckCircle className="h-4 w-4" />
+        return <CheckCircle className="h-3.5 w-3.5" />
       case 'CANCELLED':
-        return <XCircle className="h-4 w-4" />
+        return <XCircle className="h-3.5 w-3.5" />
       default:
         return null
     }
@@ -102,26 +113,38 @@ export default function WorkOrdersPage() {
     }
   }
 
-  const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString)
-    return new Intl.DateTimeFormat('en-SG', {
-      dateStyle: 'medium',
-      timeStyle: 'short'
-    }).format(date)
-  }
-
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return new Intl.DateTimeFormat('en-SG', {
-      dateStyle: 'medium'
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
     }).format(date)
   }
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString)
     return new Intl.DateTimeFormat('en-SG', {
-      timeStyle: 'short'
-    }).format(date)
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }).format(date).toLowerCase()
+  }
+
+  const handleStartJob = async (workOrderId: string) => {
+    try {
+      await fetch(`/api/work-orders/${workOrderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          status: 'STARTED',
+          actualStart: new Date().toISOString()
+        })
+      })
+      fetchWorkOrders()
+    } catch (error) {
+      console.error('Error starting work order:', error)
+    }
   }
 
   // Group work orders by date
@@ -152,12 +175,12 @@ export default function WorkOrdersPage() {
       {/* Status Summary Cards */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card 
-          className={`cursor-pointer transition-colors ${statusFilter === 'SCHEDULED' ? 'border-blue-500' : ''}`}
+          className={`cursor-pointer transition-all hover:shadow-md ${statusFilter === 'SCHEDULED' ? 'border-blue-500 shadow-md' : ''}`}
           onClick={() => setStatusFilter(statusFilter === 'SCHEDULED' ? '' : 'SCHEDULED')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium">Scheduled</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Scheduled</CardTitle>
               <Clock className="h-4 w-4 text-blue-500" />
             </div>
           </CardHeader>
@@ -165,16 +188,17 @@ export default function WorkOrdersPage() {
             <div className="text-2xl font-bold text-blue-500">
               {workOrders.filter(w => w.status === 'SCHEDULED').length}
             </div>
+            <p className="text-xs text-muted-foreground mt-1">Upcoming inspections</p>
           </CardContent>
         </Card>
 
         <Card 
-          className={`cursor-pointer transition-colors ${statusFilter === 'STARTED' ? 'border-orange-500' : ''}`}
+          className={`cursor-pointer transition-all hover:shadow-md ${statusFilter === 'STARTED' ? 'border-orange-500 shadow-md' : ''}`}
           onClick={() => setStatusFilter(statusFilter === 'STARTED' ? '' : 'STARTED')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium">In Progress</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">In Progress</CardTitle>
               <AlertCircle className="h-4 w-4 text-orange-500" />
             </div>
           </CardHeader>
@@ -182,16 +206,17 @@ export default function WorkOrdersPage() {
             <div className="text-2xl font-bold text-orange-500">
               {workOrders.filter(w => w.status === 'STARTED').length}
             </div>
+            <p className="text-xs text-muted-foreground mt-1">Currently active</p>
           </CardContent>
         </Card>
 
         <Card 
-          className={`cursor-pointer transition-colors ${statusFilter === 'COMPLETED' ? 'border-green-500' : ''}`}
+          className={`cursor-pointer transition-all hover:shadow-md ${statusFilter === 'COMPLETED' ? 'border-green-500 shadow-md' : ''}`}
           onClick={() => setStatusFilter(statusFilter === 'COMPLETED' ? '' : 'COMPLETED')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium">Completed</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
               <CheckCircle className="h-4 w-4 text-green-500" />
             </div>
           </CardHeader>
@@ -199,16 +224,17 @@ export default function WorkOrdersPage() {
             <div className="text-2xl font-bold text-green-500">
               {workOrders.filter(w => w.status === 'COMPLETED').length}
             </div>
+            <p className="text-xs text-muted-foreground mt-1">Finished today</p>
           </CardContent>
         </Card>
 
         <Card 
-          className={`cursor-pointer transition-colors ${statusFilter === 'CANCELLED' ? 'border-red-500' : ''}`}
+          className={`cursor-pointer transition-all hover:shadow-md ${statusFilter === 'CANCELLED' ? 'border-red-500 shadow-md' : ''}`}
           onClick={() => setStatusFilter(statusFilter === 'CANCELLED' ? '' : 'CANCELLED')}
         >
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium">Cancelled</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Cancelled</CardTitle>
               <XCircle className="h-4 w-4 text-red-500" />
             </div>
           </CardHeader>
@@ -216,6 +242,7 @@ export default function WorkOrdersPage() {
             <div className="text-2xl font-bold text-red-500">
               {workOrders.filter(w => w.status === 'CANCELLED').length}
             </div>
+            <p className="text-xs text-muted-foreground mt-1">Cancelled orders</p>
           </CardContent>
         </Card>
       </div>
@@ -238,83 +265,131 @@ export default function WorkOrdersPage() {
             )}
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-8">Loading...</div>
+            <div className="text-center py-12 text-muted-foreground">Loading work orders...</div>
+          ) : workOrders.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Calendar className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
+              <p>No work orders found</p>
+              <p className="text-sm mt-2">Create a new work order to get started</p>
+            </div>
           ) : (
             <>
-              <div className="space-y-6">
-                {Object.entries(groupedWorkOrders).map(([date, orders]) => (
-                  <div key={date}>
-                    <h3 className="font-semibold text-sm text-muted-foreground mb-3 flex items-center gap-2">
-                      <Calendar className="h-4 w-4" />
-                      {date}
-                    </h3>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Time</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Customer</TableHead>
-                          <TableHead>Property</TableHead>
-                          <TableHead>Inspector</TableHead>
-                          <TableHead>Service</TableHead>
-                          <TableHead>Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
+              {/* Single table for all dates */}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-muted/30 border-b">
+                    <tr>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Time
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Status
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Customer
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Property
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Inspector
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Service
+                      </th>
+                      <th className="text-center px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(groupedWorkOrders).map(([date, orders]) => (
+                      <>
+                        {/* Date Header Row */}
+                        <tr key={`date-${date}`} className="bg-muted/50">
+                          <td colSpan={7} className="px-6 py-2 font-medium text-sm">
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-4 w-4" />
+                              {date}
+                            </div>
+                          </td>
+                        </tr>
+                        
+                        {/* Work Order Rows for this date */}
                         {(orders as WorkOrder[]).map((workOrder) => (
-                          <TableRow key={workOrder.id}>
-                            <TableCell>
-                              <div className="space-y-1">
+                          <tr key={workOrder.id} className="border-b hover:bg-muted/20 transition-colors">
+                            {/* Time */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="text-sm">
                                 <div className="font-medium">
                                   {formatTime(workOrder.scheduledStartDateTime)} - {formatTime(workOrder.scheduledEndDateTime)}
                                 </div>
                                 {workOrder.actualStart && (
-                                  <div className="text-xs text-muted-foreground">
-                                    Actual: {formatTime(workOrder.actualStart)}
-                                    {workOrder.actualEnd && ` - ${formatTime(workOrder.actualEnd)}`}
+                                  <div className="text-xs text-orange-600 mt-1">
+                                    Started: {formatTime(workOrder.actualStart)}
                                   </div>
                                 )}
                               </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={getStatusVariant(workOrder.status)}>
+                            </td>
+
+                            {/* Status */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <Badge variant={getStatusVariant(workOrder.status)} className="font-medium">
                                 <span className="flex items-center gap-1">
                                   {getStatusIcon(workOrder.status)}
                                   {workOrder.status}
                                 </span>
                               </Badge>
-                            </TableCell>
-                            <TableCell>
+                            </td>
+
+                            {/* Customer */}
+                            <td className="px-6 py-4">
                               <Link 
                                 href={`/customers/${workOrder.contract.customer.id}`}
-                                className="hover:underline"
+                                className="text-sm font-medium hover:text-primary transition-colors"
                               >
                                 {workOrder.contract.customer.name}
                               </Link>
-                            </TableCell>
-                            <TableCell>
-                              <div>
-                                <div className="font-medium">{workOrder.contract.address.address}</div>
-                                <div className="text-xs text-muted-foreground">
+                            </td>
+
+                            {/* Property */}
+                            <td className="px-6 py-4">
+                              <div className="text-sm">
+                                <div className="font-medium flex items-start gap-1">
+                                  <MapPin className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
+                                  <span>{workOrder.contract.address.address}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground ml-4">
                                   {workOrder.contract.address.postalCode} • {workOrder.contract.address.propertyType}
                                 </div>
                               </div>
-                            </TableCell>
-                            <TableCell>
-                              <div>
-                                <div className="font-medium">{workOrder.inspector.name}</div>
+                            </td>
+
+                            {/* Inspector */}
+                            <td className="px-6 py-4">
+                              <div className="text-sm">
+                                <div className="font-medium flex items-center gap-1">
+                                  <User className="h-3 w-3 text-muted-foreground" />
+                                  {workOrder.inspector.name}
+                                </div>
                                 <div className="text-xs text-muted-foreground">
                                   {workOrder.inspector.mobilePhone}
                                 </div>
                               </div>
-                            </TableCell>
-                            <TableCell>
-                              {workOrder.contract.servicePackage || 'Standard'}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2">
+                            </td>
+
+                            {/* Service */}
+                            <td className="px-6 py-4">
+                              <Badge variant="outline" className="font-normal">
+                                {workOrder.contract.servicePackage || 'Basic'}
+                              </Badge>
+                            </td>
+
+                            {/* Actions */}
+                            <td className="px-6 py-4">
+                              <div className="flex justify-center gap-2">
                                 <Link href={`/work-orders/${workOrder.id}`}>
                                   <Button variant="outline" size="sm">View</Button>
                                 </Link>
@@ -322,39 +397,24 @@ export default function WorkOrdersPage() {
                                   <Button 
                                     variant="outline" 
                                     size="sm"
-                                    onClick={() => {
-                                      // Update status to STARTED
-                                      fetch(`/api/work-orders/${workOrder.id}`, {
-                                        method: 'PATCH',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ 
-                                          status: 'STARTED',
-                                          actualStart: new Date().toISOString()
-                                        })
-                                      }).then(() => fetchWorkOrders())
-                                    }}
+                                    onClick={() => handleStartJob(workOrder.id)}
                                   >
                                     Start
                                   </Button>
                                 )}
                               </div>
-                            </TableCell>
-                          </TableRow>
+                            </td>
+                          </tr>
                         ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ))}
+                      </>
+                    ))}
+                  </tbody>
+                </table>
               </div>
 
-              {workOrders.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  No work orders found
-                </div>
-              )}
-
+              {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex justify-center items-center gap-2 mt-6">
+                <div className="flex justify-center items-center gap-4 py-4 border-t">
                   <Button
                     variant="outline"
                     size="sm"
@@ -362,8 +422,9 @@ export default function WorkOrdersPage() {
                     disabled={page === 1}
                   >
                     <ChevronLeft className="h-4 w-4" />
+                    Previous
                   </Button>
-                  <span className="text-sm">
+                  <span className="text-sm text-muted-foreground">
                     Page {page} of {totalPages}
                   </span>
                   <Button
@@ -372,6 +433,7 @@ export default function WorkOrdersPage() {
                     onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                     disabled={page === totalPages}
                   >
+                    Next
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>

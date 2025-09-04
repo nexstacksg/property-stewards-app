@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
+import { PhoneInput } from "@/components/ui/phone-input"
 
 const SPECIALIZATIONS = [
   "HDB",
@@ -126,12 +127,9 @@ export default function NewInspectorPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="mobilePhone">Mobile Phone *</Label>
-                  <Input
-                    id="mobilePhone"
-                    type="tel"
+                  <PhoneInput
                     value={mobilePhone}
-                    onChange={(e) => setMobilePhone(e.target.value)}
-                    placeholder="+65XXXXXXXX"
+                    onChange={setMobilePhone}
                     required
                   />
                 </div>

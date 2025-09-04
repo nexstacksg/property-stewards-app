@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ArrowLeft, Loader2, Search, User, MapPin, Calendar, Clock, AlertCircle } from "lucide-react"
+import { DatePicker } from "@/components/ui/date-picker"
 
 interface Contract {
   id: string
@@ -153,8 +154,8 @@ function NewWorkOrderPageContent() {
     }
   }
 
-  const searchContracts = async () => {
-    if (!searchTerm) {
+  const searchContracts = async (term: string) => {
+    if (!term) {
       // If search is cleared, reload available contracts
       loadAvailableContracts()
       return
@@ -162,7 +163,7 @@ function NewWorkOrderPageContent() {
     
     setSearching(true)
     try {
-      const response = await fetch(`/api/contracts?search=${encodeURIComponent(searchTerm)}&status=CONFIRMED,SCHEDULED&limit=10`)
+      const response = await fetch(`/api/contracts?search=${encodeURIComponent(term)}&status=CONFIRMED,SCHEDULED&limit=10`)
       if (!response.ok) throw new Error("Failed to search contracts")
       
       const data = await response.json()
@@ -173,6 +174,19 @@ function NewWorkOrderPageContent() {
       setSearching(false)
     }
   }
+
+  // Debounce search to avoid too many API calls
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (searchTerm) {
+        searchContracts(searchTerm)
+      } else {
+        loadAvailableContracts()
+      }
+    }, 300) // 300ms delay
+
+    return () => clearTimeout(delayDebounceFn)
+  }, [searchTerm])
 
   const selectContract = (contract: Contract) => {
     setSelectedContract(contract)
@@ -263,25 +277,20 @@ function NewWorkOrderPageContent() {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label>Select Contract *</Label>
-                      <div className="flex gap-2">
+                      <div className="relative">
                         <Input
                           value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), searchContracts())}
-                          placeholder="Search by customer name or contract ID"
+                          placeholder="Start typing to search by customer name or contract ID"
+                          className="pr-10"
                         />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={searchContracts}
-                          disabled={searching}
-                        >
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
                           {searching ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Search className="h-4 w-4" />
-                          )}
-                        </Button>
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          ) : searchTerm ? (
+                            <Search className="h-4 w-4 text-muted-foreground" />
+                          ) : null}
+                        </div>
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Showing contracts with CONFIRMED status that need work orders
@@ -458,11 +467,10 @@ function NewWorkOrderPageContent() {
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label htmlFor="scheduledStartDate">Scheduled Start Date *</Label>
-                        <Input
-                          id="scheduledStartDate"
-                          type="date"
+                        <DatePicker
                           value={scheduledStartDateTime}
-                          onChange={(e) => setScheduledStartDateTime(e.target.value)}
+                          onChange={(date) => setScheduledStartDateTime(date ? date.toISOString().split('T')[0] : '')}
+                          placeholder="Select start date"
                           required
                         />
                       </div>
@@ -480,12 +488,10 @@ function NewWorkOrderPageContent() {
 
                       <div className="space-y-2">
                         <Label htmlFor="scheduledEndDate">Scheduled End Date *</Label>
-                        <Input
-                          id="scheduledEndDate"
-                          type="date"
+                        <DatePicker
                           value={scheduledEndDateTime}
-                          onChange={(e) => setScheduledEndDateTime(e.target.value)}
-                          min={scheduledStartDateTime}
+                          onChange={(date) => setScheduledEndDateTime(date ? date.toISOString().split('T')[0] : '')}
+                          placeholder="Select end date"
                           required
                         />
                       </div>
