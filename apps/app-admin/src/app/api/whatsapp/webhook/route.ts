@@ -21,6 +21,10 @@ import {
   getThread, 
   getThreadMetadata, 
   updateThreadMetadata,
+  cacheInspector,
+  getCachedInspector,
+  cacheWorkOrder,
+  getCachedWorkOrder,
   type ThreadMetadata 
 } from '@/lib/redis-thread-store';
 
@@ -312,10 +316,19 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     
     if (!threadId) {
       console.log(`🆕 No existing thread found, creating new one for ${cleanPhone}...`);
-      // Try to find inspector by phone (with and without +)
-      let inspector = await getInspectorByPhone('+' + cleanPhone) as any;
+      // Check cache first for inspector
+      let inspector = await getCachedInspector(cleanPhone);
+      
       if (!inspector) {
-        inspector = await getInspectorByPhone(cleanPhone) as any;
+        // Try to find inspector by phone (with and without +)
+        inspector = await getInspectorByPhone('+' + cleanPhone) as any;
+        if (!inspector) {
+          inspector = await getInspectorByPhone(cleanPhone) as any;
+        }
+        // Cache inspector data if found
+        if (inspector) {
+          await cacheInspector(cleanPhone, inspector);
+        }
       }
       
       const thread = await openai.beta.threads.create({
@@ -435,17 +448,20 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - extended timeout for complex operations
+// Wait for run completion - optimized polling for faster response
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 600; // 60 seconds max (100ms intervals) - enough time for complex operations
+  const maxAttempts = 1200; // 120 seconds max to handle complex operations
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 100)); // Fast polling
+    // Adaptive polling: start fast, slow down over time
+    const delay = attempts < 20 ? 50 : attempts < 100 ? 100 : 200;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
@@ -453,12 +469,12 @@ async function waitForRunCompletion(threadId: string, runId: string) {
     
     // Log progress every 5 seconds
     if (attempts % 50 === 0) {
-      console.log(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`);
+      console.log(`⏳ Still waiting for run completion... (${Math.floor(attempts * delay / 1000)}s elapsed)`);
     }
   }
   
   if (attempts >= maxAttempts) {
-    console.log(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`);
+    console.log(`⚠️ Run completion timed out after ${maxAttempts * 100 / 1000} seconds`);
   }
   
   return runStatus;
@@ -970,7 +986,15 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'confirmJobSelection':
-        const workOrder = await getWorkOrderById(args.jobId) as any;
+        // Check cache first
+        let workOrder = await getCachedWorkOrder(args.jobId);
+        if (!workOrder) {
+          workOrder = await getWorkOrderById(args.jobId) as any;
+          // Cache for future use
+          if (workOrder) {
+            await cacheWorkOrder(args.jobId, workOrder);
+          }
+        }
         
         if (!workOrder) {
           return JSON.stringify({
@@ -1175,6 +1199,10 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             error: 'Inspector not found in our system. Please contact admin for registration.'
           });
         }
+        
+        // Cache inspector data for faster future lookups
+        const phoneForCache = normalizedPhone.replace(/[^0-9]/g, '');
+        await cacheInspector(phoneForCache, inspector);
         
         // Store inspector details in thread metadata and Redis
         if (threadId) {
