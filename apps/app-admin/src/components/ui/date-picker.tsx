@@ -221,7 +221,7 @@ export function DatePicker({
                       className={cn(
                         "h-full w-full rounded-md text-sm transition-colors",
                         "hover:bg-accent hover:text-accent-foreground",
-                        "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                        "focus:outline-none",
                         isToday(day) && !isSelected(day) && "bg-accent/50 font-medium",
                         isSelected(day) && "border-2 border-foreground font-semibold hover:bg-accent/50",
                         isFutureDate(day) && "text-muted-foreground/50 cursor-not-allowed hover:bg-transparent"

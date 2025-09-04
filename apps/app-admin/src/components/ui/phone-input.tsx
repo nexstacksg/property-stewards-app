@@ -43,7 +43,7 @@ export function PhoneInput({
         }}
         placeholder={placeholder}
         containerClass="!w-full"
-        inputClass="!w-full !h-10 !text-sm !border !border-input !rounded-md !pl-14 focus:!outline-none focus:!ring-2 focus:!ring-ring focus:!ring-offset-2 disabled:!cursor-not-allowed disabled:!opacity-50"
+        inputClass="!w-full !h-10 !text-sm !border !border-input !rounded-md !pl-14 focus:!outline-none disabled:!cursor-not-allowed disabled:!opacity-50"
         buttonClass="!border !border-input !border-r-0 !rounded-l-md !bg-background hover:!bg-accent"
         dropdownClass="!bg-popover !border !border-border !shadow-lg !rounded-lg !mt-1"
         enableSearch={false}
