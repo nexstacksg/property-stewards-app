@@ -254,9 +254,6 @@ export async function POST(request: NextRequest) {
 
     // Process with OpenAI Assistant - wait for actual response without timeout message
     try {
-      // Pre-warm cache by fetching inspector data in background
-      getCachedInspector(phoneNumber).catch(() => {});
-      
       // Start the assistant processing with normalized phone number
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media');
       
@@ -391,13 +388,9 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     
     console.log('📌 Using cached assistant:', assistantId);
 
-    // Run assistant with optimizations
+    // Run assistant
     const run = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: assistantId,
-      model: 'gpt-4o-mini', // Force fastest model
-      temperature: 0.3, // Lower temperature = faster, more deterministic
-      max_prompt_tokens: 2000, // Limit context size for speed
-      max_completion_tokens: 500, // Limit response size
+      assistant_id: assistantId
     });
 
     // Wait for completion and handle multiple rounds of tool calls
@@ -430,18 +423,18 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       return 'Sorry, I encountered an issue processing your request. Please try again.';
     }
 
-    // Get assistant's response - optimized to only fetch latest
+    // Get assistant's response
     console.log('📨 Getting assistant response from thread:', threadId);
-    const messages = await openai.beta.threads.messages.list(threadId, {
-      limit: 1, // Only fetch the latest message for speed
-      order: 'desc'
-    });
+    const messages = await openai.beta.threads.messages.list(threadId);
     const lastMessage = messages.data[0];
+    
+    console.log('📋 Messages count:', messages.data.length);
+    console.log('📋 Last message role:', lastMessage?.role);
     
     if (lastMessage && lastMessage.role === 'assistant') {
       const content = lastMessage.content[0];
       if (content.type === 'text') {
-        console.log('✅ Assistant response ready');
+        console.log('✅ Assistant response found:', content.text.value.substring(0, 100) + '...');
         return content.text.value;
       }
     }
@@ -455,23 +448,18 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - aggressive polling for faster response
+// Wait for run completion - optimized polling for faster response
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 2400; // 120 seconds max to handle complex operations
+  const maxAttempts = 1200; // 120 seconds max to handle complex operations
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
-  // If already completed, return immediately
-  if (runStatus.status === 'completed' || runStatus.status === 'failed' || runStatus.status === 'cancelled') {
-    return runStatus;
-  }
-  
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    // Ultra-fast polling for first 2 seconds, then adaptive
-    const delay = attempts < 40 ? 25 : attempts < 100 ? 50 : attempts < 200 ? 100 : 200;
+    // Adaptive polling: start fast, slow down over time
+    const delay = attempts < 20 ? 50 : attempts < 100 ? 100 : 200;
     await new Promise(resolve => setTimeout(resolve, delay));
     
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
@@ -479,20 +467,14 @@ async function waitForRunCompletion(threadId: string, runId: string) {
     });
     attempts++;
     
-    // Early exit on completion
-    if (runStatus.status === 'completed' || runStatus.status === 'failed' || runStatus.status === 'cancelled' || runStatus.status === 'requires_action') {
-      console.log(`✅ Run status resolved after ${attempts} attempts (${Math.floor(attempts * delay / 1000)}s)`);
-      return runStatus;
-    }
-    
     // Log progress every 5 seconds
-    if (attempts % 100 === 0) {
+    if (attempts % 50 === 0) {
       console.log(`⏳ Still waiting for run completion... (${Math.floor(attempts * delay / 1000)}s elapsed)`);
     }
   }
   
   if (attempts >= maxAttempts) {
-    console.log(`⚠️ Run completion timed out after ${maxAttempts * 50 / 1000} seconds`);
+    console.log(`⚠️ Run completion timed out after ${maxAttempts * 100 / 1000} seconds`);
   }
   
   return runStatus;
@@ -573,10 +555,17 @@ async function createAssistant() {
   
   try {
     const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v1.0',
-    instructions: `You are a Property Inspector Assistant. Be concise and direct.
+    name: 'Property Inspector Assistant v0.9',
+    instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
 
-CRITICAL JOB SELECTION:
+Key capabilities:
+- Show today's inspection jobs for an inspector
+- Help select and start specific inspection jobs
+- Allow job detail modifications before starting
+- Guide through room-by-room inspection workflow
+- Track task completion and progress
+
+CRITICAL JOB SELECTION PROCESS:
 - When showing jobs, each has a number: [1], [2], [3] and an ID (e.g., "cmeps0xtz0006m35wcrtr8wx9")
 - When user types just a number like "1", you MUST:
   1. Look up which job was shown as [1] in the getTodayJobs result
@@ -714,8 +703,7 @@ MEDIA DISPLAY FORMATTING:
 - Always include photo count and location name in the response
 - If no photos available, clearly state "No photos found for [location name]"
 - Provide clickable URLs for photos so inspectors can view them directly`,
-    model: 'gpt-4o-mini', // Fastest model
-    temperature: 0.3, // Lower = faster and more consistent
+    model: 'gpt-4o-mini', // Fast model for quick responses
     tools: assistantTools
   });
 
