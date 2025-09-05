@@ -1,4 +1,4 @@
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/prisma'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -80,10 +80,9 @@ export async function getInspectorByPhone(phone: string) {
 
 export async function getTodayJobsForInspector(inspectorId: string) {
   try {
-    // NO CACHING for work orders - they need to be real-time
-    // const cacheKey = `jobs:${inspectorId}:${new Date().toDateString()}`
-    // const cached = workOrderCache.get(cacheKey)
-    // if (cached) return cached
+    const cacheKey = `jobs:${inspectorId}:${new Date().toDateString()}`
+    const cached = workOrderCache.get(cacheKey)
+    if (cached) return cached
 
     const startOfDay = new Date()
     startOfDay.setHours(0, 0, 0, 0)
@@ -136,8 +135,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       notes: wo.remarks || ''
     }))
 
-    // NO CACHING - work orders must be real-time
-    // workOrderCache.set(cacheKey, result)
+    workOrderCache.set(cacheKey, result)
     return result
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
@@ -147,10 +145,9 @@ export async function getTodayJobsForInspector(inspectorId: string) {
 
 export async function getWorkOrderById(workOrderId: string) {
   try {
-    // NO CACHING - work orders must be real-time
-    // const cacheKey = `wo:${workOrderId}`
-    // const cached = workOrderCache.get(cacheKey)
-    // if (cached) return cached
+    const cacheKey = `wo:${workOrderId}`
+    const cached = workOrderCache.get(cacheKey)
+    if (cached) return cached
 
     const workOrder = await prisma.workOrder.findUnique({
       where: { id: workOrderId },
@@ -210,8 +207,7 @@ export async function getWorkOrderById(workOrderId: string) {
       checklist_items: workOrder.contract.contractChecklist?.items || []
     }
 
-    // NO CACHING - work orders must be real-time
-    // workOrderCache.set(cacheKey, result)
+    workOrderCache.set(cacheKey, result)
     return result
   } catch (error) {
     console.error('Error fetching work order:', error)
@@ -705,10 +701,9 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
 
 export async function getWorkOrderProgress(workOrderId: string) {
   try {
-    // NO CACHING - work orders must be real-time
-    // const cacheKey = `progress:${workOrderId}`
-    // const cached = workOrderCache.get(cacheKey)
-    // if (cached) return cached
+    const cacheKey = `progress:${workOrderId}`
+    const cached = workOrderCache.get(cacheKey)
+    if (cached) return cached
 
     // Optimized aggregation query
     const result = await prisma.contractChecklistItem.aggregate({
@@ -734,8 +729,7 @@ export async function getWorkOrderProgress(workOrderId: string) {
       in_progress_tasks: 0
     }
 
-    // NO CACHING - work orders must be real-time
-    // workOrderCache.set(cacheKey, progress)
+    workOrderCache.set(cacheKey, progress)
     return progress
   } catch (error) {
     console.error('Error fetching work order progress:', error)

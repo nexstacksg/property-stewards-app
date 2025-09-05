@@ -22,7 +22,10 @@ import {
   getThreadMetadata, 
   updateThreadMetadata,
   cacheInspector,
-  getCachedInspector
+  getCachedInspector,
+  cacheWorkOrder,
+  getCachedWorkOrder,
+  type ThreadMetadata 
 } from '@/lib/redis-thread-store';
 
 // Initialize OpenAI client
@@ -995,8 +998,15 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'confirmJobSelection':
-        // NEVER cache work orders - they change based on date/status
-        const workOrder = await getWorkOrderById(args.jobId) as any;
+        // Check cache first
+        let workOrder = await getCachedWorkOrder(args.jobId);
+        if (!workOrder) {
+          workOrder = await getWorkOrderById(args.jobId) as any;
+          // Cache for future use
+          if (workOrder) {
+            await cacheWorkOrder(args.jobId, workOrder);
+          }
+        }
         
         if (!workOrder) {
           return JSON.stringify({
