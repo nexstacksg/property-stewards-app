@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2, Save, GripVertical } from "lucide-react"
 
@@ -241,16 +242,7 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
 
                   <div className="space-y-2">
                     <Label htmlFor="propertyType">Property Type *</Label>
-                    <Select value={propertyType} onValueChange={setPropertyType}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {propertyOptions.map((p) => (
-                          <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <PropertyTypeSelect value={propertyType} onChange={setPropertyType} />
                   </div>
 
                   <div className="space-y-2">
