@@ -25,7 +25,7 @@ export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], v
   return (
     <div className="flex items-center gap-3">
       {hasPhotos ? (
-        <button onClick={openPhotos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0">
+        <button onClick={openPhotos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0 cursor-pointer">
           {photos.length} photo(s)
         </button>
       ) : (
@@ -33,7 +33,7 @@ export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], v
       )}
       <span>•</span>
       {hasVideos ? (
-        <button onClick={openVideos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0">
+        <button onClick={openVideos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0 cursor-pointer">
           {videos.length} video(s)
         </button>
       ) : (
