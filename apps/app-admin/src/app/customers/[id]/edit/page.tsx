@@ -70,13 +70,15 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
     address: "",
     postalCode: "",
     propertyType: "HDB",
-    propertySize: "HDB_3_ROOM",
+    propertySize: "",
     remarks: ""
   })
   // Editing existing address
   const [editingAddressIndex, setEditingAddressIndex] = useState<number | null>(null)
   const [editedAddress, setEditedAddress] = useState<Address | null>(null)
   const [propertyOptions, setPropertyOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [newSizeOptions, setNewSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [editSizeOptions, setEditSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
 
   useEffect(() => {
     const loadCustomer = async () => {
@@ -101,6 +103,52 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
     }
     loadProps()
   }, [])
+
+  // Load size options for the new address form when type changes
+  useEffect(() => {
+    const loadSizes = async () => {
+      try {
+        if (!newAddress.propertyType) { setNewSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(newAddress.propertyType)}`)
+        if (!res.ok) return
+        const data = await res.json()
+        setNewSizeOptions(data)
+        if (!newAddress.propertySize) {
+          if (data.length > 0) {
+            setNewAddress((prev) => ({ ...prev, propertySize: data[0].code }))
+          } else {
+            setNewAddress((prev) => ({ ...prev, propertySize: '' }))
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load size options', e)
+      }
+    }
+    loadSizes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newAddress.propertyType])
+
+  // Load size options for edited address when its type changes
+  useEffect(() => {
+    const loadEditSizes = async () => {
+      try {
+        if (!editedAddress?.propertyType) { setEditSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(editedAddress.propertyType)}`)
+        if (!res.ok) return
+        const data: Array<{ id: string; code: string; name: string }> = await res.json()
+        setEditSizeOptions(data)
+
+        // If current size is empty or not among options, set to first available
+        if (editedAddress && ( !editedAddress.propertySize || !data.some(o => o.code === editedAddress.propertySize) )) {
+          const nextSize = data[0]?.code || ''
+          setEditedAddress({ ...editedAddress, propertySize: nextSize })
+        }
+      } catch (e) {
+        console.error('Failed to load size options for edit', e)
+      }
+    }
+    loadEditSizes()
+  }, [editedAddress?.propertyType])
 
   const fetchCustomer = async (id: string) => {
     try {
@@ -146,13 +194,13 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
   }
 
   const addAddress = () => {
-    if (newAddress.address && newAddress.postalCode) {
+    if (newAddress.address && newAddress.postalCode && newAddress.propertySize) {
       setAddresses([...addresses, { ...newAddress, status: "ACTIVE" }])
       setNewAddress({
         address: "",
         postalCode: "",
         propertyType: "HDB",
-        propertySize: "HDB_3_ROOM",
+        propertySize: "",
         remarks: ""
       })
       setShowAddressForm(false)
@@ -441,16 +489,16 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
 
                       <div className="space-y-2">
                         <Label>Property Type</Label>
-                        <PropertyTypeSelect
-                          value={newAddress.propertyType}
-                          onChange={(value) => {
-                            setNewAddress({
-                              ...newAddress,
-                              propertyType: value,
-                              propertySize: getPropertySizeOptions(value)[0]?.value || ''
-                            })
-                          }}
-                        />
+                          <PropertyTypeSelect
+                            value={newAddress.propertyType}
+                            onChange={(value) => {
+                              setNewAddress({
+                                ...newAddress,
+                                propertyType: value,
+                                propertySize: ''
+                              })
+                            }}
+                          />
                       </div>
 
                       <div className="space-y-2">
@@ -463,9 +511,9 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {getPropertySizeOptions(newAddress.propertyType).map(option => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
+                            {newSizeOptions.map(option => (
+                              <SelectItem key={option.code} value={option.code}>
+                                {option.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -493,21 +541,21 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                             address: "",
                             postalCode: "",
                             propertyType: "HDB",
-                            propertySize: "HDB_3_ROOM",
+                            propertySize: "",
                             remarks: ""
                           })
                         }}
                       >
                         Cancel
                       </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={addAddress}
-                        disabled={!newAddress.address || !newAddress.postalCode}
-                      >
-                        Add Address
-                      </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={addAddress}
+                          disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize}
+                        >
+                          Add Address
+                        </Button>
                     </div>
                   </div>
                 )}
@@ -540,11 +588,10 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                                   <PropertyTypeSelect
                                     value={editedAddress!.propertyType}
                                     onChange={(value) => {
-                                      const options = getPropertySizeOptions(value)
                                       setEditedAddress({
                                         ...editedAddress!,
                                         propertyType: value,
-                                        propertySize: options[0]?.value || ''
+                                        propertySize: ''
                                       })
                                     }}
                                   />
@@ -559,9 +606,9 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {getPropertySizeOptions(editedAddress!.propertyType).map(option => (
-                                        <SelectItem key={option.value} value={option.value}>
-                                          {option.label}
+                                      {editSizeOptions.map(option => (
+                                        <SelectItem key={option.code} value={option.code}>
+                                          {option.name}
                                         </SelectItem>
                                       ))}
                                     </SelectContent>
