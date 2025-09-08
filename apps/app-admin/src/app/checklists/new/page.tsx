@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,7 @@ interface ChecklistItem {
   order: number
 }
 
-const PROPERTY_TYPES = ["HDB", "CONDO", "EC", "APARTMENT", "LANDED"]
+type PropertyTypeOption = { id: string; code: string; name: string }
 const CATEGORIES = ["GENERAL", "ELECTRICAL", "PLUMBING", "STRUCTURAL", "SAFETY", "EXTERIOR", "INTERIOR", "APPLIANCES"]
 
 // Common room/area templates
@@ -69,6 +69,7 @@ const AREA_TEMPLATES = {
 
 export default function NewChecklistPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   
@@ -83,6 +84,56 @@ export default function NewChecklistPage() {
   const [editingItems, setEditingItems] = useState<ChecklistItem[]>([])
   const [currentArea, setCurrentArea] = useState("")
   const [selectedTemplate, setSelectedTemplate] = useState("")
+  const [propertyOptions, setPropertyOptions] = useState<PropertyTypeOption[]>([])
+
+  useEffect(() => {
+    // Load property types from API
+    const loadProps = async () => {
+      try {
+        const res = await fetch('/api/properties')
+        if (!res.ok) return
+        const data = await res.json()
+        setPropertyOptions(data)
+        if (!propertyType && data.length > 0) setPropertyType(data[0].code)
+      } catch (e) {
+        console.error('Failed to load property types', e)
+      }
+    }
+    loadProps()
+  }, [])
+
+  // If duplicating from an existing checklist
+  useEffect(() => {
+    const fromId = searchParams?.get('from')
+    if (!fromId) return
+
+    const loadFromChecklist = async () => {
+      try {
+        setLoading(true)
+        const res = await fetch(`/api/checklists/${fromId}`)
+        if (!res.ok) return
+        const data = await res.json()
+        setName(`${data.name} (Copy)`)
+        setDescription(data.description || data.remarks || "")
+        setPropertyType(data.propertyType || "HDB")
+        // Map existing items to editable items structure
+        const mapped: ChecklistItem[] = (data.items || []).map((it: any, idx: number) => ({
+          item: it.name || it.item || '',
+          description: it.action || it.description || '',
+          category: 'GENERAL',
+          isRequired: false,
+          order: it.order || idx + 1
+        }))
+        setItems(mapped)
+      } catch (e) {
+        console.error('Failed to load source checklist', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadFromChecklist()
+  }, [searchParams])
 
   const loadTemplate = (templateName: string) => {
     const template = AREA_TEMPLATES[templateName as keyof typeof AREA_TEMPLATES]
@@ -258,8 +309,8 @@ export default function NewChecklistPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {PROPERTY_TYPES.map(type => (
-                          <SelectItem key={type} value={type}>{type}</SelectItem>
+                        {propertyOptions.map((p) => (
+                          <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>

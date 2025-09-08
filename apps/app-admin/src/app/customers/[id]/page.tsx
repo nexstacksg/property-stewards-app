@@ -46,6 +46,8 @@ interface NewAddress {
   remarks?: string
 }
 
+type PropertyOption = { id: string; code: string; name: string }
+
 interface Customer {
   id: string
   name: string
@@ -162,10 +164,25 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     propertySize: "HDB_3_ROOM",
     remarks: ""
   })
+  const [propertyOptions, setPropertyOptions] = useState<PropertyOption[]>([])
 
   useEffect(() => {
     params.then(p => setCustomerId(p.id))
   }, [params])
+
+  useEffect(() => {
+    const loadProps = async () => {
+      try {
+        const res = await fetch('/api/properties')
+        if (!res.ok) return
+        const data = await res.json()
+        setPropertyOptions(data)
+      } catch (e) {
+        console.error('Failed to load property types', e)
+      }
+    }
+    loadProps()
+  }, [])
 
   useEffect(() => {
     if (customerId) {
@@ -422,11 +439,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="HDB">HDB</SelectItem>
-                          <SelectItem value="CONDO">Condo</SelectItem>
-                          <SelectItem value="EC">EC</SelectItem>
-                          <SelectItem value="APARTMENT">Apartment</SelectItem>
-                          <SelectItem value="LANDED">Landed</SelectItem>
+                          {propertyOptions.map((p) => (
+                            <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
