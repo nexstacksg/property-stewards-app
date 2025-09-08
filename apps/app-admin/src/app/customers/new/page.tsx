@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
@@ -46,9 +47,48 @@ export default function NewCustomerPage() {
     address: "",
     postalCode: "",
     propertyType: "HDB",
-    propertySize: "HDB_3_ROOM",
+    propertySize: "",
     remarks: ""
   })
+
+  const [propertyOptions, setPropertyOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [sizeOptions, setSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+
+  useEffect(() => {
+    const loadProps = async () => {
+      try {
+        const res = await fetch('/api/properties')
+        if (!res.ok) return
+        const data = await res.json()
+        setPropertyOptions(data)
+      } catch (e) {
+        console.error('Failed to load property types', e)
+      }
+    }
+    loadProps()
+  }, [])
+
+  // Load sizes when property type changes
+  useEffect(() => {
+    const loadSizes = async () => {
+      try {
+        if (!newAddress.propertyType) { setSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(newAddress.propertyType)}`)
+        if (!res.ok) return
+        const data = await res.json()
+        setSizeOptions(data)
+        // Always select the first size if available
+        if (data.length > 0) {
+          setNewAddress((prev) => ({ ...prev, propertySize: data[0].code }))
+        } else {
+          setNewAddress((prev) => ({ ...prev, propertySize: '' }))
+        }
+      } catch (e) {
+        console.error('Failed to load sizes', e)
+      }
+    }
+    loadSizes()
+  }, [newAddress.propertyType])
 
   const handleTypeChange = (value: string) => {
     setType(value)
@@ -66,13 +106,13 @@ export default function NewCustomerPage() {
   }
 
   const addAddress = () => {
-    if (newAddress.address && newAddress.postalCode) {
+    if (newAddress.address && newAddress.postalCode && newAddress.propertySize) {
       setAddresses([...addresses, newAddress])
       setNewAddress({
         address: "",
         postalCode: "",
         propertyType: "HDB",
-        propertySize: "HDB_3_ROOM",
+        propertySize: "",
         remarks: ""
       })
       setShowAddressForm(false)
@@ -326,27 +366,16 @@ export default function NewCustomerPage() {
 
                       <div className="space-y-2">
                         <Label>Property Type</Label>
-                        <Select
+                        <PropertyTypeSelect
                           value={newAddress.propertyType}
-                          onValueChange={(value) => {
-                            setNewAddress({ 
-                              ...newAddress, 
+                          onChange={(value) => {
+                            setNewAddress({
+                              ...newAddress,
                               propertyType: value,
-                              propertySize: getPropertySizeOptions(value)[0]?.value || ""
+                              propertySize: ''
                             })
                           }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="HDB">HDB</SelectItem>
-                            <SelectItem value="CONDO">Condo</SelectItem>
-                            <SelectItem value="EC">EC</SelectItem>
-                            <SelectItem value="APARTMENT">Apartment</SelectItem>
-                            <SelectItem value="LANDED">Landed</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        />
                       </div>
 
                       <div className="space-y-2">
@@ -358,10 +387,10 @@ export default function NewCustomerPage() {
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
-                            {getPropertySizeOptions(newAddress.propertyType).map(option => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
+                         <SelectContent>
+                            {sizeOptions.map(option => (
+                              <SelectItem key={option.code} value={option.code}>
+                                {option.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -389,7 +418,7 @@ export default function NewCustomerPage() {
                             address: "",
                             postalCode: "",
                             propertyType: "HDB",
-                            propertySize: "HDB_3_ROOM",
+                            propertySize: "",
                             remarks: ""
                           })
                         }}
@@ -400,7 +429,7 @@ export default function NewCustomerPage() {
                         type="button"
                         size="sm"
                         onClick={addAddress}
-                        disabled={!newAddress.address || !newAddress.postalCode}
+                        disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize}
                       >
                         Add Address
                       </Button>

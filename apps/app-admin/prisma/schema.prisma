@@ -179,6 +179,36 @@ model WorkOrder {
   @@index([scheduledStartDateTime])
 }
 
+// New Property table to manage available property types dynamically
+model Property {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  createdOn DateTime @default(now())
+  updatedOn DateTime @updatedAt
+  status    Status   @default(ACTIVE)
+  sizes     PropertySizeOption[]
+
+  @@index([status])
+}
+
+// Property size options linked to Property (type)
+model PropertySizeOption {
+  id         String   @id @default(cuid())
+  propertyId String
+  code       String
+  name       String
+  createdOn  DateTime @default(now())
+  updatedOn  DateTime @updatedAt
+  status     Status   @default(ACTIVE)
+
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, code])
+  @@index([propertyId])
+  @@index([status])
+}
+
 enum CustomerType {
   INDIVIDUAL
   COMPANY

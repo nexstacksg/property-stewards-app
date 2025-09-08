@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2, Save, GripVertical } from "lucide-react"
 
@@ -32,7 +33,7 @@ interface Checklist {
   items: ChecklistItem[]
 }
 
-const PROPERTY_TYPES = ["HDB", "CONDO", "EC", "APARTMENT", "LANDED"]
+type PropertyOption = { id: string; code: string; name: string }
 const CATEGORIES = ["GENERAL", "ELECTRICAL", "PLUMBING", "STRUCTURAL", "SAFETY", "EXTERIOR", "INTERIOR", "APPLIANCES"]
 
 export default function EditChecklistPage({ params }: { params: Promise<{ id: string }> }) {
@@ -47,6 +48,7 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
   const [description, setDescription] = useState("")
   const [propertyType, setPropertyType] = useState<string>("HDB")
   const [status, setStatus] = useState("ACTIVE")
+  const [propertyOptions, setPropertyOptions] = useState<PropertyOption[]>([])
   
   // Checklist items
   const [items, setItems] = useState<ChecklistItem[]>([])
@@ -68,6 +70,20 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
     }
     loadChecklist()
   }, [params])
+
+  useEffect(() => {
+    const loadProps = async () => {
+      try {
+        const res = await fetch('/api/properties')
+        if (!res.ok) return
+        const data = await res.json()
+        setPropertyOptions(data)
+      } catch (e) {
+        console.error('Failed to load property types', e)
+      }
+    }
+    loadProps()
+  }, [])
 
   const fetchChecklist = async (id: string) => {
     try {
@@ -226,16 +242,7 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
 
                   <div className="space-y-2">
                     <Label htmlFor="propertyType">Property Type *</Label>
-                    <Select value={propertyType} onValueChange={setPropertyType}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PROPERTY_TYPES.map(type => (
-                          <SelectItem key={type} value={type}>{type}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <PropertyTypeSelect value={propertyType} onChange={setPropertyType} />
                   </div>
 
                   <div className="space-y-2">

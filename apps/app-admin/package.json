@@ -11,6 +11,8 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
+    "db:seed:properties": "tsx prisma/seed-properties.ts",
+    "db:seed:property-sizes": "tsx prisma/seed-property-sizes.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {

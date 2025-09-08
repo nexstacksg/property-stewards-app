@@ -278,28 +278,28 @@ export default function WorkOrdersPage() {
             <>
               {/* Single table for all dates */}
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full table-fixed">
                   <thead className="bg-muted/30 border-b">
                     <tr>
-                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
                         Time
                       </th>
-                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-32">
                         Status
                       </th>
-                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-40">
                         Customer
                       </th>
                       <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Property
                       </th>
-                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
                         Inspector
                       </th>
                       <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Service
                       </th>
-                      <th className="text-center px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <th className="text-center px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-40">
                         Actions
                       </th>
                     </tr>
@@ -319,23 +319,19 @@ export default function WorkOrdersPage() {
                         
                         {/* Work Order Rows for this date */}
                         {(orders as WorkOrder[]).map((workOrder) => (
-                          <tr key={workOrder.id} className="border-b hover:bg-muted/20 transition-colors">
+                          <tr key={workOrder.id} className="border-b hover:bg-muted/10">
                             {/* Time */}
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-sm">
+                            <td className="px-6 py-3 align-top">
+                              <div className="text-sm leading-5">
                                 <div className="font-medium">
-                                  {formatTime(workOrder.scheduledStartDateTime)} - {formatTime(workOrder.scheduledEndDateTime)}
+                                  {formatTime(workOrder.scheduledStartDateTime)} – {formatTime(workOrder.scheduledEndDateTime)}
                                 </div>
-                                {workOrder.actualStart && (
-                                  <div className="text-xs text-orange-600 mt-1">
-                                    Started: {formatTime(workOrder.actualStart)}
-                                  </div>
-                                )}
+                               
                               </div>
                             </td>
 
                             {/* Status */}
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-6 py-3 align-top">
                               <Badge variant={getStatusVariant(workOrder.status)} className="font-medium">
                                 <span className="flex items-center gap-1">
                                   {getStatusIcon(workOrder.status)}
@@ -345,21 +341,18 @@ export default function WorkOrdersPage() {
                             </td>
 
                             {/* Customer */}
-                            <td className="px-6 py-4">
-                              <Link 
-                                href={`/customers/${workOrder.contract.customer.id}`}
-                                className="text-sm font-medium hover:text-primary transition-colors"
-                              >
+                            <td className="px-6 py-3 align-top">
+                              <Link href={`/customers/${workOrder.contract.customer.id}`} className="text-sm font-medium hover:text-primary truncate block" title={workOrder.contract.customer.name}>
                                 {workOrder.contract.customer.name}
                               </Link>
                             </td>
 
                             {/* Property */}
-                            <td className="px-6 py-4">
-                              <div className="text-sm">
-                                <div className="font-medium flex items-start gap-1">
+                            <td className="px-6 py-3 align-top">
+                              <div className="text-sm leading-5">
+                                <div className="font-medium flex items-start gap-1 truncate">
                                   <MapPin className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
-                                  <span>{workOrder.contract.address.address}</span>
+                                  <span className="truncate" title={workOrder.contract.address.address}>{workOrder.contract.address.address}</span>
                                 </div>
                                 <div className="text-xs text-muted-foreground ml-4">
                                   {workOrder.contract.address.postalCode} • {workOrder.contract.address.propertyType}
@@ -368,40 +361,45 @@ export default function WorkOrdersPage() {
                             </td>
 
                             {/* Inspector */}
-                            <td className="px-6 py-4">
-                              <div className="text-sm">
-                                <div className="font-medium flex items-center gap-1">
+                            <td className="px-6 py-3 align-top">
+                              <div className="text-sm leading-5">
+                                <div className="font-medium flex items-center gap-1 truncate">
                                   <User className="h-3 w-3 text-muted-foreground" />
-                                  {workOrder.inspector.name}
+                                  <span className="truncate" title={workOrder.inspector.name}>{workOrder.inspector.name}</span>
                                 </div>
-                                <div className="text-xs text-muted-foreground">
+                                <div className="text-xs text-muted-foreground truncate" title={workOrder.inspector.mobilePhone}>
                                   {workOrder.inspector.mobilePhone}
                                 </div>
                               </div>
                             </td>
 
                             {/* Service */}
-                            <td className="px-6 py-4">
+                            <td className="px-6 py-3 align-top">
                               <Badge variant="outline" className="font-normal">
                                 {workOrder.contract.servicePackage || 'Basic'}
                               </Badge>
                             </td>
 
                             {/* Actions */}
-                            <td className="px-6 py-4">
-                              <div className="flex justify-center gap-2">
-                                <Link href={`/work-orders/${workOrder.id}`}>
-                                  <Button variant="outline" size="sm">View</Button>
-                                </Link>
-                                {workOrder.status === 'SCHEDULED' && (
-                                  <Button 
-                                    variant="outline" 
-                                    size="sm"
-                                    onClick={() => handleStartJob(workOrder.id)}
-                                  >
-                                    Start
-                                  </Button>
-                                )}
+                            <td className="px-6 py-3 align-top">
+                              <div className="w-full flex items-center justify-center">
+                                <div className="inline-flex gap-2 w-36 justify-end">
+                                  <Link href={`/work-orders/${workOrder.id}`}>
+                                    <Button variant="outline" size="sm" className="w-16">View</Button>
+                                  </Link>
+                                  {workOrder.status === 'SCHEDULED' ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="w-16"
+                                      onClick={() => handleStartJob(workOrder.id)}
+                                    >
+                                      Start
+                                    </Button>
+                                  ) : (
+                                    <div className="w-16" aria-hidden="true" />
+                                  )}
+                                </div>
                               </div>
                             </td>
                           </tr>

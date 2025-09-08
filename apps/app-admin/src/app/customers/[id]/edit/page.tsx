@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Plus, X, Loader2, Save } from "lucide-react"
+import { ArrowLeft, Plus, X, Loader2, Save, Pencil } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
 import { DatePicker } from "@/components/ui/date-picker"
 
@@ -69,9 +70,15 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
     address: "",
     postalCode: "",
     propertyType: "HDB",
-    propertySize: "HDB_3_ROOM",
+    propertySize: "",
     remarks: ""
   })
+  // Editing existing address
+  const [editingAddressIndex, setEditingAddressIndex] = useState<number | null>(null)
+  const [editedAddress, setEditedAddress] = useState<Address | null>(null)
+  const [propertyOptions, setPropertyOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [newSizeOptions, setNewSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [editSizeOptions, setEditSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
 
   useEffect(() => {
     const loadCustomer = async () => {
@@ -81,6 +88,67 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
     }
     loadCustomer()
   }, [params])
+
+  // Load property types
+  useEffect(() => {
+    const loadProps = async () => {
+      try {
+        const res = await fetch('/api/properties')
+        if (!res.ok) return
+        const data = await res.json()
+        setPropertyOptions(data)
+      } catch (e) {
+        console.error('Failed to load properties', e)
+      }
+    }
+    loadProps()
+  }, [])
+
+  // Load size options for the new address form when type changes
+  useEffect(() => {
+    const loadSizes = async () => {
+      try {
+        if (!newAddress.propertyType) { setNewSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(newAddress.propertyType)}`)
+        if (!res.ok) return
+        const data = await res.json()
+        setNewSizeOptions(data)
+        if (!newAddress.propertySize) {
+          if (data.length > 0) {
+            setNewAddress((prev) => ({ ...prev, propertySize: data[0].code }))
+          } else {
+            setNewAddress((prev) => ({ ...prev, propertySize: '' }))
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load size options', e)
+      }
+    }
+    loadSizes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newAddress.propertyType])
+
+  // Load size options for edited address when its type changes
+  useEffect(() => {
+    const loadEditSizes = async () => {
+      try {
+        if (!editedAddress?.propertyType) { setEditSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(editedAddress.propertyType)}`)
+        if (!res.ok) return
+        const data: Array<{ id: string; code: string; name: string }> = await res.json()
+        setEditSizeOptions(data)
+
+        // If current size is empty or not among options, set to first available
+        if (editedAddress && ( !editedAddress.propertySize || !data.some(o => o.code === editedAddress.propertySize) )) {
+          const nextSize = data[0]?.code || ''
+          setEditedAddress({ ...editedAddress, propertySize: nextSize })
+        }
+      } catch (e) {
+        console.error('Failed to load size options for edit', e)
+      }
+    }
+    loadEditSizes()
+  }, [editedAddress?.propertyType])
 
   const fetchCustomer = async (id: string) => {
     try {
@@ -126,13 +194,13 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
   }
 
   const addAddress = () => {
-    if (newAddress.address && newAddress.postalCode) {
+    if (newAddress.address && newAddress.postalCode && newAddress.propertySize) {
       setAddresses([...addresses, { ...newAddress, status: "ACTIVE" }])
       setNewAddress({
         address: "",
         postalCode: "",
         propertyType: "HDB",
-        propertySize: "HDB_3_ROOM",
+        propertySize: "",
         remarks: ""
       })
       setShowAddressForm(false)
@@ -145,6 +213,25 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
       setDeletedAddressIds([...deletedAddressIds, address.id])
     }
     setAddresses(addresses.filter((_, i) => i !== index))
+  }
+
+  const startEditAddress = (index: number) => {
+    setEditingAddressIndex(index)
+    setEditedAddress({ ...addresses[index] })
+  }
+
+  const cancelEditAddress = () => {
+    setEditingAddressIndex(null)
+    setEditedAddress(null)
+  }
+
+  const saveEditedAddress = () => {
+    if (editingAddressIndex === null || !editedAddress) return
+    const updated = [...addresses]
+    updated[editingAddressIndex] = { ...updated[editingAddressIndex], ...editedAddress }
+    setAddresses(updated)
+    setEditingAddressIndex(null)
+    setEditedAddress(null)
   }
 
   const getPropertySizeOptions = (propertyType: string) => {
@@ -402,27 +489,16 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
 
                       <div className="space-y-2">
                         <Label>Property Type</Label>
-                        <Select
-                          value={newAddress.propertyType}
-                          onValueChange={(value) => {
-                            setNewAddress({ 
-                              ...newAddress, 
-                              propertyType: value,
-                              propertySize: getPropertySizeOptions(value)[0]?.value || ""
-                            })
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="HDB">HDB</SelectItem>
-                            <SelectItem value="CONDO">Condo</SelectItem>
-                            <SelectItem value="EC">EC</SelectItem>
-                            <SelectItem value="APARTMENT">Apartment</SelectItem>
-                            <SelectItem value="LANDED">Landed</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          <PropertyTypeSelect
+                            value={newAddress.propertyType}
+                            onChange={(value) => {
+                              setNewAddress({
+                                ...newAddress,
+                                propertyType: value,
+                                propertySize: ''
+                              })
+                            }}
+                          />
                       </div>
 
                       <div className="space-y-2">
@@ -435,9 +511,9 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {getPropertySizeOptions(newAddress.propertyType).map(option => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
+                            {newSizeOptions.map(option => (
+                              <SelectItem key={option.code} value={option.code}>
+                                {option.name}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -465,56 +541,140 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                             address: "",
                             postalCode: "",
                             propertyType: "HDB",
-                            propertySize: "HDB_3_ROOM",
+                            propertySize: "",
                             remarks: ""
                           })
                         }}
                       >
                         Cancel
                       </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={addAddress}
-                        disabled={!newAddress.address || !newAddress.postalCode}
-                      >
-                        Add Address
-                      </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={addAddress}
+                          disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize}
+                        >
+                          Add Address
+                        </Button>
                     </div>
                   </div>
                 )}
 
                 {addresses.length > 0 ? (
                   <div className="space-y-3">
-                    {addresses.map((addr, index) => (
-                      <div key={addr.id || index} className="border rounded-lg p-3 flex justify-between items-start">
-                        <div>
-                          <p className="font-medium">{addr.address}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {addr.postalCode} • {addr.propertyType} • {addr.propertySize.replace(/_/g, ' ')}
-                          </p>
-                          {addr.remarks && (
-                            <p className="text-sm text-muted-foreground mt-1">{addr.remarks}</p>
-                          )}
-                          {addr.status && (
-                            <Badge 
-                              variant={addr.status === 'ACTIVE' ? 'success' : 'secondary'} 
-                              className="mt-2"
-                            >
-                              {addr.status}
-                            </Badge>
+                    {addresses.map((addr, index) => {
+                      const isEditing = editingAddressIndex === index && editedAddress
+                      return (
+                        <div key={addr.id || index} className="border rounded-lg p-3">
+                          {isEditing ? (
+                            <div className="space-y-3">
+                              <div className="grid gap-4 md:grid-cols-2">
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Address</Label>
+                                  <Input
+                                    value={editedAddress!.address}
+                                    onChange={(e) => setEditedAddress({ ...editedAddress!, address: e.target.value })}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Postal Code</Label>
+                                  <Input
+                                    value={editedAddress!.postalCode}
+                                    onChange={(e) => setEditedAddress({ ...editedAddress!, postalCode: e.target.value })}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Property Type</Label>
+                                  <PropertyTypeSelect
+                                    value={editedAddress!.propertyType}
+                                    onChange={(value) => {
+                                      setEditedAddress({
+                                        ...editedAddress!,
+                                        propertyType: value,
+                                        propertySize: ''
+                                      })
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Property Size</Label>
+                                  <Select
+                                    value={editedAddress!.propertySize}
+                                    onValueChange={(value) => setEditedAddress({ ...editedAddress!, propertySize: value })}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {editSizeOptions.map(option => (
+                                        <SelectItem key={option.code} value={option.code}>
+                                          {option.name}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Remarks</Label>
+                                  <Input
+                                    value={editedAddress!.remarks || ""}
+                                    onChange={(e) => setEditedAddress({ ...editedAddress!, remarks: e.target.value })}
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex justify-end gap-2">
+                                <Button type="button" variant="outline" size="sm" onClick={cancelEditAddress}>
+                                  Cancel
+                                </Button>
+                                <Button type="button" size="sm" onClick={saveEditedAddress} disabled={!editedAddress!.address || !editedAddress!.postalCode}>
+                                  Save
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="font-medium">{addr.address}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {addr.postalCode} • {addr.propertyType} • {addr.propertySize.replace(/_/g, ' ')}
+                                </p>
+                                {addr.remarks && (
+                                  <p className="text-sm text-muted-foreground mt-1">{addr.remarks}</p>
+                                )}
+                                {addr.status && (
+                                  <Badge 
+                                    variant={addr.status === 'ACTIVE' ? 'success' : 'secondary'} 
+                                    className="mt-2"
+                                  >
+                                    {addr.status}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => startEditAddress(index)}
+                                  aria-label="Edit address"
+                                  title="Edit address"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => removeAddress(index)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
                           )}
                         </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeAddress(index)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
                   !showAddressForm && (

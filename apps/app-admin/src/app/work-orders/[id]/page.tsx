@@ -20,6 +20,7 @@ import {
   List
 } from "lucide-react"
 import prisma from "@/lib/prisma"
+import WorkOrderItemMedia from "@/components/work-order-item-media"
 
 async function getWorkOrder(id: string) {
   const workOrder = await prisma.workOrder.findUnique({
@@ -464,22 +465,13 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           </p>
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-2 text-sm">
-                            {item.photos && item.photos.length > 0 && (
-                              <Badge variant="outline">
-                                {item.photos.length} photo(s)
-                              </Badge>
-                            )}
-                            {item.videos && item.videos.length > 0 && (
-                              <Badge variant="outline">
-                                {item.videos.length} video(s)
-                              </Badge>
-                            )}
-                            {(!item.photos || item.photos.length === 0) && 
-                             (!item.videos || item.videos.length === 0) && (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </div>
+                          <WorkOrderItemMedia 
+                            itemId={item.id}
+                            workOrderId={workOrder.id}
+                            photos={item.photos}
+                            videos={item.videos}
+                            itemName={item.name || item.item}
+                          />
                         </TableCell>
                       </TableRow>
                     ))}
