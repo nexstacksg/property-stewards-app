@@ -470,9 +470,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                           {getPropertySizeOptions(newAddress.propertyType).map(option => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
+                          {sizeOptions.map(option => (
+                            <SelectItem key={option.code} value={option.code}>
+                              {option.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -509,7 +509,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <Button
                       size="sm"
                       onClick={addAddress}
-                      disabled={!newAddress.address || !newAddress.postalCode || addingAddress}
+                      disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize || addingAddress}
                     >
                       {addingAddress && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                       Add Address

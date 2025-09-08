@@ -106,13 +106,13 @@ export default function NewCustomerPage() {
   }
 
   const addAddress = () => {
-    if (newAddress.address && newAddress.postalCode) {
+    if (newAddress.address && newAddress.postalCode && newAddress.propertySize) {
       setAddresses([...addresses, newAddress])
       setNewAddress({
         address: "",
         postalCode: "",
         propertyType: "HDB",
-        propertySize: "HDB_3_ROOM",
+        propertySize: "",
         remarks: ""
       })
       setShowAddressForm(false)
@@ -387,9 +387,11 @@ export default function NewCustomerPage() {
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
-                          <SelectContent>
-                            {sizeOptions.map((s) => (
-                              <SelectItem key={s.id} value={s.code}>{s.name}</SelectItem>
+                         <SelectContent>
+                            {sizeOptions.map(option => (
+                              <SelectItem key={option.code} value={option.code}>
+                                {option.name}
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -427,7 +429,7 @@ export default function NewCustomerPage() {
                         type="button"
                         size="sm"
                         onClick={addAddress}
-                        disabled={!newAddress.address || !newAddress.postalCode}
+                        disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize}
                       >
                         Add Address
                       </Button>
