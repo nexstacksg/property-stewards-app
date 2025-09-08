@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2, Save, Pencil } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
@@ -440,25 +441,16 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
 
                       <div className="space-y-2">
                         <Label>Property Type</Label>
-                        <Select
+                        <PropertyTypeSelect
                           value={newAddress.propertyType}
-                          onValueChange={(value) => {
-                            setNewAddress({ 
-                              ...newAddress, 
+                          onChange={(value) => {
+                            setNewAddress({
+                              ...newAddress,
                               propertyType: value,
-                              propertySize: getPropertySizeOptions(value)[0]?.value || ""
+                              propertySize: getPropertySizeOptions(value)[0]?.value || ''
                             })
                           }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {propertyOptions.map((p: any) => (
-                              <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        />
                       </div>
 
                       <div className="space-y-2">
@@ -545,26 +537,17 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                                 </div>
                                 <div className="space-y-2">
                                   <Label>Property Type</Label>
-                                  <Select
+                                  <PropertyTypeSelect
                                     value={editedAddress!.propertyType}
-                                    onValueChange={(value) => {
+                                    onChange={(value) => {
                                       const options = getPropertySizeOptions(value)
                                       setEditedAddress({
                                         ...editedAddress!,
                                         propertyType: value,
-                                        propertySize: options[0]?.value || ""
+                                        propertySize: options[0]?.value || ''
                                       })
                                     }}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {propertyOptions.map((p: any) => (
-                                        <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
+                                  />
                                 </div>
                                 <div className="space-y-2">
                                   <Label>Property Size</Label>

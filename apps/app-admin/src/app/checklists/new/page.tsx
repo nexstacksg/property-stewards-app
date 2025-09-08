@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2, GripVertical, Save } from "lucide-react"
 
@@ -67,7 +68,9 @@ const AREA_TEMPLATES = {
   ]
 }
 
-export default function NewChecklistPage() {
+
+
+ function NewChecklistContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
@@ -304,16 +307,7 @@ export default function NewChecklistPage() {
 
                   <div className="space-y-2">
                     <Label htmlFor="propertyType">Property Type *</Label>
-                    <Select value={propertyType} onValueChange={setPropertyType}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {propertyOptions.map((p) => (
-                          <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <PropertyTypeSelect value={propertyType} onChange={setPropertyType} />
                   </div>
 
                   <div className="space-y-2 md:col-span-2">
@@ -667,5 +661,13 @@ export default function NewChecklistPage() {
         </div>
       </form>
     </div>
+  )
+}
+
+export default function NewCheckListPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <NewChecklistContent />
+    </Suspense>
   )
 }

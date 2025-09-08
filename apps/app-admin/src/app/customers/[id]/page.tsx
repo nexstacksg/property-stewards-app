@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { PhoneInput } from "@/components/ui/phone-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { 
@@ -161,10 +162,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     address: "",
     postalCode: "",
     propertyType: "HDB",
-    propertySize: "HDB_3_ROOM",
+    propertySize: "",
     remarks: ""
   })
   const [propertyOptions, setPropertyOptions] = useState<PropertyOption[]>([])
+  const [sizeOptions, setSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
 
   useEffect(() => {
     params.then(p => setCustomerId(p.id))
@@ -183,6 +185,27 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     }
     loadProps()
   }, [])
+
+  // Load sizes when new address propertyType changes
+  useEffect(() => {
+    const loadSizes = async () => {
+      try {
+        if (!newAddress.propertyType) { setSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(newAddress.propertyType)}`)
+        if (!res.ok) return
+        const data = await res.json()
+        setSizeOptions(data)
+        if (data.length > 0) {
+          setNewAddress((prev) => ({ ...prev, propertySize: data[0].code }))
+        } else {
+          setNewAddress((prev) => ({ ...prev, propertySize: '' }))
+        }
+      } catch (e) {
+        console.error('Failed to load sizes', e)
+      }
+    }
+    loadSizes()
+  }, [newAddress.propertyType])
 
   useEffect(() => {
     if (customerId) {
@@ -425,25 +448,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
                     <div className="space-y-2">
                       <Label>Property Type</Label>
-                      <Select
+                      <PropertyTypeSelect
                         value={newAddress.propertyType}
-                        onValueChange={(value) => {
-                          setNewAddress({ 
-                            ...newAddress, 
+                        onChange={(value) => {
+                          setNewAddress({
+                            ...newAddress,
                             propertyType: value,
-                            propertySize: getPropertySizeOptions(value)[0]?.value || ""
+                            propertySize: ''
                           })
                         }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {propertyOptions.map((p) => (
-                            <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      />
                     </div>
 
                     <div className="space-y-2">
@@ -456,7 +470,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {getPropertySizeOptions(newAddress.propertyType).map(option => (
+                           {getPropertySizeOptions(newAddress.propertyType).map(option => (
                             <SelectItem key={option.value} value={option.value}>
                               {option.label}
                             </SelectItem>
@@ -485,7 +499,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           address: "",
                           postalCode: "",
                           propertyType: "HDB",
-                          propertySize: "HDB_3_ROOM",
+                          propertySize: "",
                           remarks: ""
                         })
                       }}

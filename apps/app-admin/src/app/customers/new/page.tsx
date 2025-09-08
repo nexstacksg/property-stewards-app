@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
@@ -46,11 +47,12 @@ export default function NewCustomerPage() {
     address: "",
     postalCode: "",
     propertyType: "HDB",
-    propertySize: "HDB_3_ROOM",
+    propertySize: "",
     remarks: ""
   })
 
   const [propertyOptions, setPropertyOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [sizeOptions, setSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
 
   useEffect(() => {
     const loadProps = async () => {
@@ -65,6 +67,28 @@ export default function NewCustomerPage() {
     }
     loadProps()
   }, [])
+
+  // Load sizes when property type changes
+  useEffect(() => {
+    const loadSizes = async () => {
+      try {
+        if (!newAddress.propertyType) { setSizeOptions([]); return }
+        const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(newAddress.propertyType)}`)
+        if (!res.ok) return
+        const data = await res.json()
+        setSizeOptions(data)
+        // Always select the first size if available
+        if (data.length > 0) {
+          setNewAddress((prev) => ({ ...prev, propertySize: data[0].code }))
+        } else {
+          setNewAddress((prev) => ({ ...prev, propertySize: '' }))
+        }
+      } catch (e) {
+        console.error('Failed to load sizes', e)
+      }
+    }
+    loadSizes()
+  }, [newAddress.propertyType])
 
   const handleTypeChange = (value: string) => {
     setType(value)
@@ -342,25 +366,16 @@ export default function NewCustomerPage() {
 
                       <div className="space-y-2">
                         <Label>Property Type</Label>
-                        <Select
+                        <PropertyTypeSelect
                           value={newAddress.propertyType}
-                          onValueChange={(value) => {
-                            setNewAddress({ 
-                              ...newAddress, 
+                          onChange={(value) => {
+                            setNewAddress({
+                              ...newAddress,
                               propertyType: value,
-                              propertySize: getPropertySizeOptions(value)[0]?.value || ""
+                              propertySize: ''
                             })
                           }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {propertyOptions.map((p: any) => (
-                              <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        />
                       </div>
 
                       <div className="space-y-2">
@@ -373,10 +388,8 @@ export default function NewCustomerPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {getPropertySizeOptions(newAddress.propertyType).map(option => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
+                            {sizeOptions.map((s) => (
+                              <SelectItem key={s.id} value={s.code}>{s.name}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -403,7 +416,7 @@ export default function NewCustomerPage() {
                             address: "",
                             postalCode: "",
                             propertyType: "HDB",
-                            propertySize: "HDB_3_ROOM",
+                            propertySize: "",
                             remarks: ""
                           })
                         }}
