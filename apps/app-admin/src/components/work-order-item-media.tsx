@@ -17,18 +17,28 @@ export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], v
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'photos' | 'videos'>('photos')
 
-  const openPhotos = () => { setMode('photos'); setOpen(true) }
-  const openVideos = () => { setMode('videos'); setOpen(true) }
+  const hasPhotos = Array.isArray(photos) && photos.length > 0
+  const hasVideos = Array.isArray(videos) && videos.length > 0
+  const openPhotos = () => { if (!hasPhotos) return; setMode('photos'); setOpen(true) }
+  const openVideos = () => { if (!hasVideos) return; setMode('videos'); setOpen(true) }
 
   return (
     <div className="flex items-center gap-3">
-      <button onClick={openPhotos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0">
-        {(photos?.length || 0)} photo(s)
-      </button>
+      {hasPhotos ? (
+        <button onClick={openPhotos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0">
+          {photos.length} photo(s)
+        </button>
+      ) : (
+        <span className="text-sm text-muted-foreground">0 photo(s)</span>
+      )}
       <span>•</span>
-      <button onClick={openVideos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0">
-        {(videos?.length || 0)} video(s)
-      </button>
+      {hasVideos ? (
+        <button onClick={openVideos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0">
+          {videos.length} video(s)
+        </button>
+      ) : (
+        <span className="text-sm text-muted-foreground">0 video(s)</span>
+      )}
       <UploadAnyIcon itemId={itemId} workOrderId={workOrderId} title="Upload photo or video" />
 
       <Dialog open={open} onOpenChange={setOpen}>
