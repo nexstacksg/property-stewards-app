@@ -80,10 +80,12 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
               Edit Template
             </Button>
           </Link>
-          {/* <Button variant="outline">
-            <Copy className="h-4 w-4 mr-2" />
-            Duplicate
-          </Button> */}
+          <Link href={`/checklists/new?from=${checklist.id}`}>
+            <Button variant="outline">
+              <Copy className="h-4 w-4 mr-2" />
+              Duplicate
+            </Button>
+          </Link>
         </div>
       </div>
 

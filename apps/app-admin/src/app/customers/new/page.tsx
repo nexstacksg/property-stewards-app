@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -49,6 +49,22 @@ export default function NewCustomerPage() {
     propertySize: "HDB_3_ROOM",
     remarks: ""
   })
+
+  const [propertyOptions, setPropertyOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+
+  useEffect(() => {
+    const loadProps = async () => {
+      try {
+        const res = await fetch('/api/properties')
+        if (!res.ok) return
+        const data = await res.json()
+        setPropertyOptions(data)
+      } catch (e) {
+        console.error('Failed to load property types', e)
+      }
+    }
+    loadProps()
+  }, [])
 
   const handleTypeChange = (value: string) => {
     setType(value)
@@ -340,11 +356,9 @@ export default function NewCustomerPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="HDB">HDB</SelectItem>
-                            <SelectItem value="CONDO">Condo</SelectItem>
-                            <SelectItem value="EC">EC</SelectItem>
-                            <SelectItem value="APARTMENT">Apartment</SelectItem>
-                            <SelectItem value="LANDED">Landed</SelectItem>
+                            {propertyOptions.map((p: any) => (
+                              <SelectItem key={p.id} value={p.code}>{p.name}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
