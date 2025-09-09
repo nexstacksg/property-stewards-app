@@ -17,13 +17,7 @@ import {
   getWorkOrderProgress
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
-import { 
-  storeThread, 
-  getThread, 
-  getThreadMetadata, 
-  updateThreadMetadata,
-  type ThreadMetadata 
-} from '@/lib/redis-thread-store';
+// Redis removed; session cache is used instead via chat-session
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -175,13 +169,7 @@ export async function POST(request: NextRequest) {
       console.log('🔄 Processing media message...');
       
       // Use existing thread if available, don't create new one to preserve context
-      // First check Redis for thread
-      let threadId :any= await getThread(phoneNumber);
-      
-      // Fallback to memory cache if not in Redis
-      if (!threadId) {
-        threadId = whatsappThreads.get(phoneNumber);
-      }
+      let threadId :any= whatsappThreads.get(phoneNumber);
       
       if (!threadId) {
         console.log('⚠️ No existing thread found for media upload from phone:', phoneNumber);
@@ -210,11 +198,7 @@ export async function POST(request: NextRequest) {
         await sendWhatsAppResponse(phoneNumber, mediaResponse);
         
         // Also notify the assistant about the media upload
-        // Check both Redis and memory for thread
-        let threadIdForNotify : any = await getThread(phoneNumber);
-        if (!threadIdForNotify) {
-          threadIdForNotify = whatsappThreads.get(phoneNumber);
-        }
+        const threadIdForNotify : any = whatsappThreads.get(phoneNumber);
         
         if (threadIdForNotify && mediaResponse.includes('successfully')) {
           // Add a message to the thread for context
@@ -1329,28 +1313,16 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
   try {
     console.log('🔄 Processing WhatsApp media message for phone:', phoneNumber);
     
-    // Phone number is already normalized from the caller
-    // First check Redis for thread
-    let threadId:any = await getThread(phoneNumber);
-    
-    // Fallback to memory cache if not in Redis
-    if (!threadId) {
-      threadId = whatsappThreads.get(phoneNumber);
-    }
+    // Phone number is already normalized; recover threadId from in-memory map
+    let threadId:any = whatsappThreads.get(phoneNumber);
     
     if (!threadId) {
       console.log('❌ No thread found for media upload for phone:', phoneNumber);
       return 'Please start a conversation first before uploading media.';
     }
     
-    // Get thread metadata from Redis for better persistence
-    let metadata: any = await getThreadMetadata(phoneNumber);
-    
-    // Fallback to OpenAI thread metadata if Redis is empty
-    if (!metadata || Object.keys(metadata).length === 0) {
-      const thread = await openai.beta.threads.retrieve(threadId);
-      metadata = thread.metadata || {};
-    }
+    // Get session state for context
+    let metadata: any = await getSessionState(phoneNumber);
     console.log('📋 Thread metadata for media upload:', metadata);
     
     // Check if we have work order context

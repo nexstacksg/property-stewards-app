@@ -9,10 +9,13 @@ function isAuthorized(req: NextRequest): boolean {
   const apiKey = req.headers.get('x-api-key') || ''
   const url = new URL(req.url)
   const qToken = url.searchParams.get('token') || ''
+  const allowCron = (process.env.CACHE_WARMUP_ALLOW_CRON || '').toLowerCase() === 'true'
+  const isVercelCron = !!req.headers.get('x-vercel-cron')
 
   if (auth.startsWith('Bearer ') && auth.slice(7) === token) return true
   if (apiKey === token) return true
   if (qToken === token) return true
+  if (allowCron && isVercelCron) return true
   return false
 }
 
@@ -30,4 +33,3 @@ export async function GET(req: NextRequest) {
   // Allow GET for manual checks with the same auth
   return POST(req)
 }
-
