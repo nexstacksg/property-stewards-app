@@ -21,8 +21,7 @@ import {
   getThread, 
   getThreadMetadata, 
   updateThreadMetadata,
-  cacheInspector,
-  getCachedInspector
+  type ThreadMetadata 
 } from '@/lib/redis-thread-store';
 
 // Initialize OpenAI client
@@ -251,9 +250,6 @@ export async function POST(request: NextRequest) {
 
     // Process with OpenAI Assistant - wait for actual response without timeout message
     try {
-      // Pre-warm cache by fetching inspector data in background
-      getCachedInspector(phoneNumber).catch(() => {});
-      
       // Start the assistant processing with normalized phone number
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media');
       
@@ -316,19 +312,10 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     
     if (!threadId) {
       console.log(`🆕 No existing thread found, creating new one for ${cleanPhone}...`);
-      // Check cache first for inspector
-      let inspector = await getCachedInspector(cleanPhone);
-      
+      // Try to find inspector by phone (with and without +)
+      let inspector = await getInspectorByPhone('+' + cleanPhone) as any;
       if (!inspector) {
-        // Try to find inspector by phone (with and without +)
-        inspector = await getInspectorByPhone('+' + cleanPhone) as any;
-        if (!inspector) {
-          inspector = await getInspectorByPhone(cleanPhone) as any;
-        }
-        // Cache inspector data if found
-        if (inspector) {
-          await cacheInspector(cleanPhone, inspector);
-        }
+        inspector = await getInspectorByPhone(cleanPhone) as any;
       }
       
       const thread = await openai.beta.threads.create({
@@ -388,11 +375,9 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     
     console.log('📌 Using cached assistant:', assistantId);
 
-    // Run assistant with optimizations
+    // Run assistant
     const run = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: assistantId,
-      model: 'gpt-4o-mini', // Force fastest model
-
+      assistant_id: assistantId
     });
 
     // Wait for completion and handle multiple rounds of tool calls
@@ -425,18 +410,18 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       return 'Sorry, I encountered an issue processing your request. Please try again.';
     }
 
-    // Get assistant's response - optimized to only fetch latest
+    // Get assistant's response
     console.log('📨 Getting assistant response from thread:', threadId);
-    const messages = await openai.beta.threads.messages.list(threadId, {
-      limit: 1, // Only fetch the latest message for speed
-      order: 'desc'
-    });
+    const messages = await openai.beta.threads.messages.list(threadId);
     const lastMessage = messages.data[0];
+    
+    console.log('📋 Messages count:', messages.data.length);
+    console.log('📋 Last message role:', lastMessage?.role);
     
     if (lastMessage && lastMessage.role === 'assistant') {
       const content = lastMessage.content[0];
       if (content.type === 'text') {
-        console.log('✅ Assistant response ready');
+        console.log('✅ Assistant response found:', content.text.value.substring(0, 100) + '...');
         return content.text.value;
       }
     }
@@ -450,44 +435,30 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
   }
 }
 
-// Wait for run completion - aggressive polling for faster response
+// Wait for run completion - extended timeout for complex operations
 async function waitForRunCompletion(threadId: string, runId: string) {
   let attempts = 0;
-  const maxAttempts = 2400; // 120 seconds max to handle complex operations
+  const maxAttempts = 600; // 60 seconds max (100ms intervals) - enough time for complex operations
   
   let runStatus = await openai.beta.threads.runs.retrieve(runId, {
     thread_id: threadId
   });
   
-  // If already completed, return immediately
-  if (runStatus.status === 'completed' || runStatus.status === 'failed' || runStatus.status === 'cancelled') {
-    return runStatus;
-  }
-  
   while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
-    // Ultra-fast polling for first 2 seconds, then adaptive
-    const delay = attempts < 40 ? 25 : attempts < 100 ? 50 : attempts < 200 ? 100 : 200;
-    await new Promise(resolve => setTimeout(resolve, delay));
-    
+    await new Promise(resolve => setTimeout(resolve, 100)); // Fast polling
     runStatus = await openai.beta.threads.runs.retrieve(runId, {
       thread_id: threadId
     });
     attempts++;
     
-    // Early exit on completion
-    if (runStatus.status === 'completed' || runStatus.status === 'failed' || runStatus.status === 'cancelled' || runStatus.status === 'requires_action') {
-      console.log(`✅ Run status resolved after ${attempts} attempts (${Math.floor(attempts * delay / 1000)}s)`);
-      return runStatus;
-    }
-    
     // Log progress every 5 seconds
-    if (attempts % 100 === 0) {
-      console.log(`⏳ Still waiting for run completion... (${Math.floor(attempts * delay / 1000)}s elapsed)`);
+    if (attempts % 50 === 0) {
+      console.log(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`);
     }
   }
   
   if (attempts >= maxAttempts) {
-    console.log(`⚠️ Run completion timed out after ${maxAttempts * 50 / 1000} seconds`);
+    console.log(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`);
   }
   
   return runStatus;
@@ -564,10 +535,12 @@ async function sendWhatsAppResponse(to: string, message: string) {
 
 // Create assistant - ONLY CALLED ONCE PER SERVER INSTANCE
 async function createAssistant() {
-
-  const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.7',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
+  console.log('🚀 ONE-TIME ASSISTANT CREATION STARTING...');
+  
+  try {
+    const assistant = await openai.beta.assistants.create({
+    name: 'Property Inspector Assistant v0.9',
+    instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -575,6 +548,13 @@ Key capabilities:
 - Allow job detail modifications before starting
 - Guide through room-by-room inspection workflow
 - Track task completion and progress
+
+CRITICAL JOB SELECTION PROCESS:
+- When showing jobs, each has a number: [1], [2], [3] and an ID (e.g., "cmeps0xtz0006m35wcrtr8wx9")
+- When user types just a number like "1", you MUST:
+  1. Look up which job was shown as [1] in the getTodayJobs result
+  2. Get that job's ID from the response
+  3. Call confirmJobSelection with the actual job ID (NOT the number "1")
 
 CRITICAL: Task ID Management
 - Tasks have two identifiers:
@@ -608,25 +588,19 @@ CONVERSATION FLOW GUIDELINES:
      ⭐ Priority: High
      Status: STARTED
    - End with numbered selection prompt like "Type [1], [2] or [3] to select"
+   - CRITICAL: Remember the mapping between job numbers and job IDs for selection
 
 2. Job Selection and Confirmation:
-   - When user selects a job, use confirmJobSelection tool
-   - Display the destination details clearly
+   - When user selects a job by typing just a number (e.g., "1", "2", "3"):
+     * Map the number to the corresponding job from getTodayJobs result
+     * Use the job's ID (NOT the number) with confirmJobSelection tool 
+     * Example: If user types "1", use the ID from jobs[0].id
+   - Display the destination details clearly  
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
+   - IMPORTANT: There is NO selectJob tool - use confirmJobSelection directly with the job ID
 
-3. Handling Changes:
-   - If user says no or wants changes, be helpful
-   - Offer options to modify:
-     * Different job selection
-     * Customer name update
-     * Property address change
-     * Time rescheduling
-     * Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
-   - Use updateJobDetails tool to save changes
-   - Show updated job list after modifications
-
-4. Starting Inspection:
+3. Starting Inspection:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
@@ -649,7 +623,7 @@ CONVERSATION FLOW GUIDELINES:
      * Show list of pending locations
    - Guide through task completion workflow
 
-5. Task Inspection Flow:
+4. Task Inspection Flow:
    - When showing tasks for a location, ALWAYS format them with brackets:
      * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
      * [2] Check ceiling (done) - if task.displayStatus is 'done'
@@ -682,10 +656,9 @@ CONVERSATION FLOW GUIDELINES:
      * After marking tasks, show updated list with (done) indicators
    - ALWAYS include "Mark ALL tasks complete" as the last numbered option when showing tasks
 
-6. General Guidelines:
+5. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
    - Be friendly and professional
-   - Adapt your language naturally while following the flow
    - Remember context from previous messages
    - Handle errors gracefully with helpful messages
 
@@ -696,6 +669,7 @@ INSPECTOR IDENTIFICATION:
   [2] Your phone number (with country code, e.g., +65 for Singapore)"
 - If no country code provided, assume Singapore (+65)
 - Use the collectInspectorInfo tool to process this information
+- Inspector phone number is automatically extracted from WhatsApp message
 - Inspector can be found by either name OR phone number
 - Once identified, provide helpful suggestions for next steps
 - Be conversational and helpful throughout the identification process
@@ -713,13 +687,17 @@ MEDIA DISPLAY FORMATTING:
 - Always include photo count and location name in the response
 - If no photos available, clearly state "No photos found for [location name]"
 - Provide clickable URLs for photos so inspectors can view them directly`,
-    model: 'gpt-4o-mini', // Fastest model
+    model: 'gpt-4o-mini', // Fast model for quick responses
     tools: assistantTools
   });
 
-  assistantId = assistant.id;
     console.log('✅ ASSISTANT CREATED SUCCESSFULLY:', assistant.id);
-  return assistantId;
+    // CRITICAL: Return the ID to be cached
+    return assistant.id;
+  } catch (error) {
+    console.error('❌ ASSISTANT CREATION FAILED:', error);
+    throw error;
+  }
 }
 
 // Tool definitions (simplified for WhatsApp)
@@ -992,7 +970,6 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'confirmJobSelection':
-        // NEVER cache work orders - they change based on date/status
         const workOrder = await getWorkOrderById(args.jobId) as any;
         
         if (!workOrder) {
@@ -1198,10 +1175,6 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             error: 'Inspector not found in our system. Please contact admin for registration.'
           });
         }
-        
-        // Cache inspector data for faster future lookups
-        const phoneForCache = normalizedPhone.replace(/[^0-9]/g, '');
-        await cacheInspector(phoneForCache, inspector);
         
         // Store inspector details in thread metadata and Redis
         if (threadId) {
