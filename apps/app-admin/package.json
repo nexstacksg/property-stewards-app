@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "postbuild": "pnpm cache:warm:ci",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
@@ -14,7 +15,8 @@
     "db:seed:properties": "tsx prisma/seed-properties.ts",
     "db:seed:property-sizes": "tsx prisma/seed-property-sizes.ts",
     "db:studio": "prisma studio",
-    "cache:warm": "tsx scripts/warm-cache.ts"
+    "cache:warm": "tsx scripts/warm-cache.ts",
+    "cache:warm:ci": "pnpm cache:warm || true"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
