@@ -392,9 +392,7 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: assistantId,
       model: 'gpt-4o-mini', // Force fastest model
-      temperature: 0.3, // Lower temperature = faster, more deterministic
-      max_prompt_tokens: 2000, // Limit context size for speed
-      max_completion_tokens: 500, // Limit response size
+
     });
 
     // Wait for completion and handle multiple rounds of tool calls
@@ -716,7 +714,6 @@ MEDIA DISPLAY FORMATTING:
 - If no photos available, clearly state "No photos found for [location name]"
 - Provide clickable URLs for photos so inspectors can view them directly`,
     model: 'gpt-4o-mini', // Fastest model
-    temperature: 0.3, // Lower = faster and more consistent
     tools: assistantTools
   });
 
