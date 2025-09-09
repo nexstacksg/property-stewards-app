@@ -5,6 +5,7 @@ import { threadStore } from '@/lib/thread-store';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-client';
 import { randomUUID } from 'crypto';
+import { getSessionState, updateSessionState } from '@/lib/chat-session';
 import { 
   getTodayJobsForInspector, 
   getWorkOrderById, 
@@ -32,9 +33,10 @@ const openai = new OpenAI({
 let assistantId: string | null = null; // Reset to force numbered location formatting recreation
 
 async function createAssistant() {
+
   const assistant = await openai.beta.assistants.create({
-    name: 'Property Inspector Assistant v0.9',
-    instructions: `You are a helpful Property Stewards inspection assistant v0.9. You help property inspectors manage their daily inspection tasks via chat.
+    name: 'Property Inspector Assistant v0.7',
+    instructions: `You are a helpful Property Stewards inspection assistant v0.7. You help property inspectors manage their daily inspection tasks via chat.
 
 Key capabilities:
 - Show today's inspection jobs for an inspector
@@ -82,7 +84,18 @@ CONVERSATION FLOW GUIDELINES:
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
 
-3. Starting Inspection:
+3. Handling Changes:
+   - If user says no or wants changes, be helpful
+   - Offer options to modify:
+     * Different job selection
+     * Customer name update
+     * Property address change
+     * Time rescheduling
+     * Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
+   - Use updateJobDetails tool to save changes
+   - Show updated job list after modifications
+
+4. Starting Inspection:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
@@ -105,7 +118,7 @@ CONVERSATION FLOW GUIDELINES:
      * Show list of pending locations
    - Guide through task completion workflow
 
-4. Task Inspection Flow:
+5. Task Inspection Flow:
    - When showing tasks for a location, ALWAYS format them with brackets:
      * [1] Check walls (done) - ONLY if task.displayStatus is 'done' 
      * [2] Check ceiling (done) - if task.displayStatus is 'done'
@@ -138,9 +151,10 @@ CONVERSATION FLOW GUIDELINES:
      * After marking tasks, show updated list with (done) indicators
    - ALWAYS include "Mark ALL tasks complete" as the last numbered option when showing tasks
 
-5. General Guidelines:
+6. General Guidelines:
    - Always use numbered brackets [1], [2], [3] for selections
    - Be friendly and professional
+   - Adapt your language naturally while following the flow
    - Remember context from previous messages
    - Handle errors gracefully with helpful messages
 
@@ -151,30 +165,31 @@ INSPECTOR IDENTIFICATION:
   [2] Your phone number (with country code, e.g., +65 for Singapore)"
 - If no country code provided, assume Singapore (+65)
 - Use the collectInspectorInfo tool to process this information
-- Inspector phone number is automatically extracted from WhatsApp message
 - Inspector can be found by either name OR phone number
 - Once identified, provide helpful suggestions for next steps
 - Be conversational and helpful throughout the identification process
 
 MEDIA DISPLAY FORMATTING:
-- When showing photos from getLocationMedia or getTaskMedia tools, provide clear photo information
-- For WhatsApp, photos cannot be displayed inline, so provide descriptive information about photos
-- Format photo responses clearly:
-  "📸 Found 2 photos for Bedroom 3:
+- When showing photos from getLocationMedia or getTaskMedia tools, format images for inline display
+- For each photo URL, create a markdown image reference: ![Image](URL)
+- Group multiple photos with clear labels: "**Photo 1:**", "**Photo 2:**", etc.
+- Example format for media responses:
+  "Here are the photos for Bedroom 3:
   
-  Photo 1: https://property-stewards.sgp1.digitaloceanspaces.com/data/hang-822121/bedroom-3/photos/ed888645-7270-452c-9d01-fde5656d3e37.jpeg
-  Photo 2: [URL if more photos exist]
+  **Photo 1:**
+  ![Bedroom 3 Photo 1](https://property-stewards.sgp1.digitaloceanspaces.com/data/hang-82212/bedroom-3/photos/ed888645-7270-452c-9d01-fde5656d3e37.jpeg)
   
-  📝 Remarks: All tasks completed for Bedroom 3."
+  **Remarks:** All tasks completed for Bedroom 3.
+  "
 - Always include photo count and location name in the response
-- If no photos available, clearly state "No photos found for [location name]"
-- Provide clickable URLs for photos so inspectors can view them directly`,
-    model: 'gpt-4o-mini', // Fast model for quick responses
+- If no photos available, clearly state "No photos found for [location name]"`,
+    model: 'gpt-4o-mini',
     tools: assistantTools
   });
 
-  console.log('Created assistant:', assistant.id);
-  return assistant.id;
+  assistantId = assistant.id;
+  console.log('Created assistant:', assistantId);
+  return assistantId;
 }
 
 // Define tools for OpenAI Assistant API
@@ -249,6 +264,10 @@ const assistantTools = [
           location: {
             type: 'string',
             description: 'The location/room name'
+          },
+          contractChecklistItemId: {
+            type: 'string',
+            description: 'Optional: the ContractChecklistItem ID for the location (preferred if available)'
           }
         },
         required: ['workOrderId', 'location']
@@ -492,21 +511,19 @@ async function updateThreadMetadata(threadId: string, updates: Record<string, st
 }
 
 // Tool execution functions
-async function executeTool(toolName: string, args: any, threadId?: string) {
+async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string) {
   console.log(`🔧 Executing tool: ${toolName}`, args);
-  
-  // Get thread metadata for context
-  const metadata = threadId ? await getThreadMetadata(threadId) : {};
+  // Prefer session cache for context
+  const metadata = sessionId ? await getSessionState(sessionId) : (threadId ? await getThreadMetadata(threadId) : {});
   switch (toolName) {
     case 'getTodayJobs':
       try {
         const { inspectorId, inspectorPhone } = args;
         let finalInspectorId = inspectorId;
         
-        // Check thread metadata for inspector info first
-        if (!finalInspectorId && threadId) {
-          const metadata = await getThreadMetadata(threadId);
-          finalInspectorId = metadata.inspectorId;
+        // Check session state for inspector info first
+        if (!finalInspectorId && (metadata as any).inspectorId) {
+          finalInspectorId = (metadata as any).inspectorId as string;
         }
         
         if (!finalInspectorId && inspectorPhone) {
@@ -613,18 +630,15 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
 
     case 'getTasksForLocation':
       try {
-        const { workOrderId, location } = args;
+        const { workOrderId, location, contractChecklistItemId } = args;
         
-        // Store current location in thread metadata
-        if (threadId) {
-          await updateThreadMetadata(threadId, {
-            currentLocation: location,
-            lastLocationAccessedAt: new Date().toISOString()
-          });
-          console.log(`📍 Current location set to: ${location}`);
+        // Store current location in session cache
+        if (sessionId) {
+          await updateSessionState(sessionId, { currentLocation: location });
+          console.log(`📍 Current location (session) set to: ${location}`);
         }
         
-        const tasks = (await getTasksByLocation(workOrderId, location)) as any[];
+        const tasks = (await getTasksByLocation(workOrderId, location, contractChecklistItemId)) as any[];
         
         // Don't skip if all tasks are completed - show them with (done) markers
         // Format tasks with status indicators - ALWAYS show all tasks
@@ -669,12 +683,12 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         
         // Check if this is the "complete all" option
         if (taskId === 'complete_all_tasks') {
-          // Get location from thread metadata
+          // Get location from session
           let location = '';
-          if (threadId) {
-            const metadata = await getThreadMetadata(threadId);
-            location = metadata.currentLocation || '';
-            console.log(`📍 Using location from thread metadata: ${location}`);
+          if (sessionId) {
+            const s = await getSessionState(sessionId);
+            location = s.currentLocation || '';
+            console.log(`📍 Using location from session: ${location}`);
           }
           
           if (!location) {
@@ -776,16 +790,16 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/);
         const postalCode = postalCodeMatch ? postalCodeMatch[1] : 'unknown';
         
-        // Store job details in thread metadata when job is selected for confirmation
-        if (threadId) {
-          await updateThreadMetadata(threadId, {
+        // Store job details in session state when job is selected for confirmation
+        if (sessionId) {
+          await updateSessionState(sessionId, {
             workOrderId: jobId,
             customerName: workOrder.customer_name,
             propertyAddress: workOrder.property_address,
             postalCode: postalCode,
             jobStatus: 'confirming'
           });
-          console.log(`📝 Stored job confirmation details - Customer: ${workOrder.customer_name}, Postal: ${postalCode}`);
+          console.log(`📝 Stored job confirmation (session) - Customer: ${workOrder.customer_name}, Postal: ${postalCode}`);
         }
         
         return JSON.stringify({
@@ -818,13 +832,10 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         // Update status to STARTED
         await updateWorkOrderStatus(jobId, 'in_progress');
         
-        // Update thread metadata to mark job as started
-        if (threadId) {
-          await updateThreadMetadata(threadId, {
-            jobStatus: 'started',
-            jobStartedAt: new Date().toISOString()
-          });
-          console.log('🚀 Job started and metadata updated');
+        // Update session state to mark job as started
+        if (sessionId) {
+          await updateSessionState(sessionId, { jobStatus: 'started' });
+          console.log('🚀 Job started and session updated');
         }
         
         // Get locations with completion status
@@ -892,14 +903,14 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
         console.log('🔧 getTaskMedia tool called with taskId:', taskId);
         
         // Check if the taskId is actually an inspector ID (common mistake)
-        if (taskId === metadata.inspectorId) {
+        if (taskId === (metadata as any).inspectorId) {
           console.log('⚠️ TaskId is inspector ID, need to find actual ContractChecklistItem');
-          console.log('🔍 Current location from metadata:', metadata.currentLocation);
-          console.log('🔍 Work order from metadata:', metadata.workOrderId);
+          console.log('🔍 Current location from session:', (metadata as any).currentLocation);
+          console.log('🔍 Work order from session:', (metadata as any).workOrderId);
           
-          if (metadata.currentLocation && metadata.workOrderId) {
+          if ((metadata as any).currentLocation && (metadata as any).workOrderId) {
             // Use the imported helper function
-            const actualTaskId = (await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation)) as string | null;
+            const actualTaskId = (await getContractChecklistItemIdByLocation((metadata as any).workOrderId, (metadata as any).currentLocation)) as string | null;
             
             if (actualTaskId) {
               console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
@@ -1118,13 +1129,12 @@ async function executeTool(toolName: string, args: any, threadId?: string) {
           });
         }
         
-        // Store inspector details in thread metadata
-        if (threadId) {
-          await updateThreadMetadata(threadId, {
+        // Store inspector details in session cache
+        if (sessionId) {
+          await updateSessionState(sessionId, {
             inspectorId: inspector.id,
             inspectorName: inspector.name,
             inspectorPhone: inspector.mobilePhone || normalizedPhone,
-            identifiedAt: new Date().toISOString()
           });
         }
         
@@ -1170,7 +1180,7 @@ export async function POST(request: NextRequest) {
         );
       }
       
-      // Get thread and its metadata
+      // Get thread and session state
       const threadId = threadStore.get(sessionId);
       if (!threadId) {
         return NextResponse.json(
@@ -1179,26 +1189,25 @@ export async function POST(request: NextRequest) {
         );
       }
       
-      // Get thread metadata
-      const metadata = await getThreadMetadata(threadId);
-      console.log('📤 Upload with thread metadata:', metadata);
+      const sessionState = await getSessionState(sessionId);
+      console.log('📤 Upload with session state:', sessionState);
       
       // Extract context from metadata
       let customerName = 'unknown';
       let postalCode = 'unknown';
       let roomName = 'general';
-      const workOrderId = metadata.workOrderId || '';
+      const workOrderId = (sessionState.workOrderId as string) || '';
       
-      if (metadata.customerName) {
-        customerName = metadata.customerName
+      if (sessionState.customerName) {
+        customerName = sessionState.customerName
           .toLowerCase()
           .replace(/[^a-z0-9\s-]/gi, '')
           .replace(/\s+/g, '-')
           .substring(0, 50);
       }
       
-      postalCode = metadata.postalCode || 'unknown';
-      roomName = metadata.currentLocation || 'general';
+      postalCode = (sessionState.postalCode as string) || 'unknown';
+      roomName = (sessionState.currentLocation as string) || 'general';
       roomName = roomName
         .toLowerCase()
         .replace(/[^a-z0-9\s-]/gi, '')
@@ -1237,73 +1246,52 @@ export async function POST(request: NextRequest) {
       const publicUrl = `${PUBLIC_URL}/${key}`;
       console.log('✅ Uploaded to:', publicUrl);
       
-      // Save to database
+      // Save to database (attach to the correct ContractChecklistItem)
       if (workOrderId && roomName !== 'general') {
-        const normalizedRoomName = roomName.replace(/-/g, ' ');
-        const workOrder = await prisma.workOrder.findUnique({
-          where: { id: workOrderId },
-          include: {
-            contract: {
-              include: {
-                contractChecklist: {
-                  include: {
-                    items: true
-                  }
-                }
-              }
+        const rawLocation = (sessionState.currentLocation as string) || roomName;
+        console.log('🗂 Attaching media to location:', rawLocation, 'for WO:', workOrderId);
+
+        // 1) Try using cached mapping first (preferred)
+        let targetItemId: string | null = null;
+        try {
+          targetItemId = await getContractChecklistItemIdByLocation(workOrderId, rawLocation);
+        } catch (e) {
+          console.warn('getContractChecklistItemIdByLocation error, will try name matching:', e);
+        }
+
+        // 2) Fallback to name matching within this work order
+        if (!targetItemId) {
+          const workOrder = await prisma.workOrder.findUnique({
+            where: { id: workOrderId },
+            include: {
+              contract: { include: { contractChecklist: { include: { items: true } } } }
             }
+          });
+
+          const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+          const normalizedTarget = norm(rawLocation);
+          const items = workOrder?.contract?.contractChecklist?.items || [];
+          const byName = items.find(i => norm(i.name) === normalizedTarget);
+          if (byName) targetItemId = byName.id;
+
+          if (!targetItemId) {
+            console.log('❌ No checklist item found by name for location:', rawLocation);
+            console.log('❌ Available (normalized) room names:', items.map(i => ({ id: i.id, name: i.name, n: norm(i.name) })));
           }
-        });
-        
-        if (workOrder?.contract?.contractChecklist?.items) {
-          console.log('🔍 Looking for checklist item with room name:', normalizedRoomName);
-          console.log('🔍 Available checklist items:', workOrder.contract.contractChecklist.items.map(item => ({
-            id: item.id,
-            name: item.name,
-            photosCount: item.photos.length,
-            videosCount: item.videos.length
-          })));
-          
-          const checklistItem = workOrder.contract.contractChecklist.items.find(
-            item => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
-          );
-          
-          if (checklistItem) {
-            console.log('✅ Found matching checklist item:');
-            console.log('  - ID:', checklistItem.id);
-            console.log('  - Name:', checklistItem.name);
-            console.log('  - Current photos:', checklistItem.photos);
-            console.log('  - Current videos:', checklistItem.videos);
-            console.log('  - Adding new URL:', publicUrl);
-            
-            if (mediaType === 'photo') {
-              const updatedPhotos = [...checklistItem.photos, publicUrl];
-              console.log('📷 Updating photos array to:', updatedPhotos);
-              
-              await prisma.contractChecklistItem.update({
-                where: { id: checklistItem.id },
-                data: { photos: updatedPhotos }
-              });
-              
-              console.log('✅ Photo saved to ContractChecklistItem ID:', checklistItem.id);
-            } else {
-              const updatedVideos = [...checklistItem.videos, publicUrl];
-              console.log('🎥 Updating videos array to:', updatedVideos);
-              
-              await prisma.contractChecklistItem.update({
-                where: { id: checklistItem.id },
-                data: { videos: updatedVideos }
-              });
-              
-              console.log('✅ Video saved to ContractChecklistItem ID:', checklistItem.id);
-            }
-            console.log(`📷 Saved ${mediaType} to database for room: ${normalizedRoomName}`);
+        }
+
+        if (targetItemId) {
+          console.log('✅ Target checklist item:', targetItemId, 'adding URL:', publicUrl);
+          if (mediaType === 'photo') {
+            const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { photos: true } });
+            const updatedPhotos = [ ...(existing?.photos || []), publicUrl ];
+            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { photos: updatedPhotos } });
           } else {
-            console.log('❌ No checklist item found for room:', normalizedRoomName);
-            console.log('❌ Available room names:', workOrder.contract.contractChecklist.items.map(item => item.name));
+            const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { videos: true } });
+            const updatedVideos = [ ...(existing?.videos || []), publicUrl ];
+            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { videos: updatedVideos } });
           }
-        } else {
-          console.log('❌ No contract checklist items found in work order');
+          console.log('✅ Media saved to ContractChecklistItem ID:', targetItemId);
         }
       }
       
@@ -1344,16 +1332,14 @@ export async function POST(request: NextRequest) {
       console.log('🆕 Thread created with initial metadata:', thread.metadata);
     } else {
       console.log('Using existing thread:', threadId);
-      
-      // Always get current metadata to see what's stored
-      const currentMetadata = await getThreadMetadata(threadId);
-      console.log('📊 Current thread state:', currentMetadata);
+      const currentSession = await getSessionState(sessionId);
+      console.log('📊 Current session state:', currentSession);
     }
 
     // Update thread metadata if job context is provided from chat page
-    if (jobContext && threadId) {
+    if (jobContext) {
       console.log('📝 Received job context from chat page:', jobContext);
-      await updateThreadMetadata(threadId, jobContext);
+      await updateSessionState(sessionId, jobContext);
     }
 
     // Verify threadId is valid
@@ -1428,7 +1414,7 @@ export async function POST(request: NextRequest) {
           console.log('Executing tool:', functionName, 'with args:', functionArgs);
           
           // Pass threadId to executeTool for metadata access
-          const output = await executeTool(functionName, functionArgs, finalThreadId);
+          const output = await executeTool(functionName, functionArgs, finalThreadId, sessionId);
           console.log('Tool output:', output);
           
           toolOutputs.push({
@@ -1486,7 +1472,7 @@ export async function POST(request: NextRequest) {
               const functionArgs = JSON.parse(toolCall.function.arguments);
               console.log('Executing additional tool:', functionName, 'with args:', functionArgs);
               
-              const output = await executeTool(functionName, functionArgs, finalThreadId);
+              const output = await executeTool(functionName, functionArgs, finalThreadId, sessionId);
               console.log('Additional tool output:', output);
               
               additionalToolOutputs.push({
