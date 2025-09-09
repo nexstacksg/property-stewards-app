@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { getSessionState, updateSessionState } from '@/lib/chat-session';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-client';
 import { randomUUID } from 'crypto';
@@ -294,20 +295,14 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     // Phone number is already normalized from the caller
     const cleanPhone = phoneNumber;
     
-    // First check Redis for existing thread
-    let threadId :any = await getThread(cleanPhone);
-    let metadata = await getThreadMetadata(cleanPhone);
+    // Use session cache for metadata and in-memory map for thread id
+    let threadId :any = whatsappThreads.get(cleanPhone);
+    let metadata = await getSessionState(cleanPhone);
     
     if (threadId) {
       console.log(`📌 Using Redis-cached thread ${threadId} for ${cleanPhone}`);
       // Also cache in memory for this request
       whatsappThreads.set(cleanPhone, threadId);
-    } else {
-      // Check memory cache as fallback
-      threadId = whatsappThreads.get(cleanPhone);
-      if (threadId) {
-        console.log(`📌 Using memory-cached thread ${threadId} for ${cleanPhone}`);
-      }
     }
     
     if (!threadId) {
@@ -332,20 +327,22 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       
       threadId = thread.id;
       
-      // Store in Redis for persistence
-      await storeThread(cleanPhone, threadId, {
-        phoneNumber: cleanPhone,
-        channel: 'whatsapp',
+      // Store in session cache for persistence
+      await updateSessionState(cleanPhone, {
         inspectorId: inspector?.id || '',
         inspectorName: inspector?.name || '',
         workOrderId: '',
         currentLocation: '',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        // Save threadId so we can recover after restarts
+        // Chat-session is generic; threadId is fine to include
+        // @ts-ignore
+        threadId
       });
-      
+
       // Also cache in memory
       whatsappThreads.set(cleanPhone, threadId);
-      console.log(`✅ Created new thread ${threadId} for ${cleanPhone} and stored in Redis`);
+      console.log(`✅ Created new thread ${threadId} for ${cleanPhone} and stored in session cache`);
     }
 
     // Add message to thread
@@ -484,7 +481,7 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
       functionArgs.phone = phoneNumber;
     }
     
-    const output = await executeTool(functionName, functionArgs, threadId);
+    const output = await executeTool(functionName, functionArgs, threadId, phoneNumber);
     
     console.log(`✅ Tool ${functionName} executed successfully`);
     console.log(`📊 Tool output length: ${output.length} characters`);
@@ -600,7 +597,18 @@ CONVERSATION FLOW GUIDELINES:
    - Be conversational: "Please confirm the destination" or similar
    - IMPORTANT: There is NO selectJob tool - use confirmJobSelection directly with the job ID
 
-3. Starting Inspection:
+
+3. Handling Changes:
+   - If user says no or wants changes, be helpful
+   - Offer options to modify:
+     * Different job selection
+     * Customer name update
+     * Property address change
+     * Time rescheduling
+     * Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
+   - Use updateJobDetails tool to save changes
+   - Show updated job list after modifications 
+     4. Starting Inspection:
    - Once confirmed, use startJob tool
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
@@ -904,17 +912,12 @@ const assistantTools = [
 ];
 
 // Tool execution
-async function executeTool(toolName: string, args: any, threadId?: string): Promise<string> {
+async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string): Promise<string> {
   try {
-    // Get thread metadata for context
+    // Get session state (preferred over thread metadata)
     let metadata: any = {};
-    if (threadId) {
-      try {
-        const thread = await openai.beta.threads.retrieve(threadId);
-        metadata = thread.metadata || {};
-      } catch (error) {
-        console.error('Error getting thread metadata:', error);
-      }
+    if (sessionId) {
+      metadata = await getSessionState(sessionId);
     }
 
     switch (toolName) {
@@ -922,11 +925,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         const { inspectorId, inspectorPhone } = args;
         let finalInspectorId = inspectorId;
         
-        // Check thread metadata for inspector info first
-        if (!finalInspectorId && threadId) {
-          const thread = await openai.beta.threads.retrieve(threadId);
-          const metadata = thread.metadata || {};
-          finalInspectorId = metadata.inspectorId;
+        // Check session state for inspector info first
+        if (!finalInspectorId && (metadata as any).inspectorId) {
+          finalInspectorId = (metadata as any).inspectorId;
         }
         
         if (!finalInspectorId && inspectorPhone) {
@@ -979,28 +980,17 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        // Update thread metadata in both OpenAI and Redis
-        if (threadId) {
+        // Update session state
+        if (sessionId) {
           const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/);
           const updatedMetadata = {
-            ...metadata,
             workOrderId: args.jobId,
             customerName: workOrder.customer_name,
             propertyAddress: workOrder.property_address,
             postalCode: postalCodeMatch ? postalCodeMatch[1] : 'unknown',
             jobStatus: 'confirming'
           };
-          
-          // Update OpenAI thread metadata
-          await openai.beta.threads.update(threadId, {
-            metadata: updatedMetadata
-          });
-          
-          // Get phone number from metadata and update Redis
-          const phoneNumber = metadata.phoneNumber;
-          if (phoneNumber) {
-            await updateThreadMetadata(phoneNumber, updatedMetadata);
-          }
+          await updateSessionState(sessionId, updatedMetadata);
         }
         
         return JSON.stringify({
@@ -1022,23 +1012,8 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
       case 'startJob':
         await updateWorkOrderStatus(args.jobId, 'in_progress');
         
-        if (threadId) {
-          const updatedMetadata = {
-            ...metadata,
-            jobStatus: 'started',
-            jobStartedAt: new Date().toISOString()
-          };
-          
-          // Update OpenAI thread metadata
-          await openai.beta.threads.update(threadId, {
-            metadata: updatedMetadata
-          });
-          
-          // Update Redis metadata
-          const phoneNumber = metadata.phoneNumber;
-          if (phoneNumber) {
-            await updateThreadMetadata(phoneNumber, updatedMetadata);
-          }
+        if (sessionId) {
+          await updateSessionState(sessionId, { jobStatus: 'started' });
         }
         
         const locations = await getLocationsWithCompletionStatus(args.jobId) as any[];
@@ -1070,24 +1045,9 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
         });
 
       case 'getTasksForLocation':
-        // Update current location in thread and Redis
-        if (threadId) {
-          const updatedMetadata = {
-            ...metadata,
-            currentLocation: args.location,
-            lastLocationAccessedAt: new Date().toISOString()
-          };
-          
-          // Update OpenAI thread metadata
-          await openai.beta.threads.update(threadId, {
-            metadata: updatedMetadata
-          });
-          
-          // Update Redis metadata
-          const phoneNumber = metadata.phoneNumber;
-          if (phoneNumber) {
-            await updateThreadMetadata(phoneNumber, updatedMetadata);
-          }
+        // Update current location in session
+        if (sessionId) {
+          await updateSessionState(sessionId, { currentLocation: args.location });
         }
         
         const tasks = await getTasksByLocation(args.workOrderId, args.location);
@@ -1106,8 +1066,8 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
 
       case 'completeTask':
         if (args.taskId === 'complete_all_tasks') {
-          // Get location from thread metadata
-          let location = metadata.currentLocation || '';
+          // Get location from session state
+          let location = (metadata as any).currentLocation || '';
           
           if (!location) {
             return JSON.stringify({
@@ -1176,7 +1136,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           });
         }
         
-        // Store inspector details in thread metadata and Redis
+        // Store inspector details in session cache
         if (threadId) {
           const inspectorMetadata = {
             channel: 'whatsapp',
@@ -1186,17 +1146,8 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             inspectorPhone: inspector.mobilePhone || normalizedPhone,
             identifiedAt: new Date().toISOString()
           };
-          
-          // Update OpenAI thread metadata
-          await openai.beta.threads.update(threadId, {
-            metadata: inspectorMetadata
-          });
-          
-          // Update Redis metadata
-          const phoneNumberForRedis = metadata.phoneNumber || normalizedPhone.replace(/[^\d]/g, '');
-          if (phoneNumberForRedis) {
-            await updateThreadMetadata(phoneNumberForRedis, inspectorMetadata);
-          }
+          const phoneNumberForSession = (metadata.phoneNumber as string) || normalizedPhone.replace(/[^\d]/g, '');
+          await (await import('@/lib/chat-session')).updateSessionState(phoneNumberForSession, inspectorMetadata);
         }
         
         return JSON.stringify({
@@ -1214,15 +1165,15 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           console.log('🔧 WhatsApp getTaskMedia called with taskId:', args.taskId);
           
           // Check if the taskId is actually an inspector ID (common mistake)
-          if (args.taskId === metadata.inspectorId) {
+          if (args.taskId === (metadata as any).inspectorId) {
             console.log('⚠️ TaskId is inspector ID, need to find actual ContractChecklistItem');
-            console.log('🔍 Current location from metadata:', metadata.currentLocation);
-            console.log('🔍 Work order from metadata:', metadata.workOrderId);
+            console.log('🔍 Current location from session:', (metadata as any).currentLocation);
+            console.log('🔍 Work order from session:', (metadata as any).workOrderId);
             
-            if (metadata.currentLocation && metadata.workOrderId) {
+            if ((metadata as any).currentLocation && (metadata as any).workOrderId) {
               // Use the imported helper function
               const { getContractChecklistItemIdByLocation } = await import('@/lib/services/inspectorService');
-              const actualTaskId = await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation);
+              const actualTaskId = await getContractChecklistItemIdByLocation((metadata as any).workOrderId, (metadata as any).currentLocation);
               
               if (actualTaskId) {
                 console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
