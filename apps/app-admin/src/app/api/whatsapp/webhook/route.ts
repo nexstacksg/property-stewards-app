@@ -977,7 +977,7 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
             customerName: workOrder.customer_name,
             propertyAddress: workOrder.property_address,
             postalCode: postalCodeMatch ? postalCodeMatch[1] : 'unknown',
-            jobStatus: 'confirming'
+            jobStatus: "confirming"
           };
           await updateSessionState(sessionId, updatedMetadata);
         }
@@ -1348,31 +1348,41 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     if (!currentLocation) {
       console.log('❌ No location selected for media upload');
-      return '📍 Please select a location first before uploading photos.\n\nExample: Select "Living Room" from the locations list, then upload your photos.';
+      if (workOrderId) {
+        const locations = await getLocationsWithCompletionStatus(workOrderId) as any[];
+        const options = locations.map((loc, idx) => `[${idx + 1}] ${loc.displayName || loc.name}`).join('\n');
+        return `📍 Which location should I attach this photo to?\n\n${options}\n\nReply with the number (e.g., 5).`;
+      }
+      return '📍 Please select a job and location first, then upload photos.';
     }
     
-    // Extract media URL from WhatsApp data - Enhanced for multiple Wassenger formats
+    // Extract media URL or Wassenger download link
     let mediaUrl: string | null = null;
+    let mediaDownloadPath: string | null = null;
     let mediaType: 'photo' | 'video' = 'photo';
     
     // Check various possible media fields from Wassenger - prioritize type-based detection
     if (data.type === 'image') {
       // Wassenger image message
       mediaUrl = data.url || data.fileUrl || data.media?.url;
+      mediaDownloadPath = data.media?.links?.download || data.links?.download || null;
       mediaType = 'photo';
       console.log('📎 Found image via type=image:', { url: mediaUrl, type: data.type });
     } else if (data.type === 'video') {
       // Wassenger video message  
       mediaUrl = data.url || data.fileUrl || data.media?.url;
+      mediaDownloadPath = data.media?.links?.download || data.links?.download || null;
       mediaType = 'video';
       console.log('📎 Found video via type=video:', { url: mediaUrl, type: data.type });
     } else if (data.type === 'document' && (data.mimetype?.startsWith('image/') || data.mimeType?.startsWith('image/'))) {
       // Wassenger document that's actually an image
       mediaUrl = data.url || data.fileUrl || data.media?.url;
+      mediaDownloadPath = data.media?.links?.download || data.links?.download || null;
       mediaType = 'photo';
       console.log('📎 Found image via type=document:', { url: mediaUrl, mimetype: data.mimetype || data.mimeType });
     } else if (data.media && data.media.url) {
       mediaUrl = data.media.url;
+      mediaDownloadPath = data.media?.links?.download || null;
       mediaType = data.media.mimetype?.startsWith('video/') ? 'video' : 'photo';
       console.log('📎 Found media in data.media:', { url: mediaUrl, mimetype: data.media.mimetype });
     } else if (data.message?.imageMessage?.url) {
@@ -1395,24 +1405,34 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     console.log('🔍 Media extraction result:', { mediaUrl, mediaType });
     
-    if (!mediaUrl) {
-      console.log('❌ No media URL found in WhatsApp message');
+    let response: Response;
+    if (mediaUrl) {
+      console.log('📎 Found media URL:', { mediaUrl, mediaType });
+      // Direct URL download
+      response = await fetch(mediaUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Property-Stewards-Bot/1.0',
+          'Accept': 'image/*,video/*,*/*'
+        }
+      });
+    } else if (mediaDownloadPath) {
+      // Use Wassenger file download endpoint
+      const base = process.env.WASSENGER_API_BASE || 'https://api.wassenger.com';
+      const downloadUrl = `${base}${mediaDownloadPath}`;
+      console.log('📎 Using Wassenger download endpoint:', downloadUrl);
+      response = await fetch(downloadUrl, {
+        method: 'GET',
+        headers: {
+          'Token': process.env.WASSENGER_API_KEY || '',
+          'Accept': 'image/*,video/*,*/*',
+          'User-Agent': 'Property-Stewards-Bot/1.0'
+        }
+      });
+    } else {
+      console.log('❌ No media URL or download link found in WhatsApp message');
       return 'Media upload failed - could not find media URL.';
     }
-    
-    console.log('📎 Found media:', { mediaUrl, mediaType });
-    
-    // Download media from WhatsApp/Wassenger
-    console.log('⬇️ Downloading media from:', mediaUrl);
-    console.log('📱 Attempting fetch with headers for Wassenger media...');
-    
-    const response = await fetch(mediaUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Property-Stewards-Bot/1.0',
-        'Accept': 'image/*,video/*,*/*'
-      }
-    });
     
     console.log('📡 Media download response:', {
       status: response.status,
