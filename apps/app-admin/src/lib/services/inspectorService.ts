@@ -115,8 +115,13 @@ export async function getInspectorByPhone(phone: string) {
 
 export async function getTodayJobsForInspector(inspectorId: string) {
   try {
-    const startOfDay = new Date(); startOfDay.setHours(0,0,0,0)
-    const endOfDay = new Date(); endOfDay.setHours(23,59,59,999)
+    // Compute today in Asia/Singapore (UTC+8) by default
+    const tzOffsetHours = Number(process.env.LOCAL_TZ_OFFSET_HOURS ?? 8)
+    const now = new Date()
+    const sgNow = new Date(now.getTime() + tzOffsetHours * 60 * 60 * 1000)
+    const sgStartLocal = new Date(Date.UTC(sgNow.getUTCFullYear(), sgNow.getUTCMonth(), sgNow.getUTCDate(), 0, 0, 0))
+    const startOfDay = new Date(sgStartLocal.getTime() - tzOffsetHours * 60 * 60 * 1000)
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1)
 
     const workOrders = await getCachedWorkOrders()
     if (!workOrders) {
@@ -125,7 +130,10 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     }
     debugLog('getTodayJobsForInspector: cached workOrders =', workOrders.length)
     const todays = workOrders
-      .filter((wo: any) => wo.inspectorId === inspectorId && new Date(wo.scheduledStartDateTime) >= startOfDay && new Date(wo.scheduledStartDateTime) <= endOfDay)
+      .filter((wo: any) => {
+        const dt = new Date(wo.scheduledStartDateTime)
+        return wo.inspectorId === inspectorId && dt >= startOfDay && dt <= endOfDay
+      })
       .sort((a: any, b: any) => new Date(a.scheduledStartDateTime).getTime() - new Date(b.scheduledStartDateTime).getTime())
     debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 

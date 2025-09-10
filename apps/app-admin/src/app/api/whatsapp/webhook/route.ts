@@ -908,27 +908,32 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
       case 'getTodayJobs':
         const { inspectorId, inspectorPhone } = args;
         let finalInspectorId = inspectorId;
-        
-        // Check session state for inspector info first
+
+        // Prefer session state
         if (!finalInspectorId && (metadata as any).inspectorId) {
           finalInspectorId = (metadata as any).inspectorId;
         }
-        
+
+        // Try phone lookups (with common variants)
         if (!finalInspectorId && inspectorPhone) {
-          const inspector = await getInspectorByPhone(inspectorPhone) as any;
-          if (!inspector) {
-            return JSON.stringify({
-              success: false,
-              error: 'Inspector not found. Please provide your name and phone number for identification.'
-            });
+          let match = await getInspectorByPhone(inspectorPhone) as any;
+          if (!match && inspectorPhone.startsWith('+')) {
+            match = await getInspectorByPhone(inspectorPhone.slice(1)) as any;
           }
-          finalInspectorId = inspector.id;
+          if (!match && !inspectorPhone.startsWith('+')) {
+            match = await getInspectorByPhone('+' + inspectorPhone) as any;
+          }
+          if (match) finalInspectorId = match.id;
         }
-        
+
+        // Force identification flow if still unknown
         if (!finalInspectorId) {
+          await updateSessionState(inspectorPhone, { inspectorId: undefined });
           return JSON.stringify({
             success: false,
-            error: 'Inspector identification required. Please provide your name and phone number.'
+            identifyRequired: true,
+            message: 'Hello! To assign you today\'s inspection jobs, I need your details. Please provide:\n[1] Your full name\n[2] Your phone number (with country code, e.g., +65 for Singapore).',
+            nextAction: 'collectInspectorInfo'
           });
         }
 
