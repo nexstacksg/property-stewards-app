@@ -284,7 +284,7 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     let metadata = await getSessionState(cleanPhone);
     
     if (threadId) {
-      console.log(`📌 Using Redis-cached thread ${threadId} for ${cleanPhone}`);
+      console.log(`📌 Using cached thread ${threadId} for ${cleanPhone}`);
       // Also cache in memory for this request
       whatsappThreads.set(cleanPhone, threadId);
     }
@@ -1230,7 +1230,7 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           });
           
           const locationsWithStatus = await getLocationsWithCompletionStatus(args.workOrderId) as any[];
-          console.log('📍 Available locations in WhatsApp webhook:', locationsWithStatus.map((loc, index) => ({
+          console.log('📍 Available locations in WhatsApp webhook (from cache):', locationsWithStatus.map((loc, index) => ({
             number: index + 1,
             name: loc.name,
             id: loc.contractChecklistItemId

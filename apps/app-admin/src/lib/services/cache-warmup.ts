@@ -70,7 +70,8 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
             }
           }
         }
-      }
+      },
+      orderBy: { order: 'asc' }
     })
   ])
 

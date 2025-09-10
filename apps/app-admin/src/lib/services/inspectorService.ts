@@ -267,7 +267,9 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
     const itemsCache = await getCachedChecklistItems()
     if (itemsCache) {
       debugLog('getLocationsWithCompletionStatus: cache items =', itemsCache.length, 'workOrderId =', workOrderId)
-      const items = itemsCache.filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
+      const items = itemsCache
+        .filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
       debugLog('getLocationsWithCompletionStatus: matched items =', items.length)
 
     // Process with Map for O(n) complexity
