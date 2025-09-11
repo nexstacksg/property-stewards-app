@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     }
     
     if (inspectorId) {
-      where.inspectorId = inspectorId
+      where.inspectors = { some: { id: inspectorId } }
     }
     
     if (contractId) {
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
               address: true
             }
           },
-          inspector: true
+          inspectors: true
         },
         orderBy: { scheduledStartDateTime: 'desc' },
         skip,
@@ -88,22 +88,28 @@ export async function POST(request: NextRequest) {
     
     const {
       contractId,
-      inspectorId,
+      inspectorIds,
       scheduledStartDateTime,
       scheduledEndDateTime,
       remarks
     } = body
 
     // Validate required fields
-    if (!contractId || !inspectorId || !scheduledStartDateTime || !scheduledEndDateTime) {
+    if (!contractId || !scheduledStartDateTime || !scheduledEndDateTime) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       )
     }
+    if (!Array.isArray(inspectorIds) || inspectorIds.length === 0) {
+      return NextResponse.json(
+        { error: 'At least one inspector is required' },
+        { status: 400 }
+      )
+    }
 
     // Verify contract and inspector exist, include checklist info
-    const [contract, inspector] = await Promise.all([
+    const [contract, inspectors] = await Promise.all([
       prisma.contract.findUnique({ 
         where: { id: contractId },
         include: {
@@ -115,7 +121,7 @@ export async function POST(request: NextRequest) {
           }
         }
       }),
-      prisma.inspector.findUnique({ where: { id: inspectorId } })
+      prisma.inspector.findMany({ where: { id: { in: inspectorIds } } })
     ])
 
     if (!contract) {
@@ -125,16 +131,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!inspector) {
+    if (!inspectors || inspectors.length !== inspectorIds.length) {
       return NextResponse.json(
-        { error: 'Inspector not found' },
+        { error: 'One or more inspectors not found' },
         { status: 404 }
       )
     }
-
-    if (inspector.status !== 'ACTIVE') {
+    const inactive = inspectors.find(i => i.status !== 'ACTIVE')
+    if (inactive) {
       return NextResponse.json(
-        { error: 'Inspector is not active' },
+        { error: `Inspector ${inactive.name} is not active` },
         { status: 400 }
       )
     }
@@ -142,8 +148,8 @@ export async function POST(request: NextRequest) {
     // Check for scheduling conflicts for the inspector
     const conflictingWorkOrder = await prisma.workOrder.findFirst({
       where: {
-        inspectorId,
         status: { in: ['SCHEDULED', 'STARTED'] },
+        inspectors: { some: { id: { in: inspectorIds } } },
         OR: [
           {
             AND: [
@@ -174,7 +180,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create work order in a transaction
+    // Precompute checklist items outside of transaction to avoid timeouts
+    const itemsFromTemplate = (!contract.contractChecklist && contract.basedOnChecklist?.items?.length)
+      ? contract.basedOnChecklist.items.map(item => ({
+          name: item.name,
+          order: item.order,
+          remarks: item.action,
+          tasks: parseActionIntoTasks(item.action) as any
+        }))
+      : []
+
+    // Create work order in a transaction (with extended timeout)
     const workOrder = await prisma.$transaction(async (tx) => {
       // First, ensure contract checklist exists
       let contractChecklist = contract.contractChecklist
@@ -188,16 +204,10 @@ export async function POST(request: NextRequest) {
         })
         
         // Create checklist items from template
-        if (contract.basedOnChecklist.items && contract.basedOnChecklist.items.length > 0 && contractChecklist) {
-          const checklistId = contractChecklist.id;
+        if (itemsFromTemplate.length > 0 && contractChecklist) {
+          const checklistId = contractChecklist.id
           await tx.contractChecklistItem.createMany({
-            data: contract.basedOnChecklist.items.map(item => ({
-              contractChecklistId: checklistId,
-              name: item.name,
-              order: item.order,
-              remarks: item.action,  // Keep full action text
-              tasks: parseActionIntoTasks(item.action) as any  // Parse into tasks array (cast as any for Prisma JSON field)
-            }))
+            data: itemsFromTemplate.map(d => ({ ...d, contractChecklistId: checklistId }))
           })
         }
       }
@@ -206,11 +216,13 @@ export async function POST(request: NextRequest) {
       const newWorkOrder = await tx.workOrder.create({
         data: {
           contractId,
-          inspectorId,
           scheduledStartDateTime: new Date(scheduledStartDateTime),
           scheduledEndDateTime: new Date(scheduledEndDateTime),
           remarks,
-          status: 'SCHEDULED'
+          status: 'SCHEDULED',
+          inspectors: {
+            connect: inspectorIds.map((id: string) => ({ id }))
+          }
         },
         include: {
           contract: {
@@ -226,12 +238,12 @@ export async function POST(request: NextRequest) {
               }
             }
           },
-          inspector: true
+          inspectors: true
         }
       })
       
       return newWorkOrder
-    })
+    }, { timeout: 20000, maxWait: 10000 })
 
     return NextResponse.json(workOrder, { status: 201 })
   } catch (error) {

@@ -40,11 +40,11 @@ interface WorkOrder {
       propertyType: string
     }
   }
-  inspector: {
+  inspectors: Array<{
     id: string
     name: string
     mobilePhone: string
-  }
+  }>
 }
 
 export default function WorkOrdersPage() {
@@ -294,7 +294,7 @@ export default function WorkOrdersPage() {
                         Property
                       </th>
                       <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
-                        Inspector
+                        Inspectors
                       </th>
                       <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Service
@@ -360,16 +360,24 @@ export default function WorkOrdersPage() {
                               </div>
                             </td>
 
-                            {/* Inspector */}
+                            {/* Inspectors */}
                             <td className="px-6 py-3 align-top">
                               <div className="text-sm leading-5">
-                                <div className="font-medium flex items-center gap-1 truncate">
-                                  <User className="h-3 w-3 text-muted-foreground" />
-                                  <span className="truncate" title={workOrder.inspector.name}>{workOrder.inspector.name}</span>
-                                </div>
-                                <div className="text-xs text-muted-foreground truncate" title={workOrder.inspector.mobilePhone}>
-                                  {workOrder.inspector.mobilePhone}
-                                </div>
+                                {workOrder.inspectors && workOrder.inspectors.length > 0 ? (
+                                  <div className="space-y-1">
+                                    {workOrder.inspectors.slice(0, 2).map((inspector) => (
+                                      <div key={inspector.id} className="flex items-center gap-1 truncate">
+                                        <User className="h-3 w-3 text-muted-foreground" />
+                                        <span className="truncate" title={inspector.name}>{inspector.name}</span>
+                                      </div>
+                                    ))}
+                                    {workOrder.inspectors.length > 2 && (
+                                      <div className="text-xs text-muted-foreground">+{workOrder.inspectors.length - 2} more</div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">Unassigned</span>
+                                )}
                               </div>
                             </td>
 

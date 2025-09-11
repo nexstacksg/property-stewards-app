@@ -29,7 +29,7 @@ export async function GET(
         },
         workOrders: {
           include: {
-            inspector: true
+            inspectors: true
           },
           orderBy: { scheduledStartDateTime: 'desc' }
         }
