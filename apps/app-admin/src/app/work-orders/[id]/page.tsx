@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
+import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
 
 async function getWorkOrder(id: string) {
   const workOrder = await prisma.workOrder.findUnique({
@@ -384,9 +385,10 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                       <TableHead>#</TableHead>
                       <TableHead>Item</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Entered By</TableHead>
-                      <TableHead>Entered On</TableHead>
+                      <TableHead>Condition</TableHead>
                       <TableHead>Media</TableHead>
+                      <TableHead>Edit</TableHead>
+
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -438,7 +440,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           </div>
                         </TableCell>
                         <TableCell>
-                          {item.enteredOn ? (
+                          {(item.status ? item.status === 'COMPLETED' : Boolean(item.enteredOn)) ? (
                             <Badge variant="success">
                               <CheckCircle className="h-3 w-3 mr-1" />
                               Completed
@@ -448,21 +450,13 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           )}
                         </TableCell>
                         <TableCell>
-                          {item.enteredBy ? (
-                            <Link 
-                              href={`/inspectors/${item.enteredById}`}
-                              className="text-primary hover:underline text-sm"
-                            >
-                              {item.enteredBy.name}
-                            </Link>
+                          {item.condition ? (
+                            <Badge variant="outline" className="text-xs">
+                              {item.condition.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m: string) => m.toUpperCase())}
+                            </Badge>
                           ) : (
                             <span className="text-muted-foreground text-sm">-</span>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <p className="text-sm">
-                            {item.enteredOn ? formatDateTime(item.enteredOn) : '-'}
-                          </p>
                         </TableCell>
                         <TableCell>
                           <WorkOrderItemMedia 
@@ -473,6 +467,16 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                             itemName={item.name || item.item}
                           />
                         </TableCell>
+                        <TableCell>
+                          <EditChecklistItemDialog
+                            itemId={item.id}
+                            initialName={item.name || item.item}
+                            initialRemarks={item.remarks || item.description}
+                            initialStatus={item.status || (item.enteredOn ? 'COMPLETED' : 'PENDING')}
+                            initialCondition={item.condition}
+                          />
+                        </TableCell>
+                        
                       </TableRow>
                     ))}
                   </TableBody>

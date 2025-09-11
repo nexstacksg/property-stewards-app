@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { cacheGetLargeArray } from '@/lib/memcache'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -45,6 +46,12 @@ const inspectorCache = new SimpleCache(300) // 5 minutes for inspector data
 const workOrderCache = new SimpleCache(60) // 1 minute for work orders
 const locationCache = new SimpleCache(120) // 2 minutes for locations
 
+// Debug helper; set INSPECTOR_DEBUG=0 to silence
+function debugLog(...args: any[]) {
+  if (process.env.INSPECTOR_DEBUG === '0') return
+  console.log('[inspectorService]', ...args)
+}
+
 // Optimized select fields to reduce data transfer
 const INSPECTOR_SELECT = {
   id: true,
@@ -54,8 +61,36 @@ const INSPECTOR_SELECT = {
 } as const
 
 
+async function getCachedInspectors() {
+  return (await cacheGetLargeArray<any>('mc:inspectors:all')) || null
+}
+
+async function getCachedWorkOrders() {
+  return (await cacheGetLargeArray<any>('mc:work-orders:all')) || null
+}
+
+
+async function getCachedCustomers() {
+  return (await cacheGetLargeArray<any>('mc:customers:all')) || null
+}
+
+async function getCachedAddresses() {
+  return (await cacheGetLargeArray<any>('mc:customer-addresses:all')) || null
+}
+
+async function getCachedChecklistItems() {
+  return (await cacheGetLargeArray<any>('mc:contract-checklist-items:all')) || null
+}
+
 export async function getInspectorByPhone(phone: string) {
   try {
+    // Prefer MemCachier if available
+    const inspectors = await getCachedInspectors()
+    if (inspectors) {
+      const found = inspectors.find((i: any) => i.mobilePhone === phone && i.status === 'ACTIVE')
+      if (found) return found
+    }
+
     const cacheKey = `inspector:${phone}`
     const cached = inspectorCache.get(cacheKey)
     if (cached) return cached
@@ -80,65 +115,38 @@ export async function getInspectorByPhone(phone: string) {
 
 export async function getTodayJobsForInspector(inspectorId: string) {
   try {
-    // NO CACHING for work orders - they need to be real-time
-    // const cacheKey = `jobs:${inspectorId}:${new Date().toDateString()}`
-    // const cached = workOrderCache.get(cacheKey)
-    // if (cached) return cached
+    // Compute today in Asia/Singapore (UTC+8) by default
+    const tzOffsetHours = Number(process.env.LOCAL_TZ_OFFSET_HOURS ?? 8)
+    const now = new Date()
+    const sgNow = new Date(now.getTime() + tzOffsetHours * 60 * 60 * 1000)
+    const sgStartLocal = new Date(Date.UTC(sgNow.getUTCFullYear(), sgNow.getUTCMonth(), sgNow.getUTCDate(), 0, 0, 0))
+    const startOfDay = new Date(sgStartLocal.getTime() - tzOffsetHours * 60 * 60 * 1000)
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1)
 
-    const startOfDay = new Date()
-    startOfDay.setHours(0, 0, 0, 0)
-    
-    const endOfDay = new Date()
-    endOfDay.setHours(23, 59, 59, 999)
+    const workOrders = await getCachedWorkOrders()
+    if (!workOrders) {
+      debugLog('getTodayJobsForInspector: workOrders cache missing')
+      return []
+    }
+    debugLog('getTodayJobsForInspector: cached workOrders =', workOrders.length)
+    const todays = workOrders
+      .filter((wo: any) => {
+        const dt = new Date(wo.scheduledStartDateTime)
+        return wo.inspectorId === inspectorId && dt >= startOfDay && dt <= endOfDay
+      })
+      .sort((a: any, b: any) => new Date(a.scheduledStartDateTime).getTime() - new Date(b.scheduledStartDateTime).getTime())
+    debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 
-    // Optimized query with only necessary fields
-    const workOrders = await prisma.workOrder.findMany({
-      where: {
-        inspectorId: inspectorId,
-        scheduledStartDateTime: {
-          gte: startOfDay,
-          lte: endOfDay
-        }
-      },
-      select: {
-        id: true,
-        status: true,
-        scheduledStartDateTime: true,
-        remarks: true,
-        contract: {
-          select: {
-            customer: {
-              select: { name: true }
-            },
-            address: {
-              select: { 
-                address: true, 
-                postalCode: true,
-                propertyType: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: {
-        scheduledStartDateTime: 'asc'
-      }
-    })
-
-    const result = workOrders.map(wo => ({
+    return todays.map((wo: any) => ({
       id: wo.id,
-      property_address: `${wo.contract.address.address}, ${wo.contract.address.postalCode}`,
-      customer_name: wo.contract.customer.name,
-      scheduled_date: wo.scheduledStartDateTime,
-      inspection_type: `${wo.contract.address.propertyType} Inspection`,
+      property_address: wo.address ? `${wo.address.address}, ${wo.address.postalCode}` : 'Unknown address',
+      customer_name: wo.customer?.name || 'Unknown',
+      scheduled_date: new Date(wo.scheduledStartDateTime),
+      inspection_type: wo.address ? `${wo.address.propertyType} Inspection` : 'Inspection',
       status: wo.status,
       priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',
       notes: wo.remarks || ''
     }))
-
-    // NO CACHING - work orders must be real-time
-    // workOrderCache.set(cacheKey, result)
-    return result
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
     return []
@@ -147,72 +155,38 @@ export async function getTodayJobsForInspector(inspectorId: string) {
 
 export async function getWorkOrderById(workOrderId: string) {
   try {
-    // NO CACHING - work orders must be real-time
-    // const cacheKey = `wo:${workOrderId}`
-    // const cached = workOrderCache.get(cacheKey)
-    // if (cached) return cached
-
-    const workOrder = await prisma.workOrder.findUnique({
-      where: { id: workOrderId },
-      select: {
-        id: true,
-        status: true,
-        scheduledStartDateTime: true,
-        scheduledEndDateTime: true,
-        contract: {
-          select: {
-            customer: {
-              select: { name: true }
-            },
-            address: {
-              select: {
-                address: true,
-                postalCode: true,
-                propertyType: true
-              }
-            },
-            contractChecklist: {
-              select: {
-                items: {
-                  select: {
-                    id: true,
-                    name: true,
-                    order: true,
-                    enteredOn: true,
-                    remarks: true,
-                    photos: true,
-                    videos: true,
-                    tasks: true
-                  },
-                  orderBy: { order: 'asc' }
-                }
-              }
-            }
-          }
-        },
-        inspector: {
-          select: { name: true }
-        }
-      }
-    })
-
-    if (!workOrder) return null
-
-    const result = {
-      id: workOrder.id,
-      property_address: `${workOrder.contract.address.address}, ${workOrder.contract.address.postalCode}`,
-      customer_name: workOrder.contract.customer.name,
-      inspection_type: `${workOrder.contract.address.propertyType} Inspection`,
-      status: workOrder.status,
-      inspector_name: workOrder.inspector.name,
-      scheduled_start: workOrder.scheduledStartDateTime,
-      scheduled_end: workOrder.scheduledEndDateTime,
-      checklist_items: workOrder.contract.contractChecklist?.items || []
+    const [workOrders, items, inspectors] = await Promise.all([
+      getCachedWorkOrders(), getCachedChecklistItems(), getCachedInspectors()
+    ])
+    if (!workOrders) {
+      debugLog('getWorkOrderById: workOrders cache missing')
+      return null
     }
+    const wo = workOrders.find((w: any) => w.id === workOrderId)
+    if (!wo) {
+      debugLog('getWorkOrderById: workOrder not found in cache', workOrderId)
+      return null
+    }
+    const inspector = inspectors?.find((i: any) => i.id === wo.inspectorId)
+    const relatedItems = (items || [])
+      .filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
+      .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+    debugLog('getWorkOrderById: relatedItems length =', relatedItems.length)
 
-    // NO CACHING - work orders must be real-time
-    // workOrderCache.set(cacheKey, result)
-    return result
+    const addr = wo.address
+    const customerName = wo.customer?.name
+
+    return {
+      id: wo.id,
+      property_address: addr ? `${addr.address}, ${addr.postalCode}` : 'Unknown address',
+      customer_name: customerName || 'Unknown',
+      inspection_type: addr ? `${addr.propertyType} Inspection` : 'Inspection',
+      status: wo.status,
+      inspector_name: inspector?.name || 'Unknown',
+      scheduled_start: new Date(wo.scheduledStartDateTime),
+      scheduled_end: new Date(wo.scheduledEndDateTime),
+      checklist_items: relatedItems
+    }
   } catch (error) {
     console.error('Error fetching work order:', error)
     return null
@@ -297,25 +271,14 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
     const cached = locationCache.get(cacheKey)
     if (cached) return cached
 
-    // Single optimized query
-    const items = await prisma.contractChecklistItem.findMany({
-      where: {
-        contractChecklist: {
-          contract: {
-            workOrders: {
-              some: { id: workOrderId }
-            }
-          }
-        }
-      },
-      select: {
-        id: true,
-        name: true,
-        enteredOn: true,
-        tasks: true
-      },
-      orderBy: { order: 'asc' }
-    })
+    // Cache-only: use precomputed workOrderIds index on items
+    const itemsCache = await getCachedChecklistItems()
+    if (itemsCache) {
+      debugLog('getLocationsWithCompletionStatus: cache items =', itemsCache.length, 'workOrderId =', workOrderId)
+      const items = itemsCache
+        .filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+      debugLog('getLocationsWithCompletionStatus: matched items =', items.length)
 
     // Process with Map for O(n) complexity
     const locationMap = new Map<string, {
@@ -354,45 +317,42 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
     locationCache.set(cacheKey, locationsWithStatus)
     return locationsWithStatus
+    }
+
+    // Cache required; no DB fallback
+    debugLog('getLocationsWithCompletionStatus: no cache or no items matched for workOrderId =', workOrderId)
+    return []
   } catch (error) {
     console.error('Error fetching locations with status:', error)
     return []
   }
 }
 
-export async function getTasksByLocation(workOrderId: string, location: string) {
+export async function getTasksByLocation(workOrderId: string, location: string, contractChecklistItemId?: string) {
   try {
     const cacheKey = `tasks:${workOrderId}:${location}`
     const cached = locationCache.get(cacheKey)
     if (cached) return cached
 
-    // Direct query without nested includes
-    const items = await prisma.contractChecklistItem.findMany({
-      where: {
-        name: location,
-        contractChecklist: {
-          contract: {
-            workOrders: {
-              some: { id: workOrderId }
-            }
-          }
+    // Cache-only
+    const itemsCache = await getCachedChecklistItems()
+    let checklistItem: any = null
+    if (itemsCache) {
+      debugLog('getTasksByLocation: cache items =', itemsCache.length, 'workOrderId =', workOrderId, 'location =', location, 'itemId =', contractChecklistItemId)
+      if (contractChecklistItemId) {
+        checklistItem = itemsCache.find((it: any) => it.id === contractChecklistItemId)
+        // sanity: ensure it belongs to the work order
+        if (checklistItem && !(Array.isArray(checklistItem.workOrderIds) && checklistItem.workOrderIds.includes(workOrderId))) {
+          debugLog('getTasksByLocation: provided itemId does not belong to workOrder')
+          checklistItem = null
         }
-      },
-      select: {
-        id: true,
-        name: true,
-        remarks: true,
-        photos: true,
-        videos: true,
-        enteredOn: true,
-        enteredById: true,
-        tasks: true
-      },
-      orderBy: { order: 'asc' },
-      take: 1 // Only get first item since there should be one per location
-    })
+      }
+      if (!checklistItem) {
+        checklistItem = itemsCache.find((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId) && it.name === location)
+      }
+      debugLog('getTasksByLocation: found checklistItem =', Boolean(checklistItem), checklistItem ? { id: checklistItem.id, name: checklistItem.name } : null)
+    }
 
-    const checklistItem = items[0] as any
     if (!checklistItem) {
       return []
     }
@@ -400,11 +360,12 @@ export async function getTasksByLocation(workOrderId: string, location: string) 
     let result
     if (checklistItem.tasks && typeof checklistItem.tasks === 'object') {
       const tasks = Array.isArray(checklistItem.tasks) ? checklistItem.tasks : []
+      debugLog('getTasksByLocation: tasks length =', tasks.length)
       
       result = tasks.map((task: any, index: number) => ({
         id: `${checklistItem.id}_task_${index}`,
         location: checklistItem.name,
-        action: typeof task === 'string' ? task : (task.task || 'Inspect area'),
+        action: typeof task === 'string' ? task : (task.task || task.action || 'Inspect area'),
         status: typeof task === 'object' && task.status === 'done' ? 'completed' : 'pending',
         notes: checklistItem.remarks,
         photos: checklistItem.photos,
@@ -599,23 +560,18 @@ export async function getContractChecklistItemIdByLocation(workOrderId: string, 
     const cached = locationCache.get(cacheKey)
     if (cached) return cached as string
 
-    const item = await prisma.contractChecklistItem.findFirst({
-      where: {
-        name: location,
-        contractChecklist: {
-          contract: {
-            workOrders: {
-              some: { id: workOrderId }
-            }
-          }
-        }
-      },
-      select: { id: true }
-    })
+    const itemsCache = await getCachedChecklistItems()
+    let item: any = null
+    if (itemsCache) {
+      item = itemsCache.find((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId) && it.name === location)
+    }
 
     if (item) {
-      locationCache.set(cacheKey, item.id)
-      return item.id
+      const id = item.id || (item as any)?.id
+      if (id) {
+        locationCache.set(cacheKey, id)
+        return id
+      }
     }
     
     return null
@@ -632,20 +588,15 @@ export async function getTaskMedia(taskId: string) {
     if (cached) return cached
 
     let actualTaskId = taskId
-    if (taskId.includes('_task_')) {
-      actualTaskId = taskId.split('_task_')[0]
+    if (taskId.includes('_task_')) actualTaskId = taskId.split('_task_')[0]
+
+    // Try cache first
+    const itemsCache = await getCachedChecklistItems()
+    let item: any = null
+    if (itemsCache) {
+      item = itemsCache.find((it: any) => it.id === actualTaskId)
+      debugLog('getTaskMedia: lookup id =', actualTaskId, 'found =', Boolean(item))
     }
-    
-    const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: actualTaskId },
-      select: {
-        id: true,
-        name: true,
-        remarks: true,
-        photos: true,
-        videos: true
-      }
-    })
 
     if (!item) {
       return null
@@ -705,38 +656,21 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
 
 export async function getWorkOrderProgress(workOrderId: string) {
   try {
-    // NO CACHING - work orders must be real-time
-    // const cacheKey = `progress:${workOrderId}`
-    // const cached = workOrderCache.get(cacheKey)
-    // if (cached) return cached
-
-    // Optimized aggregation query
-    const result = await prisma.contractChecklistItem.aggregate({
-      where: {
-        contractChecklist: {
-          contract: {
-            workOrders: {
-              some: { id: workOrderId }
-            }
-          }
-        }
-      },
-      _count: {
-        _all: true,
-        enteredOn: true
+    // Cache-only using items linked by workOrderIds
+    const items = await getCachedChecklistItems()
+    if (items) {
+      const related = items.filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
+      const total = related.length
+      const completed = related.filter((it: any) => it.enteredOn != null).length
+      return {
+        total_tasks: total,
+        completed_tasks: completed,
+        pending_tasks: total - completed,
+        in_progress_tasks: 0
       }
-    })
-
-    const progress = {
-      total_tasks: result._count._all || 0,
-      completed_tasks: result._count.enteredOn || 0,
-      pending_tasks: (result._count._all || 0) - (result._count.enteredOn || 0),
-      in_progress_tasks: 0
     }
-
-    // NO CACHING - work orders must be real-time
-    // workOrderCache.set(cacheKey, progress)
-    return progress
+    // Cache required; no DB fallback
+    return { total_tasks: 0, completed_tasks: 0, pending_tasks: 0, in_progress_tasks: 0 }
   } catch (error) {
     console.error('Error fetching work order progress:', error)
     return {
