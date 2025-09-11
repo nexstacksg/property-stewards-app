@@ -401,7 +401,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           <div>
                             <p className="font-medium">{item.name || item.item}</p>
                             {(() => {
-                              // Don't show checks count if item is completed
+                              // Don't show  count if item is completed
                               if (item.enteredOn) {
                                 return null
                               }
