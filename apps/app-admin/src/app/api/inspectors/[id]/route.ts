@@ -112,7 +112,7 @@ export async function DELETE(
     const { id } = await params
     // Check if inspector has work orders
     const workOrderCount = await prisma.workOrder.count({
-      where: { inspectorId: id }
+      where: { inspectors: { some: { id } } }
     })
 
     if (workOrderCount > 0) {

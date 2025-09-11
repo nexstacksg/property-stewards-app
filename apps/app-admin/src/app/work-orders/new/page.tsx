@@ -1,17 +1,18 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect, Suspense, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+// removed Select components in favor of checkboxes
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ArrowLeft, Loader2, Search, User, MapPin, Calendar, Clock, AlertCircle } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 
 interface Contract {
   id: string
@@ -59,10 +60,21 @@ function NewWorkOrderPageContent() {
   
   // Inspector selection
   const [inspectors, setInspectors] = useState<Inspector[]>([])
-  const [selectedInspectorId, setSelectedInspectorId] = useState("")
+  const [selectedInspectorIds, setSelectedInspectorIds] = useState<string[]>([])
   const [loadingInspectors, setLoadingInspectors] = useState(true)
-  const [inspectorWorkOrders, setInspectorWorkOrders] = useState<any[]>([])
+  const [inspectorWorkOrders, setInspectorWorkOrders] = useState<Record<string, any[]>>({})
   const [loadingInspectorJobs, setLoadingInspectorJobs] = useState(false)
+  const [inspectorPickerOpen, setInspectorPickerOpen] = useState(false)
+  const [inspectorQuery, setInspectorQuery] = useState("")
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const [triggerWidth, setTriggerWidth] = useState<number>(0)
+
+  useEffect(() => {
+    const update = () => setTriggerWidth(triggerRef.current?.offsetWidth || 0)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
   
   // Form fields
   const [scheduledStartDateTime, setScheduledStartDateTime] = useState("")
@@ -82,23 +94,27 @@ function NewWorkOrderPageContent() {
   }, [preselectedContractId])
 
   useEffect(() => {
-    if (selectedInspectorId) {
-      fetchInspectorWorkOrders(selectedInspectorId)
+    if (selectedInspectorIds.length > 0) {
+      fetchSelectedInspectorsWorkOrders(selectedInspectorIds)
     } else {
-      setInspectorWorkOrders([])
+      setInspectorWorkOrders({})
     }
-  }, [selectedInspectorId])
+  }, [selectedInspectorIds])
 
-  const fetchInspectorWorkOrders = async (inspectorId: string) => {
+  const fetchSelectedInspectorsWorkOrders = async (ids: string[]) => {
     setLoadingInspectorJobs(true)
     try {
-      const response = await fetch(`/api/work-orders?inspectorId=${inspectorId}&status=SCHEDULED,STARTED&limit=10`)
-      if (response.ok) {
+      const entries = await Promise.all(ids.map(async (id) => {
+        const response = await fetch(`/api/work-orders?inspectorId=${id}&status=SCHEDULED,STARTED&limit=10`)
+        if (!response.ok) return [id, [] as any[]] as const
         const data = await response.json()
-        setInspectorWorkOrders(data.workOrders || [])
-      }
+        return [id, data.workOrders || []] as const
+      }))
+      const map: Record<string, any[]> = {}
+      for (const [id, orders] of entries) map[id] = orders
+      setInspectorWorkOrders(map)
     } catch (err) {
-      console.error('Error fetching inspector work orders:', err)
+      console.error('Error fetching inspectors\' schedules:', err)
     } finally {
       setLoadingInspectorJobs(false)
     }
@@ -203,8 +219,8 @@ function NewWorkOrderPageContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedContract || !selectedInspectorId) {
-      setError("Please select a contract and inspector")
+    if (!selectedContract || selectedInspectorIds.length === 0) {
+      setError("Please select a contract and at least one inspector")
       return
     }
     
@@ -221,7 +237,7 @@ function NewWorkOrderPageContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contractId: selectedContract.id,
-          inspectorId: selectedInspectorId,
+          inspectorIds: selectedInspectorIds,
           scheduledStartDateTime: startDateTime.toISOString(),
           scheduledEndDateTime: endDateTime.toISOString(),
           remarks
@@ -379,88 +395,155 @@ function NewWorkOrderPageContent() {
                       </div>
                     </div>
 
-                    {/* Inspector Selection */}
+                    {/* Inspectors Selection (Select-like trigger + modal with checkboxes) */}
                     <div className="space-y-2">
-                      <Label htmlFor="inspector">Assign Inspector *</Label>
-                      <Select value={selectedInspectorId} onValueChange={setSelectedInspectorId} required disabled={loadingInspectors}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={loadingInspectors ? "Loading inspectors..." : "Select inspector"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {loadingInspectors ? (
-                            <SelectItem value="loading" disabled>Loading inspectors...</SelectItem>
-                          ) : inspectors.length === 0 ? (
-                            <SelectItem value="no-inspectors" disabled>No inspectors available</SelectItem>
-                          ) : (
-                            inspectors.map(inspector => (
-                              <SelectItem key={inspector.id} value={inspector.id}>
-                                {inspector.name} ({inspector.type})
-                                {inspector.specialization && 
-                                 inspector.specialization.includes(selectedContract.address.propertyType) && 
-                                  <span className="ml-2 text-xs text-green-600">✓ Specialized</span>
-                                }
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <Label>Assign Inspectors *</Label>
+                      <Popover open={inspectorPickerOpen} onOpenChange={(o) => { setInspectorPickerOpen(o); if (o) setTriggerWidth(triggerRef.current?.offsetWidth || 0) }}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-between"
+                            ref={triggerRef}
+                            disabled={loadingInspectors}
+                          >
+                            {(() => {
+                              const selected = inspectors.filter(i => selectedInspectorIds.includes(i.id))
+                              if (loadingInspectors) return 'Loading inspectors...'
+                              if (selected.length === 0) return 'Select inspectors'
+                              const names = selected.map(s => s.name)
+                              return names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${names.length - 2} more` : '')
+                            })()}
+                            <span className="text-muted-foreground">▾</span>
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" sideOffset={4} style={{ width: triggerWidth }} className="p-3">
+                          <div className="space-y-3">
+                            <div className="relative">
+                              <Input
+                                placeholder="Search by name or phone"
+                                value={inspectorQuery}
+                                onChange={(e) => setInspectorQuery(e.target.value)}
+                                className="pr-8"
+                              />
+                              <Search className="h-4 w-4 text-muted-foreground absolute right-2 top-1/2 -translate-y-1/2" />
+                            </div>
+                            <div className="border rounded-md max-h-64 overflow-y-auto divide-y">
+                              {loadingInspectors ? (
+                                <div className="p-3 text-sm text-muted-foreground">Loading inspectors...</div>
+                              ) : inspectors.length === 0 ? (
+                                <div className="p-3 text-sm text-muted-foreground">No inspectors available</div>
+                              ) : (
+                                inspectors
+                                  .filter(i => {
+                                    const q = inspectorQuery.trim().toLowerCase()
+                                    if (!q) return true
+                                    return i.name.toLowerCase().includes(q) || i.mobilePhone.toLowerCase().includes(q)
+                                  })
+                                  .map((inspector) => {
+                                    const checked = selectedInspectorIds.includes(inspector.id)
+                                    const specialized = inspector.specialization && selectedContract && inspector.specialization.includes(selectedContract.address.propertyType)
+                                    return (
+                                      <label key={inspector.id} className="flex items-center justify-between gap-3 p-3 cursor-pointer">
+                                        <div className="flex items-center gap-3">
+                                          <input
+                                            type="checkbox"
+                                            className="h-4 w-4"
+                                            checked={checked}
+                                            onChange={(e) => {
+                                              setSelectedInspectorIds((prev) => e.target.checked ? [...prev, inspector.id] : prev.filter(id => id !== inspector.id))
+                                            }}
+                                          />
+                                          <div>
+                                            <p className="text-sm font-medium">{inspector.name} <span className="text-xs text-muted-foreground">({inspector.type})</span></p>
+                                            <p className="text-xs text-muted-foreground">{inspector.mobilePhone}</p>
+                                          </div>
+                                        </div>
+                                        {specialized && (
+                                          <span className="text-xs text-green-600">✓ Specialized</span>
+                                        )}
+                                      </label>
+                                    )
+                                  })
+                              )}
+                            </div>
+                            <div className="flex justify-between pt-1">
+                              <Button type="button" variant="ghost" onClick={() => setSelectedInspectorIds([])}>Clear selection</Button>
+                              <Button type="button" onClick={() => setInspectorPickerOpen(false)}>Apply</Button>
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+
+                      {selectedInspectorIds.length === 0 && (
+                        <p className="text-xs text-destructive">Select at least one inspector</p>
+                      )}
                     </div>
                   </div>
                 )}
 
                 {selectedContract && (
                   <>
-                    {/* Inspector's Existing Work Orders */}
-                    {selectedInspectorId && inspectorWorkOrders.length > 0 && (
-                      <div className="border border-red-200 bg-red-50 rounded-lg p-4 space-y-3">
+                    {/* Selected Inspectors' Existing Work Orders */}
+                    {selectedInspectorIds.length > 0 && (
+                      <div className="border border-red-200 bg-red-50 rounded-lg p-4 space-y-4">
                         <div className="flex items-center gap-2 text-red-800">
                           <AlertCircle className="h-4 w-4" />
-                          <p className="font-medium">Inspector's Schedule</p>
+                          <p className="font-medium">Inspectors' Schedules</p>
                         </div>
-                        <div className="overflow-x-auto">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead className="text-red-800">Date</TableHead>
-                                <TableHead className="text-red-800">Time</TableHead>
-                                <TableHead className="text-red-800">Customer</TableHead>
-                                <TableHead className="text-red-800">Address</TableHead>
-                                <TableHead className="text-red-800">Status</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {inspectorWorkOrders.map((wo: any) => (
-                                <TableRow key={wo.id} className="text-sm">
-                                  <TableCell className="text-red-700">
-                                    {new Date(wo.scheduledStartDateTime).toLocaleDateString('en-SG')}
-                                  </TableCell>
-                                  <TableCell className="text-red-700">
-                                    {new Date(wo.scheduledStartDateTime).toLocaleTimeString('en-SG', {
-                                      hour: '2-digit',
-                                      minute: '2-digit'
-                                    })}
-                                    {' - '}
-                                    {new Date(wo.scheduledEndDateTime).toLocaleTimeString('en-SG', {
-                                      hour: '2-digit',
-                                      minute: '2-digit'
-                                    })}
-                                  </TableCell>
-                                  <TableCell className="text-red-700">
-                                    {wo.contract.customer.name}
-                                  </TableCell>
-                                  <TableCell className="text-red-700">
-                                    {wo.contract.address.address}
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge variant={wo.status === 'SCHEDULED' ? 'info' : 'warning'}>
-                                      {wo.status}
-                                    </Badge>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
+                        {selectedInspectorIds.map((iid) => {
+                          const inspector = inspectors.find(i => i.id === iid)
+                          const orders = inspectorWorkOrders[iid] || []
+                          return (
+                            <div key={iid} className="space-y-2">
+                              <p className="text-sm font-medium text-red-800">{inspector?.name || 'Inspector'}</p>
+                              <div className="overflow-x-auto">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead className="text-red-800">Date</TableHead>
+                                      <TableHead className="text-red-800">Time</TableHead>
+                                      <TableHead className="text-red-800">Customer</TableHead>
+                                      <TableHead className="text-red-800">Address</TableHead>
+                                      <TableHead className="text-red-800">Status</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {loadingInspectorJobs && !orders.length ? (
+                                      <TableRow><TableCell colSpan={5} className="text-sm text-muted-foreground">Loading…</TableCell></TableRow>
+                                    ) : orders.length === 0 ? (
+                                      <TableRow><TableCell colSpan={5} className="text-sm text-muted-foreground">No upcoming jobs</TableCell></TableRow>
+                                    ) : (
+                                      orders.map((wo: any) => (
+                                        <TableRow key={wo.id} className="text-sm">
+                                          <TableCell className="text-red-700">
+                                            {new Date(wo.scheduledStartDateTime).toLocaleDateString('en-SG')}
+                                          </TableCell>
+                                          <TableCell className="text-red-700">
+                                            {new Date(wo.scheduledStartDateTime).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })}
+                                            {' - '}
+                                            {new Date(wo.scheduledEndDateTime).toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })}
+                                          </TableCell>
+                                          <TableCell className="text-red-700">
+                                            {wo.contract.customer.name}
+                                          </TableCell>
+                                          <TableCell className="text-red-700">
+                                            {wo.contract.address.address}
+                                          </TableCell>
+                                          <TableCell>
+                                            <Badge variant={wo.status === 'SCHEDULED' ? 'info' : 'warning'}>
+                                              {wo.status}
+                                            </Badge>
+                                          </TableCell>
+                                        </TableRow>
+                                      ))
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
 
@@ -561,7 +644,7 @@ function NewWorkOrderPageContent() {
                   <Button
                     type="submit"
                     className="w-full"
-                    disabled={loading || !selectedContract || !selectedInspectorId}
+                    disabled={loading || !selectedContract || selectedInspectorIds.length === 0}
                   >
                     {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                     Create Work Order

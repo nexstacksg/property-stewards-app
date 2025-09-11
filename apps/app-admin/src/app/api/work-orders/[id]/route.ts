@@ -28,7 +28,7 @@ export async function GET(
             }
           }
         },
-        inspector: true,
+        inspectors: true,
         checklistItems: true
       }
     })
@@ -68,7 +68,7 @@ export async function PATCH(
     const body = await request.json()
     
     const {
-      inspectorId,
+      inspectorIds,
       scheduledStartDateTime,
       scheduledEndDateTime,
       actualStart,
@@ -79,31 +79,24 @@ export async function PATCH(
       status
     } = body
 
-    // If changing inspector, verify the new inspector exists and is active
-    if (inspectorId) {
-      const inspector = await prisma.inspector.findUnique({ 
-        where: { id: inspectorId } 
-      })
-
-      if (!inspector) {
-        return NextResponse.json(
-          { error: 'Inspector not found' },
-          { status: 404 }
-        )
+    // If changing inspectors, verify they exist and are active
+    if (Array.isArray(inspectorIds)) {
+      if (inspectorIds.length === 0) {
+        return NextResponse.json({ error: 'At least one inspector is required' }, { status: 400 })
       }
-
-      if (inspector.status !== 'ACTIVE') {
-        return NextResponse.json(
-          { error: 'Inspector is not active' },
-          { status: 400 }
-        )
+      const inspectors = await prisma.inspector.findMany({ where: { id: { in: inspectorIds } } })
+      if (!inspectors || inspectors.length !== inspectorIds.length) {
+        return NextResponse.json({ error: 'One or more inspectors not found' }, { status: 404 })
+      }
+      const inactive = inspectors.find(i => i.status !== 'ACTIVE')
+      if (inactive) {
+        return NextResponse.json({ error: `Inspector ${inactive.name} is not active` }, { status: 400 })
       }
     }
 
     const workOrder = await prisma.workOrder.update({
       where: { id },
       data: {
-        inspectorId,
         scheduledStartDateTime: scheduledStartDateTime ? new Date(scheduledStartDateTime) : undefined,
         scheduledEndDateTime: scheduledEndDateTime ? new Date(scheduledEndDateTime) : undefined,
         actualStart: actualStart ? new Date(actualStart) : null,
@@ -111,7 +104,8 @@ export async function PATCH(
         signature,
         signOffBy,
         remarks,
-        status
+        status,
+        ...(Array.isArray(inspectorIds) ? { inspectors: { set: inspectorIds.map((iid: string) => ({ id: iid })) } } : {})
       },
       include: {
         contract: {
@@ -120,7 +114,7 @@ export async function PATCH(
             address: true
           }
         },
-        inspector: true
+        inspectors: true
       }
     })
 

@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
+  prismaListenersAdded?: boolean
 }
 
 // Configure connection URL with Vercel-optimized settings
@@ -43,20 +44,19 @@ export const prisma = globalForPrisma.prisma ?? (() => {
 globalForPrisma.prisma = prisma
 
 // Ensure proper cleanup
-if (typeof window === 'undefined') {
+if (typeof window === 'undefined' && !globalForPrisma.prismaListenersAdded) {
   process.on('beforeExit', async () => {
     await prisma.$disconnect()
   })
-  
   process.on('SIGTERM', async () => {
     await prisma.$disconnect()
     process.exit(0)
   })
-  
   process.on('SIGINT', async () => {
     await prisma.$disconnect()
     process.exit(0)
   })
+  globalForPrisma.prismaListenersAdded = true
 }
 
 export default prisma

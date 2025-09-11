@@ -17,7 +17,7 @@ export async function GET(
             address: true,
             workOrders: {
               include: {
-                inspector: true
+                inspectors: true
               }
             }
           },

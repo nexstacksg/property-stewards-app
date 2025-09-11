@@ -1,13 +1,16 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+// removed Select components in favor of checkboxes
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Save, User, MapPin } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
@@ -15,7 +18,7 @@ import { DatePicker } from "@/components/ui/date-picker"
 interface WorkOrder {
   id: string
   contractId: string
-  inspectorId: string
+  inspectors: Array<{ id: string; name: string; mobilePhone: string; type: string }>
   scheduledStartDateTime: string
   scheduledEndDateTime: string
   actualStart?: string
@@ -40,12 +43,7 @@ interface WorkOrder {
       propertySize: string
     }
   }
-  inspector: {
-    id: string
-    name: string
-    mobilePhone: string
-    type: string
-  }
+  // inspector field removed in multi-assign model
 }
 
 interface Inspector {
@@ -68,7 +66,7 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
   const [inspectors, setInspectors] = useState<Inspector[]>([])
   
   // Form fields
-  const [inspectorId, setInspectorId] = useState("")
+  const [inspectorIds, setInspectorIds] = useState<string[]>([])
   const [scheduledStartDate, setScheduledStartDate] = useState("")
   const [scheduledStartTime, setScheduledStartTime] = useState("")
   const [scheduledEndDate, setScheduledEndDate] = useState("")
@@ -83,6 +81,18 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
   
   // Read-only contract info
   const [contract, setContract] = useState<WorkOrder['contract'] | null>(null)
+  
+  // Inspector picker UI state
+  const [inspectorPickerOpen, setInspectorPickerOpen] = useState(false)
+  const [inspectorQuery, setInspectorQuery] = useState("")
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const [triggerWidth, setTriggerWidth] = useState<number>(0)
+  useEffect(() => {
+    const update = () => setTriggerWidth(triggerRef.current?.offsetWidth || 0)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   useEffect(() => {
     const loadData = async () => {
@@ -107,7 +117,7 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
       const scheduledStart = new Date(workOrder.scheduledStartDateTime)
       const scheduledEnd = new Date(workOrder.scheduledEndDateTime)
       
-      setInspectorId(workOrder.inspectorId)
+      setInspectorIds((workOrder.inspectors || []).map(i => i.id))
       setScheduledStartDate(scheduledStart.toISOString().split('T')[0])
       setScheduledStartTime(scheduledStart.toTimeString().slice(0, 5))
       setScheduledEndDate(scheduledEnd.toISOString().split('T')[0])
@@ -175,7 +185,7 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          inspectorId,
+          inspectorIds,
           scheduledStartDateTime: scheduledStartDateTime.toISOString(),
           scheduledEndDateTime: scheduledEndDateTime.toISOString(),
           actualStart,
@@ -267,22 +277,79 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="inspector">Inspector *</Label>
-                    <Select value={inspectorId} onValueChange={setInspectorId}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inspectors.map(inspector => (
-                          <SelectItem key={inspector.id} value={inspector.id}>
-                            {inspector.name} ({inspector.type})
-                            {inspector.specialization.includes(contract?.address.propertyType || '') && 
-                              <span className="ml-2 text-xs text-green-600">✓ Specialized</span>
-                            }
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label>Inspectors *</Label>
+                    <Popover open={inspectorPickerOpen} onOpenChange={(o) => { setInspectorPickerOpen(o); if (o) setTriggerWidth(triggerRef.current?.offsetWidth || 0) }}>
+                      <PopoverTrigger asChild>
+                        <Button type="button" variant="outline" className="w-full justify-between" ref={triggerRef}>
+                          {(() => {
+                            const selected = inspectors.filter(i => inspectorIds.includes(i.id))
+                            if (inspectors.length === 0) return 'Loading inspectors...'
+                            if (selected.length === 0) return 'Select inspectors'
+                            const names = selected.map(s => s.name)
+                            return names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${names.length - 2} more` : '')
+                          })()}
+                          <span className="text-muted-foreground">▾</span>
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" sideOffset={4} style={{ width: triggerWidth }} className="p-3">
+                        <div className="space-y-3">
+                          <div className="relative">
+                            <Input
+                              placeholder="Search by name or phone"
+                              value={inspectorQuery}
+                              onChange={(e) => setInspectorQuery(e.target.value)}
+                              className="pr-8"
+                            />
+                            {/* simple icon mimic */}
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">⌕</span>
+                          </div>
+                          <div className="border rounded-md max-h-64 overflow-y-auto divide-y">
+                            {inspectors.length === 0 ? (
+                              <div className="p-3 text-sm text-muted-foreground">No inspectors available</div>
+                            ) : (
+                              inspectors
+                                .filter(i => {
+                                  const q = inspectorQuery.trim().toLowerCase()
+                                  if (!q) return true
+                                  return i.name.toLowerCase().includes(q) || i.mobilePhone.toLowerCase().includes(q)
+                                })
+                                .map((inspector) => {
+                                  const checked = inspectorIds.includes(inspector.id)
+                                  const specialized = inspector.specialization.includes(contract?.address.propertyType || '')
+                                  return (
+                                    <label key={inspector.id} className="flex items-center justify-between gap-3 p-3 cursor-pointer">
+                                      <div className="flex items-center gap-3">
+                                        <input
+                                          type="checkbox"
+                                          className="h-4 w-4"
+                                          checked={checked}
+                                          onChange={(e) => {
+                                            setInspectorIds((prev) => e.target.checked ? [...prev, inspector.id] : prev.filter(id => id !== inspector.id))
+                                          }}
+                                        />
+                                        <div>
+                                          <p className="text-sm font-medium">{inspector.name} <span className="text-xs text-muted-foreground">({inspector.type})</span></p>
+                                          <p className="text-xs text-muted-foreground">{inspector.mobilePhone}</p>
+                                        </div>
+                                      </div>
+                                      {specialized && (
+                                        <span className="text-xs text-green-600">✓ Specialized</span>
+                                      )}
+                                    </label>
+                                  )
+                                })
+                            )}
+                          </div>
+                          <div className="flex justify-between pt-1">
+                            <Button type="button" variant="ghost" onClick={() => setInspectorIds([])}>Clear selection</Button>
+                            <Button type="button" onClick={() => setInspectorPickerOpen(false)}>Apply</Button>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    {inspectorIds.length === 0 && (
+                      <p className="text-xs text-destructive">Select at least one inspector</p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -428,6 +495,15 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
                   }>
                     {status}
                   </Badge>
+                </div>
+
+                <div>
+                  <p className="text-sm text-muted-foreground">Assigned Inspectors</p>
+                  {inspectorIds.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">None</p>
+                  ) : (
+                    <p className="text-sm">{inspectorIds.length} selected</p>
+                  )}
                 </div>
 
                 {contract && (
