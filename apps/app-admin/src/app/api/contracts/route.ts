@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
           basedOnChecklist: true,
           workOrders: {
             include: {
-              inspector: true
+              inspectors: true
             }
           }
         },

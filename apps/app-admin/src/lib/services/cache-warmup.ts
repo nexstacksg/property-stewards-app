@@ -34,7 +34,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     prisma.workOrder.findMany({
       select: {
         id: true,
-        inspectorId: true,
+        inspectors: { select: { id: true } },
         contractId: true,
         status: true,
         scheduledStartDateTime: true,
@@ -78,7 +78,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   // Enrich work orders to include customer/address summary for cache-only reads
   const workOrders = workOrdersRaw.map(wo => ({
     id: wo.id,
-    inspectorId: wo.inspectorId,
+    inspectorId: Array.isArray(wo.inspectors) && wo.inspectors.length > 0 ? wo.inspectors[0].id : null,
     contractId: wo.contractId,
     status: wo.status,
     scheduledStartDateTime: wo.scheduledStartDateTime,

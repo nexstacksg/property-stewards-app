@@ -21,6 +21,8 @@ import {
 } from "lucide-react"
 import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
+import ItemEntriesDialog from "@/components/item-entries-dialog"
+import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
 
 async function getWorkOrder(id: string) {
   const workOrder = await prisma.workOrder.findUnique({
@@ -33,20 +35,25 @@ async function getWorkOrder(id: string) {
           contractChecklist: {
             include: {
               items: {
+                include: {
+                  contributions: {
+                    include: { inspector: true }
+                  }
+                },
                 orderBy: { order: 'asc' }
               }
             }
           }
         }
       },
-      inspector: true,
+      inspectors: true,
       checklistItems: {
         include: {
           contractChecklist: true,
           enteredBy: true
         }
       }
-    }
+    } as any
   })
 
   if (!workOrder) {
@@ -97,7 +104,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
 
   // Calculate checklist progress - use contract checklist if available
   const checklistItems = workOrder.contract?.contractChecklist?.items || []
-  const completedItems = checklistItems.filter((item: any) => item.enteredOn !== null).length
+  const completedItems = checklistItems.filter((item: any) => item.status === 'COMPLETED').length
   const totalItems = checklistItems.length
   const progressRate = totalItems > 0 ? (completedItems / totalItems) * 100 : 0
   
@@ -151,144 +158,128 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Work Order Information */}
-        <div className="lg:col-span-1 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Work Order Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Contract</p>
-                <Link 
-                  href={`/contracts/${workOrder.contractId}`}
-                  className="text-primary hover:underline"
-                >
-                  #{workOrder.contract.id.slice(-8).toUpperCase()}
-                </Link>
+      {/* Top overview: Work Order Information + Schedule in one full-width card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle>Work Order Overview</CardTitle>
+          <CardDescription>Key information and schedule</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-8 md:grid-cols-2">
+            {/* Left: Work Order Information */}
+            <div className="space-y-4">
+              {/* Meta row */}
+              <div className="flex flex-wrap items-center gap-3">
+                <Link href={`/contracts/${workOrder.contractId}`} className="font-mono text-sm text-primary hover:underline">#{workOrder.contract.id.slice(-8).toUpperCase()}</Link>
+                <Badge variant={getWorkOrderStatusVariant(workOrder.status)}>{workOrder.status}</Badge>
+                {workOrder.contract.servicePackage && (
+                  <Badge variant="outline">{workOrder.contract.servicePackage}</Badge>
+                )}
               </div>
 
+              {/* Customer */}
               <div>
-                <p className="text-sm text-muted-foreground">Customer</p>
-                <Link 
-                  href={`/customers/${workOrder.contract.customerId}`}
-                  className="flex items-center gap-2 text-primary hover:underline"
-                >
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Customer</p>
+                <Link href={`/customers/${workOrder.contract.customerId}`} className="mt-1 inline-flex items-center gap-2 text-primary hover:underline">
                   <User className="h-4 w-4" />
-                  {workOrder.contract.customer.name}
+                  <span className="font-medium">{workOrder.contract.customer.name}</span>
                 </Link>
               </div>
 
+              {/* Address */}
               <div>
-                <p className="text-sm text-muted-foreground">Property Address</p>
-                <div className="flex items-start gap-2 mt-1">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Property Address</p>
+                <div className="mt-1 flex items-start gap-2">
                   <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
                   <div>
                     <p className="font-medium">{workOrder.contract.address.address}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {workOrder.contract.address.postalCode}
-                    </p>
-                    <div className="flex gap-2 mt-1">
+                    <p className="text-sm text-muted-foreground">{workOrder.contract.address.postalCode}</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
                       <Badge variant="outline">{workOrder.contract.address.propertyType}</Badge>
-                      <Badge variant="secondary">
-                        {workOrder.contract.address.propertySize.replace(/_/g, ' ')}
-                      </Badge>
+                      <Badge variant="secondary">{workOrder.contract.address.propertySize.replace(/_/g, ' ')}</Badge>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div>
-                <p className="text-sm text-muted-foreground">Inspector</p>
-                {workOrder.inspector ? (
-                  <Link 
-                    href={`/inspectors/${workOrder.inspectorId}`}
-                    className="flex items-center gap-2 text-primary hover:underline"
-                  >
-                    <UserCheck className="h-4 w-4" />
-                    {workOrder.inspector.name}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">Unassigned</span>
-                )}
-              </div>
+              {/* (Moved inspectors to right column for a cleaner split) */}
 
+              {/* Optional remarks */}
               {workOrder.remarks && (
                 <div>
-                  <p className="text-sm text-muted-foreground">Remarks</p>
-                  <p className="text-sm">{workOrder.remarks}</p>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Remarks</p>
+                  <p className="text-sm mt-1">{workOrder.remarks}</p>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Schedule Information */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Schedule</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Scheduled Start</p>
-                <p className="font-medium">{formatDateTime(workOrder.scheduledStartDateTime)}</p>
+            {/* Right: Schedule, Inspectors & Sign-off */}
+            <div className="md:border-l md:pl-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Scheduled Start</p>
+                  <p className="mt-1 font-medium">{formatDateTime(workOrder.scheduledStartDateTime)}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Scheduled End</p>
+                  <p className="mt-1 font-medium">{formatDateTime(workOrder.scheduledEndDateTime)}</p>
+                </div>
               </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Scheduled End</p>
-                <p className="font-medium">{formatDateTime(workOrder.scheduledEndDateTime)}</p>
-              </div>
-
-              {workOrder.actualStart && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Actual Start</p>
-                  <p className="font-medium">{formatDateTime(workOrder.actualStart)}</p>
-                </div>
-              )}
-
-              {workOrder.actualEnd && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Actual End</p>
-                  <p className="font-medium">{formatDateTime(workOrder.actualEnd)}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Sign-off Information */}
-          {workOrder.signOffBy && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Sign-off</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Signed Off By</p>
-                  <div className="flex items-center gap-2">
-                    <PenTool className="h-4 w-4" />
-                    <p className="font-medium">{workOrder.signOffBy}</p>
-                  </div>
-                </div>
-                
-                {workOrder.signature && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Signature</p>
-                    <div className="border rounded-lg p-2 bg-accent/50">
-                      <img 
-                        src={workOrder.signature} 
-                        alt="Signature" 
-                        className="max-h-24 mx-auto"
-                      />
+              {(workOrder.actualStart || workOrder.actualEnd) && (
+                <div className="grid grid-cols-2 gap-4">
+                  {workOrder.actualStart && (
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Actual Start</p>
+                      <p className="mt-1 font-medium">{formatDateTime(workOrder.actualStart)}</p>
                     </div>
+                  )}
+                  {workOrder.actualEnd && (
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Actual End</p>
+                      <p className="mt-1 font-medium">{formatDateTime(workOrder.actualEnd)}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Inspectors (compact chips) */}
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Inspectors</p>
+                {workOrder.inspectors?.length ? (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {workOrder.inspectors.map((ins: any) => (
+                      <Link key={ins.id} href={`/inspectors/${ins.id}`}>
+                        <Badge variant="outline" className="inline-flex items-center gap-1">
+                          <UserCheck className="h-3 w-3" />
+                          {ins.name}
+                        </Badge>
+                      </Link>
+                    ))}
                   </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-1">Unassigned</p>
                 )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
+              </div>
+              {workOrder.signOffBy && (
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Signed Off By</p>
+                  <div className="mt-1 inline-flex items-center gap-2">
+                    <PenTool className="h-4 w-4" />
+                    <span className="font-medium">{workOrder.signOffBy}</span>
+                  </div>
+                  {workOrder.signature && (
+                    <div className="mt-2 inline-block rounded border bg-accent/50 p-2">
+                      <img src={workOrder.signature} alt="Signature" className="max-h-24" />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* Checklist Items */}
-        <div className="lg:col-span-2">
+      {/* Checklist Items - full width */}
+      <div>
           <Card>
             <CardHeader>
               <div className="flex justify-between items-center">
@@ -384,9 +375,10 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                       <TableHead>#</TableHead>
                       <TableHead>Item</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Entered By</TableHead>
-                      <TableHead>Entered On</TableHead>
+                      <TableHead>Condition</TableHead>
                       <TableHead>Media</TableHead>
+                      <TableHead>Edit</TableHead>
+
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -399,8 +391,8 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           <div>
                             <p className="font-medium">{item.name || item.item}</p>
                             {(() => {
-                              // Don't show checks count if item is completed
-                              if (item.enteredOn) {
+                              // Don't show count if item is completed
+                              if (item.status === 'COMPLETED') {
                                 return null
                               }
                               
@@ -438,7 +430,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           </div>
                         </TableCell>
                         <TableCell>
-                          {item.enteredOn ? (
+                          {item.status === 'COMPLETED' ? (
                             <Badge variant="success">
                               <CheckCircle className="h-3 w-3 mr-1" />
                               Completed
@@ -448,31 +440,43 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                           )}
                         </TableCell>
                         <TableCell>
-                          {item.enteredBy ? (
-                            <Link 
-                              href={`/inspectors/${item.enteredById}`}
-                              className="text-primary hover:underline text-sm"
-                            >
-                              {item.enteredBy.name}
-                            </Link>
+                          {item.condition ? (
+                            <Badge variant="outline" className="text-xs">
+                              {item.condition.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m: string) => m.toUpperCase())}
+                            </Badge>
                           ) : (
                             <span className="text-muted-foreground text-sm">-</span>
                           )}
                         </TableCell>
                         <TableCell>
-                          <p className="text-sm">
-                            {item.enteredOn ? formatDateTime(item.enteredOn) : '-'}
-                          </p>
+                          <div className="flex items-center gap-2 relative z-10">
+                            <WorkOrderItemMedia 
+                              itemId={item.id}
+                              workOrderId={workOrder.id}
+                              photos={item.photos}
+                              videos={item.videos}
+                              itemName={item.name || item.item}
+                            />
+                            <ItemEntriesDialog
+                              itemId={item.id}
+                              workOrderId={workOrder.id}
+                              entries={item.contributions || []}
+                              itemName={item.name || item.item}
+                            />
+                          </div>
                         </TableCell>
                         <TableCell>
-                          <WorkOrderItemMedia 
+                          <div className="relative z-10 inline-flex">
+                          <EditChecklistItemDialog
                             itemId={item.id}
-                            workOrderId={workOrder.id}
-                            photos={item.photos}
-                            videos={item.videos}
-                            itemName={item.name || item.item}
+                            initialName={item.name || item.item}
+                            initialRemarks={item.remarks || item.description}
+                            initialStatus={item.status || (item.enteredOn ? 'COMPLETED' : 'PENDING')}
+                            initialCondition={item.condition}
                           />
+                          </div>
                         </TableCell>
+                        
                       </TableRow>
                     ))}
                   </TableBody>
@@ -480,7 +484,6 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               )}
             </CardContent>
           </Card>
-        </div>
       </div>
     </div>
   )

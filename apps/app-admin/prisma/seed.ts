@@ -327,7 +327,7 @@ async function main() {
   const workOrder1 = await prisma.workOrder.create({
     data: {
       contractId: contract1.id,
-      inspectorId: inspector1.id,
+      inspectors: { connect: [{ id: inspector1.id }] },
       scheduledStartDateTime: new Date('2024-08-25T10:00:00Z'),
       scheduledEndDateTime: new Date('2024-08-25T12:00:00Z'),
       actualStart: new Date('2024-08-25T10:15:00Z'),
@@ -342,7 +342,7 @@ async function main() {
   const workOrder2 = await prisma.workOrder.create({
     data: {
       contractId: contract2.id,
-      inspectorId: inspector2.id,
+      inspectors: { connect: [{ id: inspector2.id }] },
       scheduledStartDateTime: new Date('2024-08-27T14:00:00Z'),
       scheduledEndDateTime: new Date('2024-08-27T16:00:00Z'),
       status: 'SCHEDULED'
@@ -352,7 +352,7 @@ async function main() {
   const workOrder3 = await prisma.workOrder.create({
     data: {
       contractId: contract3.id,
-      inspectorId: inspector3.id,
+      inspectors: { connect: [{ id: inspector3.id }] },
       scheduledStartDateTime: new Date('2024-08-28T09:00:00Z'),
       scheduledEndDateTime: new Date('2024-08-28T11:00:00Z'),
       status: 'SCHEDULED'
@@ -362,7 +362,7 @@ async function main() {
   const workOrder4 = await prisma.workOrder.create({
     data: {
       contractId: contract4.id,
-      inspectorId: inspector2.id,
+      inspectors: { connect: [{ id: inspector2.id }, { id: inspector1.id }] },
       scheduledStartDateTime: new Date('2024-08-30T10:00:00Z'),
       scheduledEndDateTime: new Date('2024-08-30T13:00:00Z'),
       remarks: 'Premium property - extra attention to detail required',

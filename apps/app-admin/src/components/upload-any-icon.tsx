@@ -9,9 +9,10 @@ interface Props {
   itemId: string
   workOrderId: string
   title?: string
+  contributionId?: string // optional: upload to contribution
 }
 
-export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload media' }: Props) {
+export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload media', contributionId }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
   const [uploading, setUploading] = useState(false)
@@ -28,7 +29,11 @@ export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload med
       const form = new FormData()
       form.set('file', file)
       form.set('workOrderId', workOrderId)
-      const res = await fetch(`/api/checklist-items/${itemId}/${endpoint}`, { method: 'POST', body: form })
+      let url = `/api/checklist-items/${itemId}/${endpoint}`
+      if (contributionId) {
+        url = `/api/checklist-items/contributions/${contributionId}/${endpoint}`
+      }
+      const res = await fetch(url, { method: 'POST', body: form })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
         throw new Error(data.error || 'Upload failed')
@@ -52,4 +57,3 @@ export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload med
     </>
   )
 }
-

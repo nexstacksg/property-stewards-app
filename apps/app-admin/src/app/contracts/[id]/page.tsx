@@ -34,7 +34,7 @@ async function getContract(id: string) {
       },
       workOrders: {
         include: {
-          inspector: true
+          inspectors: true
         },
         orderBy: { scheduledStartDateTime: 'asc' }
       }
@@ -272,7 +272,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                   <TableHeader>
                     <TableRow>
                       <TableHead>Work Order ID</TableHead>
-                      <TableHead>Inspector</TableHead>
+                      <TableHead>Inspectors</TableHead>
                       <TableHead>Scheduled</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Actions</TableHead>
@@ -285,13 +285,17 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                           #{workOrder.id.slice(-8).toUpperCase()}
                         </TableCell>
                         <TableCell>
-                          {workOrder.inspector ? (
-                            <Link 
-                              href={`/inspectors/${workOrder.inspectorId}`}
-                              className="text-primary hover:underline"
-                            >
-                              {workOrder.inspector.name}
-                            </Link>
+                          {workOrder.inspectors && workOrder.inspectors.length > 0 ? (
+                            <div className="flex flex-col gap-1">
+                              {workOrder.inspectors.slice(0, 2).map((ins: any) => (
+                                <Link key={ins.id} href={`/inspectors/${ins.id}`} className="text-primary hover:underline">
+                                  {ins.name}
+                                </Link>
+                              ))}
+                              {workOrder.inspectors.length > 2 && (
+                                <span className="text-xs text-muted-foreground">+{workOrder.inspectors.length - 2} more</span>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">Unassigned</span>
                           )}

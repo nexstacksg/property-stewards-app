@@ -11,9 +11,10 @@ interface Props {
   photos?: string[]
   videos?: string[]
   itemName?: string
+  contributionId?: string
 }
 
-export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], videos = [], itemName }: Props) {
+export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], videos = [], itemName, contributionId }: Props) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'photos' | 'videos'>('photos')
 
@@ -23,7 +24,7 @@ export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], v
   const openVideos = () => { if (!hasVideos) return; setMode('videos'); setOpen(true) }
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3 relative z-10">
       {hasPhotos ? (
         <button onClick={openPhotos} className="text-sm underline underline-offset-4 text-primary bg-transparent p-0 cursor-pointer">
           {photos.length} photo(s)
@@ -39,7 +40,7 @@ export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], v
       ) : (
         <span className="text-sm text-muted-foreground">0 video(s)</span>
       )}
-      <UploadAnyIcon itemId={itemId} workOrderId={workOrderId} title="Upload photo or video" />
+      <UploadAnyIcon itemId={itemId} workOrderId={workOrderId} title="Upload photo or video" contributionId={contributionId} />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-2xl h-[60vh] overflow-auto">

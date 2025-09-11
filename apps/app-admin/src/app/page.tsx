@@ -34,7 +34,7 @@ async function getDashboardStats() {
             address: true
           }
         },
-        inspector: true
+        inspectors: true
       }
     })
 
@@ -223,7 +223,7 @@ export default async function DashboardPage() {
                     {workOrder.contract.address.address}, {workOrder.contract.address.postalCode}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Inspector: {workOrder.inspector.name} • {new Date(workOrder.scheduledStartDateTime).toLocaleDateString()}
+                    Inspectors: {workOrder.inspectors && workOrder.inspectors.length > 0 ? workOrder.inspectors.map((i: any) => i.name).slice(0,2).join(', ') : 'Unassigned'} • {new Date(workOrder.scheduledStartDateTime).toLocaleDateString()}
                   </p>
                 </div>
               </div>

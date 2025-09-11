@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Loader2, Search } from "lucide-react"
+import { ArrowLeft, Loader2, Search, Plus, X, GripVertical, Pencil } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
 
 interface Customer {
@@ -53,7 +53,17 @@ function NewContractPageContent() {
   const [firstPaymentOn, setFirstPaymentOn] = useState("")
   const [remarks, setRemarks] = useState("")
 
+  // Checklist template + inline edit state
+  type ChecklistDraftItem = { item: string; description: string; order: number; isRequired?: boolean }
+  const [templates, setTemplates] = useState<any[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("")
+  const [checklistItems, setChecklistItems] = useState<ChecklistDraftItem[]>([])
+  const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
+  const [rowEditItem, setRowEditItem] = useState<ChecklistDraftItem | null>(null)
+
   useEffect(() => {
+    // Preload all templates so user can choose without selecting address/customer first
+    fetchTemplates()
     if (preselectedCustomerId) {
       fetchCustomer(preselectedCustomerId)
     }
@@ -71,10 +81,95 @@ function NewContractPageContent() {
       const activeAddress = customer.addresses.find(addr => addr.status === 'ACTIVE')
       if (activeAddress) {
         setAddressId(activeAddress.id)
+        // preload templates for the selected address type
+        fetchTemplates(activeAddress.propertyType)
+      } else {
+        fetchTemplates()
       }
     } catch (err) {
       console.error('Error fetching customer:', err)
     }
+  }
+
+  // Templates loader by property type (optional)
+  const fetchTemplates = async (propertyType?: string) => {
+    try {
+      const url = propertyType
+        ? `/api/checklist-templates?propertyType=${encodeURIComponent(propertyType)}`
+        : `/api/checklist-templates`
+      const res = await fetch(url)
+      if (!res.ok) { setTemplates([]); return }
+      const data = await res.json()
+      setTemplates(data.templates || [])
+    } catch { setTemplates([]) }
+  }
+
+  // Load chosen template items
+  const loadTemplate = async (templateId: string) => {
+    setSelectedTemplateId(templateId)
+    if (!templateId) { setChecklistItems([]); return }
+    // try local templates first
+    const local = templates.find(t => t.id === templateId)
+    if (local && Array.isArray(local.items)) {
+      const items = local.items.map((it: any, idx: number) => ({
+        item: it.name,
+        description: it.action || '',
+        order: it.order ?? idx + 1,
+        isRequired: true
+      }))
+      setChecklistItems(items)
+      return
+    }
+    // fallback: fetch full checklist
+    try {
+      const res = await fetch(`/api/checklists/${templateId}`)
+      if (!res.ok) return
+      const tpl = await res.json()
+      const items = (tpl.items || []).map((it: any, idx: number) => ({
+        item: it.name,
+        description: it.action || '',
+        order: it.order ?? idx + 1,
+        isRequired: true
+      }))
+      setChecklistItems(items)
+    } catch {}
+  }
+
+  const addBlankChecklistItem = () => {
+    const i = checklistItems.length
+    const newItem: ChecklistDraftItem = { item: '', description: '', order: i + 1, isRequired: true }
+    setChecklistItems([...checklistItems, newItem])
+    setRowEditIndex(i)
+    setRowEditItem({ ...newItem })
+  }
+
+  const moveChecklistItem = (index: number, dir: 'up'|'down') => {
+    if ((dir === 'up' && index === 0) || (dir === 'down' && index === checklistItems.length - 1)) return
+    const arr = [...checklistItems]
+    const j = dir === 'up' ? index - 1 : index + 1
+    ;[arr[index], arr[j]] = [arr[j], arr[index]]
+    arr.forEach((it, k) => (it.order = k + 1))
+    setChecklistItems(arr)
+  }
+
+  const removeChecklistItem = (index: number) => {
+    const arr = checklistItems.filter((_, i) => i !== index).map((it, k) => ({ ...it, order: k + 1 }))
+    setChecklistItems(arr)
+    if (rowEditIndex === index) { setRowEditIndex(null); setRowEditItem(null) }
+  }
+
+  const startRowEdit = (index: number) => {
+    setRowEditIndex(index)
+    setRowEditItem({ ...checklistItems[index] })
+  }
+
+  const cancelRowEdit = () => { setRowEditIndex(null); setRowEditItem(null) }
+  const saveRowEdit = () => {
+    if (rowEditIndex === null || !rowEditItem) return
+    const arr = [...checklistItems]
+    arr[rowEditIndex] = { ...rowEditItem, order: rowEditIndex + 1 }
+    setChecklistItems(arr)
+    setRowEditIndex(null); setRowEditItem(null)
   }
 
   const searchCustomers = async (term: string) => {
@@ -120,6 +215,12 @@ function NewContractPageContent() {
     if (activeAddress) {
       setAddressId(activeAddress.id)
     }
+    // Try to preload templates for the customer's first active address (does not clear current selection)
+    // if (activeAddress) {
+    //   fetchTemplates(activeAddress.propertyType)
+    // } else {
+    //   fetchTemplates()
+    // }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -154,6 +255,19 @@ function NewContractPageContent() {
       }
 
       const contract = await response.json()
+      // Attach checklist if items present
+      if (checklistItems.length > 0) {
+        try {
+          await fetch(`/api/contracts/${contract.id}/checklist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              templateId: selectedTemplateId || undefined,
+              items: checklistItems.map((it, idx) => ({ name: it.item, action: it.description, order: idx + 1 }))
+            })
+          })
+        } catch {}
+      }
       router.push(`/contracts/${contract.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred")
@@ -348,6 +462,81 @@ function NewContractPageContent() {
                     onChange={(e) => setRemarks(e.target.value)}
                     placeholder="Optional notes about this contract"
                   />
+                </div>
+
+                {/* Checklist (under Contract Information) */}
+                <div className="pt-6">
+                  <h3 className="text-lg font-semibold mb-2">Checklist</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Select a template and optionally edit items before creating the contract</p>
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+                      <div className="space-y-2">
+                        <Label>Template</Label>
+                        <Select value={selectedTemplateId} onValueChange={loadTemplate}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={'Select a template'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {templates.map((t) => (
+                              <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-end">
+                        <Button type="button" variant="outline" className="mb-2" onClick={addBlankChecklistItem}>
+                          <Plus className="h-4 w-4 mr-2" /> Add Item
+                        </Button>
+                      </div>
+                    </div>
+
+                    {checklistItems.length > 0 ? (
+                      <div className="space-y-2">
+                        {checklistItems.map((it, index) => (
+                          <div key={index} className="border rounded-lg p-3 flex items-start gap-2">
+                            <div className="flex flex-col gap-1 pt-1">
+                              <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveChecklistItem(index, 'up')} disabled={index===0}>↑</Button>
+                              <GripVertical className="h-4 w-4 text-muted-foreground mx-auto" />
+                              <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => moveChecklistItem(index, 'down')} disabled={index===checklistItems.length-1}>↓</Button>
+                            </div>
+                            <div className="flex-1">
+                              {rowEditIndex === index ? (
+                                <div className="space-y-2">
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-1">
+                                      <Label>Item Name *</Label>
+                                      <Input value={rowEditItem?.item||''} onChange={(e)=> setRowEditItem(prev => prev ? { ...prev, item: e.target.value } : prev)} />
+                                    </div>
+                                    <div className="space-y-1 md:col-span-2">
+                                      <Label>Description</Label>
+                                      <Input value={rowEditItem?.description||''} onChange={(e)=> setRowEditItem(prev => prev ? { ...prev, description: e.target.value } : prev)} />
+                                    </div>
+                                    <div className="flex items-center justify-end md:col-span-2 gap-2">
+                                      <Button type="button" variant="outline" size="sm" onClick={cancelRowEdit}>Cancel</Button>
+                                      <Button type="button" size="sm" onClick={saveRowEdit} disabled={!rowEditItem?.item?.trim()}>Save</Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <p className="font-medium">{it.order}. {it.item}</p>
+                                    {it.description && <p className="text-sm text-muted-foreground">{it.description}</p>}
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <Button type="button" variant="ghost" size="icon" onClick={()=>startRowEdit(index)} aria-label="Edit item"><Pencil className="h-4 w-4" /></Button>
+                                    <Button type="button" variant="ghost" size="icon" onClick={()=>removeChecklistItem(index)} aria-label="Remove"><X className="h-4 w-4" /></Button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No checklist items selected. Choose a template or add items.</p>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

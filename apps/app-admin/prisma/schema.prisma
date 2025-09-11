@@ -61,6 +61,7 @@ model Inspector {
   status         Status                  @default(ACTIVE)
   checklistItems ContractChecklistItem[]
   workOrders     WorkOrder[]
+  itemEntries    ItemEntry[]
 
   @@index([mobilePhone])
   @@index([status])
@@ -146,19 +147,41 @@ model ContractChecklistItem {
   workOrderId         String?
   order               Int
   tasks               Json?
+  status              ChecklistItemStatus @default(PENDING)
+  condition           Condition?
   contractChecklist   ContractChecklist @relation(fields: [contractChecklistId], references: [id], onDelete: Cascade)
   enteredBy           Inspector?        @relation(fields: [enteredById], references: [id])
   workOrder           WorkOrder?        @relation(fields: [workOrderId], references: [id])
+  contributions       ItemEntry[]
 
   @@unique([contractChecklistId, order])
   @@index([contractChecklistId])
   @@index([workOrderId])
 }
 
+// Per-inspector contribution to a checklist item (remarks/media/selection)
+model ItemEntry {
+  id          String   @id @default(cuid())
+  itemId      String
+  inspectorId String
+  remarks     String?
+  photos      String[]
+  videos      String[]
+  includeInReport Boolean @default(false)
+  createdOn   DateTime @default(now())
+  updatedOn   DateTime @updatedAt
+
+  item        ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inspector   Inspector @relation(fields: [inspectorId], references: [id])
+
+  @@unique([itemId, inspectorId])
+  @@index([itemId])
+  @@index([inspectorId])
+}
+
 model WorkOrder {
   id                     String                  @id @default(cuid())
   contractId             String
-  inspectorId            String
   scheduledStartDateTime DateTime
   scheduledEndDateTime   DateTime
   actualStart            DateTime?
@@ -171,10 +194,9 @@ model WorkOrder {
   status                 WorkOrderStatus         @default(SCHEDULED)
   checklistItems         ContractChecklistItem[]
   contract               Contract                @relation(fields: [contractId], references: [id])
-  inspector              Inspector               @relation(fields: [inspectorId], references: [id])
+  inspectors             Inspector[]
 
   @@index([contractId])
-  @@index([inspectorId])
   @@index([status])
   @@index([scheduledStartDateTime])
 }
@@ -247,6 +269,21 @@ enum PropertySize {
   DETACHED
   BUNGALOW
   GOOD_CLASS_BUNGALOW
+}
+
+// Status for contract checklist items
+enum ChecklistItemStatus {
+  PENDING
+  COMPLETED
+}
+
+// Physical condition options for checklist items
+enum Condition {
+  GOOD
+  FAIR
+  UNSATISFACTORY
+  NOT_APPLICABLE
+  UN_OBSERVABLE
 }
 
 enum InspectorType {

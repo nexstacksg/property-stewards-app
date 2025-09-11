@@ -10,11 +10,11 @@ export async function POST(
   try {
     const { id: contractId } = await params
     const body = await request.json()
-    const { templateId } = body
+    const { templateId, items } = body as { templateId?: string, items?: Array<{ name: string; action?: string; order?: number }> }
 
-    if (!templateId) {
+    if (!templateId && (!items || items.length === 0)) {
       return NextResponse.json(
-        { error: 'Template ID is required' },
+        { error: 'Provide either templateId or items' },
         { status: 400 }
       )
     }
@@ -39,26 +39,15 @@ export async function POST(
       )
     }
 
-    // Get the template
-    const template = await prisma.checklist.findUnique({
-      where: { id: templateId },
-      include: { items: true }
-    })
-
-    if (!template) {
-      return NextResponse.json(
-        { error: 'Template not found' },
-        { status: 404 }
-      )
-    }
-
     // Create the checklist in a transaction
     const contractChecklist = await prisma.$transaction(async (tx) => {
-      // Update contract with template reference
-      await tx.contract.update({
-        where: { id: contractId },
-        data: { basedOnChecklistId: templateId }
-      })
+      // If templateId provided, store reference on contract
+      if (templateId) {
+        await tx.contract.update({
+          where: { id: contractId },
+          data: { basedOnChecklistId: templateId }
+        })
+      }
 
       // Create contract checklist
       const checklist = await tx.contractChecklist.create({
@@ -67,15 +56,29 @@ export async function POST(
         }
       })
 
-      // Create checklist items from template
-      if (template.items && template.items.length > 0) {
+      // Determine source items: custom items (preferred) or template items
+      let sourceItems: Array<{ name: string; action?: string; order?: number }> = []
+      if (items && items.length > 0) {
+        sourceItems = items
+      } else if (templateId) {
+        const template = await tx.checklist.findUnique({
+          where: { id: templateId },
+          include: { items: true }
+        })
+        if (!template) {
+          throw new Error('Template not found')
+        }
+        sourceItems = template.items.map(it => ({ name: it.name, action: it.action, order: it.order }))
+      }
+
+      if (sourceItems.length > 0) {
         await tx.contractChecklistItem.createMany({
-          data: template.items.map(item => ({
+          data: sourceItems.map((item, index) => ({
             contractChecklistId: checklist.id,
             name: item.name,
-            order: item.order,
-            remarks: item.action,  // Keep full action text
-            tasks: parseActionIntoTasks(item.action)  // Parse into tasks array
+            order: item.order ?? index + 1,
+            remarks: item.action ?? '',
+            tasks: parseActionIntoTasks(item.action ?? '')
           }))
         })
       }
@@ -95,6 +98,64 @@ export async function POST(
     console.error('Error adding checklist to contract:', error)
     return NextResponse.json(
       { error: 'Failed to add checklist' },
+      { status: 500 }
+    )
+  }
+}
+
+// PUT /api/contracts/[id]/checklist - Replace or upsert checklist items for a contract
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: contractId } = await params
+    const body = await request.json()
+    const { templateId, items } = body as { templateId?: string, items?: Array<{ name: string; action?: string; order?: number }> }
+
+    // Ensure contract exists
+    const contract = await prisma.contract.findUnique({ where: { id: contractId } })
+    if (!contract) {
+      return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
+    }
+
+    const updatedChecklist = await prisma.$transaction(async (tx) => {
+      // Upsert checklist container
+      let checklist = await tx.contractChecklist.findUnique({ where: { contractId } as any })
+      if (!checklist) {
+        checklist = await tx.contractChecklist.create({ data: { contractId } })
+      }
+
+      // Update contract reference to template if provided
+      if (templateId) {
+        await tx.contract.update({ where: { id: contractId }, data: { basedOnChecklistId: templateId } })
+      }
+
+      // Replace items if provided
+      if (items && items.length > 0) {
+        await tx.contractChecklistItem.deleteMany({ where: { contractChecklistId: checklist.id } })
+        await tx.contractChecklistItem.createMany({
+          data: items.map((item, index) => ({
+            contractChecklistId: checklist!.id,
+            name: item.name,
+            order: item.order ?? index + 1,
+            remarks: item.action ?? '',
+            tasks: parseActionIntoTasks(item.action ?? '')
+          }))
+        })
+      }
+
+      return await tx.contractChecklist.findUnique({
+        where: { id: checklist.id },
+        include: { items: { orderBy: { order: 'asc' } } }
+      })
+    })
+
+    return NextResponse.json(updatedChecklist)
+  } catch (error) {
+    console.error('Error updating checklist for contract:', error)
+    return NextResponse.json(
+      { error: 'Failed to update checklist' },
       { status: 500 }
     )
   }
