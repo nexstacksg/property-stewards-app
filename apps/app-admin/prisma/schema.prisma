@@ -146,6 +146,8 @@ model ContractChecklistItem {
   workOrderId         String?
   order               Int
   tasks               Json?
+  status              ChecklistItemStatus @default(PENDING)
+  condition           Condition?
   contractChecklist   ContractChecklist @relation(fields: [contractChecklistId], references: [id], onDelete: Cascade)
   enteredBy           Inspector?        @relation(fields: [enteredById], references: [id])
   workOrder           WorkOrder?        @relation(fields: [workOrderId], references: [id])
@@ -247,6 +249,21 @@ enum PropertySize {
   DETACHED
   BUNGALOW
   GOOD_CLASS_BUNGALOW
+}
+
+// Status for contract checklist items
+enum ChecklistItemStatus {
+  PENDING
+  COMPLETED
+}
+
+// Physical condition options for checklist items
+enum Condition {
+  GOOD
+  FAIR
+  UNSATISFACTORY
+  NOT_APPLICABLE
+  UN_OBSERVABLE
 }
 
 enum InspectorType {

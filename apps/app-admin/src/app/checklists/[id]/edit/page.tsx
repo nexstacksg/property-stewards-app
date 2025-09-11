@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Plus, X, Loader2, Save, GripVertical } from "lucide-react"
+import { ArrowLeft, Plus, X, Loader2, Save, GripVertical, Pencil } from "lucide-react"
 
 interface ChecklistItem {
   id?: string
@@ -52,6 +52,9 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
   
   // Checklist items
   const [items, setItems] = useState<ChecklistItem[]>([])
+  // Inline row editing state
+  const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
+  const [rowEditItem, setRowEditItem] = useState<ChecklistItem | null>(null)
   const [deletedItemIds, setDeletedItemIds] = useState<string[]>([])
   const [showItemForm, setShowItemForm] = useState(false)
   const [newItem, setNewItem] = useState<ChecklistItem>({
@@ -132,6 +135,10 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
       item.order = i + 1
     })
     setItems(updatedItems)
+    if (rowEditIndex === index) {
+      setRowEditIndex(null)
+      setRowEditItem(null)
+    }
   }
 
   const moveItem = (index: number, direction: 'up' | 'down') => {
@@ -154,6 +161,25 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
     })
     
     setItems(newItems)
+  }
+
+  const startRowEdit = (index: number) => {
+    setRowEditIndex(index)
+    setRowEditItem({ ...items[index] })
+  }
+
+  const cancelRowEdit = () => {
+    setRowEditIndex(null)
+    setRowEditItem(null)
+  }
+
+  const saveRowEdit = () => {
+    if (rowEditIndex === null || !rowEditItem) return
+    const updated = [...items]
+    updated[rowEditIndex] = { ...rowEditItem, order: rowEditIndex + 1 }
+    setItems(updated)
+    setRowEditIndex(null)
+    setRowEditItem(null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -402,35 +428,92 @@ export default function EditChecklistPage({ params }: { params: Promise<{ id: st
                           </Button>
                         </div>
                         <div className="flex-1">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <p className="font-medium">
-                                {item.order}. {item.name || item.item}
-                              </p>
-                              {item.action || item.description && (
-                                <p className="text-sm text-muted-foreground">{item.action || item.description}</p>
-                              )}
-                              <div className="flex gap-2 mt-1">
-                                {/* <Badge variant="outline">{item.category}</Badge> */}
-                                <Badge variant={item.isRequired ? 'default' : 'secondary'}>
-                                  {item.isRequired ? 'Required' : 'Optional'}
-                                </Badge>
-                                {item.status && (
-                                  <Badge variant={item.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                                    {item.status}
-                                  </Badge>
-                                )}
+                          {rowEditIndex === index ? (
+                            <div className="space-y-2">
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <div className="space-y-1">
+                                  <Label>Item Name *</Label>
+                                  <Input
+                                    value={rowEditItem?.item || rowEditItem?.name || ''}
+                                    onChange={(e) => setRowEditItem(prev => prev ? { ...prev, item: e.target.value, name: e.target.value } : prev)}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label>Category</Label>
+                                  <Select
+                                    value={rowEditItem?.category || 'GENERAL'}
+                                    onValueChange={(val) => setRowEditItem(prev => prev ? { ...prev, category: val } : prev)}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {CATEGORIES.map(cat => (
+                                        <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1 md:col-span-2">
+                                  <Label>Description</Label>
+                                  <Input
+                                    value={rowEditItem?.description || rowEditItem?.action || ''}
+                                    onChange={(e) => setRowEditItem(prev => prev ? { ...prev, description: e.target.value, action: e.target.value } : prev)}
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between md:col-span-2">
+                                  <div className="flex items-center space-x-2">
+                                    <input
+                                      type="checkbox"
+                                      id={`row-required-${index}`}
+                                      checked={!!rowEditItem?.isRequired}
+                                      onChange={(e) => setRowEditItem(prev => prev ? { ...prev, isRequired: e.target.checked } : prev)}
+                                      className="rounded"
+                                    />
+                                    <Label htmlFor={`row-required-${index}`}>Required Item</Label>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button type="button" variant="outline" size="sm" onClick={cancelRowEdit}>Cancel</Button>
+                                    <Button type="button" size="sm" onClick={saveRowEdit} disabled={!rowEditItem?.item && !rowEditItem?.name}>Save</Button>
+                                  </div>
+                                </div>
                               </div>
                             </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => removeItem(index)}
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
+                          ) : (
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <p className="font-medium">
+                                  {item.order}. {item.name || item.item}
+                                </p>
+                                {(item.action || item.description) && (
+                                  <p className="text-sm text-muted-foreground">{item.action || item.description}</p>
+                                )}
+                                <div className="flex gap-2 mt-1">
+                                  <Badge variant={item.isRequired ? 'default' : 'secondary'}>
+                                    {item.isRequired ? 'Required' : 'Optional'}
+                                  </Badge>
+                                  {item.status && (
+                                    <Badge variant={item.status === 'ACTIVE' ? 'success' : 'secondary'}>
+                                      {item.status}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex gap-1">
+                                <Button type="button" variant="ghost" size="icon" onClick={() => startRowEdit(index)} aria-label="Edit item">
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => removeItem(index)}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
