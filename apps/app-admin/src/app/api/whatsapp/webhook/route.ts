@@ -14,7 +14,8 @@ import {
   getInspectorByPhone,
   updateWorkOrderDetails,
   completeAllTasksForLocation,
-  getWorkOrderProgress
+  getWorkOrderProgress,
+  getContractChecklistItemIdByLocation
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
 // Redis removed; session cache is used instead via chat-session
@@ -85,17 +86,31 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const event = body.event;
-    
+    const { data } = body;
+
     // Log all events for debugging
     console.log(`📨 Received webhook event: ${event}`);
     
-    // Process both text and media messages
-    if (event !== 'message:in:new') {
-      console.log(`⏭️ Ignoring event: ${event} - only processing message:in:new`);
+    // Early media detection so we don't skip media-only events
+    const preHasMedia = !!(
+      data?.type === 'image' ||
+      data?.type === 'video' ||
+      data?.type === 'document' ||
+      data?.type === 'audio' ||
+      data?.hasMedia ||
+      data?.media ||
+      data?.message?.imageMessage ||
+      data?.message?.videoMessage ||
+      data?.message?.documentMessage ||
+      data?.url ||
+      data?.fileUrl
+    );
+
+    // Process both text and media messages; don't drop media-only events
+    if (event !== 'message:in:new' && !preHasMedia) {
+      console.log(`⏭️ Ignoring event: ${event} (no media detected)`);
       return NextResponse.json({ success: true });
     }
-
-    const { data } = body;
     
     // Skip outgoing messages (safety check)
     if (data.fromMe || data.self === 1 || data.flow === 'outbound') {
@@ -168,30 +183,15 @@ export async function POST(request: NextRequest) {
     if (hasMedia) {
       console.log('🔄 Processing media message...');
       
-      // Use existing thread if available, don't create new one to preserve context
+      // Use existing thread if available for assistant notification later
       let threadId :any= whatsappThreads.get(phoneNumber);
-      
-      if (!threadId) {
-        console.log('⚠️ No existing thread found for media upload from phone:', phoneNumber);
-        console.log('📝 User needs to start a conversation first to establish context');
-        
-        // Send helpful message instead of creating new thread
-        await sendWhatsAppResponse(phoneNumber, 
-          'Please start a conversation first before uploading media. Try saying "What are my jobs today?" to get started.'
-        );
-        
-        const msgData = processedMessages.get(messageId);
-        if (msgData) {
-          msgData.responded = true;
-          processedMessages.set(messageId, msgData);
-        }
-        
-        return NextResponse.json({ success: true });
+      if (threadId) {
+        console.log('✅ Found existing thread for media upload:', threadId);
+      } else {
+        console.log('ℹ️ No thread found; proceeding with media handling using session context only');
       }
       
-      console.log('✅ Using existing thread for media upload:', threadId);
-      
-      // Pass normalized phone number to media handler
+      // Pass normalized phone number to media handler (always process to save media and craft response)
       const mediaResponse = await handleMediaMessage(data, phoneNumber);
       if (mediaResponse) {
         // Send response via Wassenger
@@ -1398,14 +1398,6 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
   try {
     console.log('🔄 Processing WhatsApp media message for phone:', phoneNumber);
     
-    // Phone number is already normalized; recover threadId from in-memory map
-    let threadId:any = whatsappThreads.get(phoneNumber);
-    
-    if (!threadId) {
-      console.log('❌ No thread found for media upload for phone:', phoneNumber);
-      return 'Please start a conversation first before uploading media.';
-    }
-    
     // Get session state for context
     let metadata: any = await getSessionState(phoneNumber);
     console.log('📋 Thread metadata for media upload:', metadata);
@@ -1423,7 +1415,7 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     if (!workOrderId) {
       console.log('⚠️ No work order context - media upload without job context');
-      return 'Please select a job first before uploading media. Try saying "what are my jobs today?" to get started.';
+      return 'Please select a job first before uploading media. Try saying "What are my jobs today?" to get started.';
     }
     
     if (!currentLocation) {
@@ -1583,79 +1575,95 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     const publicUrl = `${PUBLIC_URL}/${key}`;
     console.log('✅ Uploaded to DigitalOcean Spaces:', publicUrl);
     
-    // Save to database - find ContractChecklistItem for this location
+    // Save to database - resolve the correct ContractChecklistItem and upsert ItemEntry where possible
     if (workOrderId && currentLocation) {
-      const normalizedRoomName = roomName.replace(/-/g, ' ');
-      console.log('💾 Saving media to database for location:', normalizedRoomName);
+      console.log('💾 Saving media to database for location:', currentLocation);
       console.log('📍 Work Order ID:', workOrderId);
-      
-      const workOrder = await prisma.workOrder.findUnique({
-        where: { id: workOrderId },
-        include: {
-          contract: {
-            include: {
-              contractChecklist: {
-                include: {
-                  items: true
+
+      // 1) Try cached mapping from workOrderId + location → checklist item ID
+      let targetItemId: string | null = null;
+      try {
+        targetItemId = await getContractChecklistItemIdByLocation(workOrderId, currentLocation);
+      } catch (e) {
+        console.warn('getContractChecklistItemIdByLocation failed, will fallback to name matching:', e);
+      }
+
+      // 2) Fallback: load WO and match by normalized name (same approach as chat route)
+      if (!targetItemId) {
+        const workOrder = await prisma.workOrder.findUnique({
+          where: { id: workOrderId },
+          include: {
+            contract: {
+              include: {
+                contractChecklist: {
+                  include: { items: true }
                 }
               }
             }
           }
-        }
-      });
-      
-      if (workOrder?.contract.contractChecklist) {
-        console.log('✅ Found contract checklist with', workOrder.contract.contractChecklist.items.length, 'items');
-        
-        // Find ContractChecklistItem for this location
-        const matchingItem = workOrder.contract.contractChecklist.items.find(
-          (item: any) => item.name.toLowerCase() === normalizedRoomName.toLowerCase()
-        );
-        
-        if (matchingItem) {
-          console.log('✅ Found matching checklist item:', matchingItem.id, 'for location:', matchingItem.name);
-          
-          // Update ContractChecklistItem with new media
-          const currentPhotos = matchingItem.photos || [];
-          const currentVideos = matchingItem.videos || [];
-          
-          console.log('📷 Current photos count:', currentPhotos.length);
-          console.log('🎥 Current videos count:', currentVideos.length);
-          
-          // Prefer saving in per-inspector ItemEntry if we know who is sending
-          const inspectorId = (metadata as any).inspectorId as string | undefined
-          if (inspectorId) {
-            if (mediaType === 'photo') {
-              await (prisma as any).itemEntry.upsert({
-                where: { itemId_inspectorId: { itemId: matchingItem.id, inspectorId } },
-                update: { photos: { push: publicUrl } },
-                create: { itemId: matchingItem.id, inspectorId, photos: [publicUrl], videos: [] }
-              })
-            } else {
-              await (prisma as any).itemEntry.upsert({
-                where: { itemId_inspectorId: { itemId: matchingItem.id, inspectorId } },
-                update: { videos: { push: publicUrl } },
-                create: { itemId: matchingItem.id, inspectorId, photos: [], videos: [publicUrl] }
-              })
-            }
-            console.log('✅ Media saved to ItemEntry for inspector', inspectorId)
-          } else {
-            if (mediaType === 'photo') {
-              const updatedPhotos = [...currentPhotos, publicUrl];
-              await prisma.contractChecklistItem.update({ where: { id: matchingItem.id }, data: { photos: updatedPhotos } });
-              console.log('✅ Photo saved to item. Count:', updatedPhotos.length)
-            } else {
-              const updatedVideos = [...currentVideos, publicUrl];
-              await prisma.contractChecklistItem.update({ where: { id: matchingItem.id }, data: { videos: updatedVideos } });
-              console.log('✅ Video saved to item. Count:', updatedVideos.length)
-            }
-          }
+        });
+
+        const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+        const normalizedTarget = norm(currentLocation);
+        const items = workOrder?.contract?.contractChecklist?.items || [];
+        const byName = items.find((i: any) => norm(i.name) === normalizedTarget);
+        if (byName) {
+          targetItemId = byName.id;
+          console.log('✅ Resolved checklist item by normalized name:', byName.id, 'for', byName.name);
         } else {
-          console.log('❌ No matching ContractChecklistItem found for location:', normalizedRoomName);
-          console.log('📋 Available locations:', workOrder.contract.contractChecklist.items.map((item: any) => item.name));
+          console.log('❌ No checklist item matched by name for location:', currentLocation);
+          console.log('📋 Available (normalized) names:', items.map((i: any) => ({ id: i.id, name: i.name, n: norm(i.name) })));
+        }
+      }
+
+      if (targetItemId) {
+        // Prefer per-inspector ItemEntry like the chat API
+        let inspectorId = (metadata as any).inspectorId as string | undefined;
+        if (!inspectorId) {
+          // Try to infer inspector by phone if available
+          try {
+            const phoneRaw = (metadata?.inspectorPhone as string) || phoneNumber;
+            if (phoneRaw) {
+              const variants = [phoneRaw, phoneRaw.startsWith('+') ? phoneRaw.slice(1) : `+${phoneRaw}`];
+              for (const p of variants) {
+                const match = await getInspectorByPhone(p) as any;
+                if (match?.id) { inspectorId = match.id; break; }
+              }
+            }
+          } catch {}
+        }
+
+        if (inspectorId) {
+          if (mediaType === 'photo') {
+            await (prisma as any).itemEntry.upsert({
+              where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } },
+              update: { photos: { push: publicUrl } },
+              create: { itemId: targetItemId, inspectorId, photos: [publicUrl], videos: [] }
+            });
+          } else {
+            await (prisma as any).itemEntry.upsert({
+              where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } },
+              update: { videos: { push: publicUrl } },
+              create: { itemId: targetItemId, inspectorId, photos: [], videos: [publicUrl] }
+            });
+          }
+          console.log('✅ Media saved to ItemEntry for inspector', inspectorId);
+        } else {
+          // Fallback: attach to item-level arrays
+          if (mediaType === 'photo') {
+            const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { photos: true } });
+            const updatedPhotos = [ ...(existing?.photos || []), publicUrl ];
+            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { photos: updatedPhotos } });
+            console.log('✅ Photo saved to item. Count:', updatedPhotos.length);
+          } else {
+            const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { videos: true } });
+            const updatedVideos = [ ...(existing?.videos || []), publicUrl ];
+            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { videos: updatedVideos } });
+            console.log('✅ Video saved to item. Count:', updatedVideos.length);
+          }
         }
       } else {
-        console.log('❌ No contract checklist found for work order');
+        console.log('❌ Could not resolve a ContractChecklistItem ID for location:', currentLocation);
       }
     } else {
       console.log('⚠️ Skipping database save - missing workOrderId or currentLocation');
