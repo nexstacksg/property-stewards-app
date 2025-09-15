@@ -326,9 +326,7 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       threadId = thread.id;
       
       // Store in session cache for persistence
-      await updateSessionState(cleanPhone, {
-        inspectorId: inspector?.id || '',
-        inspectorName: inspector?.name || '',
+      const sessionUpdate: any = {
         workOrderId: '',
         currentLocation: '',
         createdAt: new Date().toISOString(),
@@ -336,7 +334,12 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
         // Chat-session is generic; threadId is fine to include
         // @ts-ignore
         threadId
-      });
+      };
+      if (inspector?.id) {
+        sessionUpdate.inspectorId = inspector.id;
+        sessionUpdate.inspectorName = inspector.name;
+      }
+      await updateSessionState(cleanPhone, sessionUpdate);
 
       // Also cache in memory
       whatsappThreads.set(cleanPhone, threadId);
@@ -1663,6 +1666,8 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
       }
 
       if (targetItemId) {
+        // Persist current item context for follow-up actions (remarks, condition, more media)
+        try { await updateSessionState(phoneNumber, { currentItemId: targetItemId }); } catch {}
         // Prefer per-inspector ItemEntry like the chat API
         let inspectorId = (metadata as any).inspectorId as string | undefined;
         if (!inspectorId) {
@@ -1675,6 +1680,17 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
                 const match = await getInspectorByPhone(p) as any;
                 if (match?.id) { inspectorId = match.id; break; }
               }
+            }
+          } catch {}
+        }
+
+        // If still no inspector, try deriving from the work order itself
+        if (!inspectorId && workOrderId) {
+          try {
+            const wo = await prisma.workOrder.findUnique({ where: { id: workOrderId }, select: { inspectorId: true } }) as any
+            if (wo?.inspectorId) {
+              inspectorId = wo.inspectorId
+              console.log('👤 Using inspector from work order:', inspectorId)
             }
           } catch {}
         }
