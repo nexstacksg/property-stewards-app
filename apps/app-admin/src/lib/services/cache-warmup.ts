@@ -59,6 +59,8 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
         videos: true,
         enteredOn: true,
         enteredById: true,
+        status: true,
+        condition:true,
         order: true,
         tasks: true,
         contractChecklist: {
