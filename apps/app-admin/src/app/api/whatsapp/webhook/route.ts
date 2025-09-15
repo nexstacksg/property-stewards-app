@@ -18,6 +18,7 @@ import {
   getContractChecklistItemIdByLocation
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
+import { getMemcacheClient, cacheGetJSON, cacheSetJSON } from '@/lib/memcache';
 // Redis removed; session cache is used instead via chat-session
 
 // Initialize OpenAI client
@@ -165,19 +166,28 @@ export async function POST(request: NextRequest) {
       console.log('📎 Media detected in WhatsApp message - proceeding with media handling');
     }
     
-    // Check if already processed
+    // Idempotency: prevent duplicate processing across instances using Memcache lock, fall back to in-memory map
+    let lockAcquired = true;
+    const mc = getMemcacheClient();
+    if (mc) {
+      try {
+        const key = `wh:msg:${messageId}`;
+        const added = await mc.add(key, Buffer.from('1'), { expires: 300 });
+        if (!added) {
+          console.log(`⏭️ Skipping duplicate webhook for message ${messageId} (memcache lock present)`);
+          return NextResponse.json({ success: true });
+        }
+      } catch (e) {
+        console.warn('⚠️ Memcache add failed, falling back to in-memory dedupe', e);
+      }
+    }
+    // In-memory dedupe as a secondary guard (same instance)
     const processed = processedMessages.get(messageId);
     if (processed && processed.responded) {
-      console.log(`⏭️ Message ${messageId} already processed and responded`);
+      console.log(`⏭️ Message ${messageId} already processed and responded (memory)`);
       return NextResponse.json({ success: true });
     }
-    
-    // Mark as being processed
-    processedMessages.set(messageId, {
-      timestamp: Date.now(),
-      responseId: `resp-${Date.now()}`,
-      responded: false
-    });
+    processedMessages.set(messageId, { timestamp: Date.now(), responseId: `resp-${Date.now()}`, responded: false });
     
     // Handle media messages
     if (hasMedia) {
@@ -279,10 +289,14 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
     // Phone number is already normalized from the caller
     const cleanPhone = phoneNumber;
     
-    // Use session cache for metadata and in-memory map for thread id
+    // Use session cache for metadata and recover thread id from session if needed
     let threadId :any = whatsappThreads.get(cleanPhone);
     let metadata = await getSessionState(cleanPhone);
-    
+    if (!threadId && (metadata as any)?.threadId) {
+      threadId = (metadata as any).threadId;
+      console.log(`🔁 Recovered thread from session cache ${threadId} for ${cleanPhone}`);
+      whatsappThreads.set(cleanPhone, threadId);
+    }
     if (threadId) {
       console.log(`📌 Using cached thread ${threadId} for ${cleanPhone}`);
       // Also cache in memory for this request
@@ -335,22 +349,52 @@ async function processWithAssistant(phoneNumber: string, message: string): Promi
       content: message
     });
 
-    // Get or create assistant - SINGLETON PATTERN with proper promise handling
+    // Get or create assistant - prefer shared ID via Memcache across instances
     if (!assistantId) {
-      if (!assistantCreationPromise) {
-        console.log('🔧 Creating assistant for first time...');
-        assistantCreationPromise = createAssistant();
-      } else {
-        console.log('⏳ Waiting for assistant creation from another request...');
-      }
-      
       try {
-        assistantId = await assistantCreationPromise;
-        console.log('✅ Assistant ready:', assistantId);
-      } catch (error) {
-        console.error('❌ Failed to get assistant:', error);
-        assistantCreationPromise = null; // Reset to allow retry
-        return 'Service initialization failed. Please try again.';
+        const cached = await cacheGetJSON<string>('assistant:id');
+        if (cached) {
+          assistantId = cached;
+          console.log('📌 Using assistant from cache:', assistantId);
+        }
+      } catch {}
+      if (!assistantId) {
+        if (!assistantCreationPromise) {
+          // Use a lightweight cross-instance lock to avoid duplicate creations
+          const mc = getMemcacheClient();
+          let canCreate = true;
+          if (mc) {
+            try {
+              const locked = await mc.add('assistant:creating', Buffer.from('1'), { expires: 60 });
+              canCreate = locked;
+              if (!locked) console.log('⏳ Another instance creating assistant, waiting for ID...');
+            } catch {}
+          }
+          if (canCreate) {
+            console.log('🔧 Creating assistant for first time...');
+            assistantCreationPromise = createAssistant();
+          } else {
+            // Poll memcache for assistant id up to 20s
+            assistantCreationPromise = (async () => {
+              for (let i = 0; i < 40; i++) {
+                const id = await cacheGetJSON<string>('assistant:id');
+                if (id) return id;
+                await new Promise(r => setTimeout(r, 500));
+              }
+              throw new Error('Timeout waiting for assistant id from cache');
+            })();
+          }
+        } else {
+          console.log('⏳ Waiting for assistant creation from another request...');
+        }
+        try {
+          assistantId = await assistantCreationPromise;
+          console.log('✅ Assistant ready:', assistantId);
+        } catch (error) {
+          console.error('❌ Failed to get assistant:', error);
+          assistantCreationPromise = null; // Reset to allow retry
+          return 'Service initialization failed. Please try again.';
+        }
       }
     }
     
@@ -684,6 +728,8 @@ MEDIA DISPLAY FORMATTING:
   });
 
     console.log('✅ ASSISTANT CREATED SUCCESSFULLY:', assistant.id);
+    // Store globally in Memcache for cross-instance reuse
+    try { await cacheSetJSON('assistant:id', assistant.id, { ttlSeconds: 30 * 24 * 60 * 60 }); } catch {}
     // CRITICAL: Return the ID to be cached
     return assistant.id;
   } catch (error) {
