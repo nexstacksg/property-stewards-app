@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getSessionState, updateSessionState } from '@/lib/chat-session';
+import type { ChatSessionState } from '@/lib/chat-session';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-client';
 import { randomUUID } from 'crypto';
@@ -15,7 +16,8 @@ import {
   updateWorkOrderDetails,
   completeAllTasksForLocation,
   getWorkOrderProgress,
-  getContractChecklistItemIdByLocation
+  getContractChecklistItemIdByLocation,
+  getTaskMedia as getTaskMediaService
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
 import { getMemcacheClient, cacheGetJSON, cacheSetJSON } from '@/lib/memcache';
@@ -1051,12 +1053,12 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
         // Update session state
         if (sessionId) {
           const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/);
-          const updatedMetadata = {
+          const updatedMetadata: Partial<ChatSessionState> = {
             workOrderId: args.jobId,
             customerName: workOrder.customer_name,
             propertyAddress: workOrder.property_address,
             postalCode: postalCodeMatch ? postalCodeMatch[1] : 'unknown',
-            jobStatus: "confirming"
+            jobStatus: 'confirming'
           };
           await updateSessionState(sessionId, updatedMetadata);
         }
@@ -1082,6 +1084,18 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
         
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' });
+          // Backfill inspectorId from work order if missing
+          try {
+            const s = await getSessionState(sessionId);
+            if (!s.inspectorId) {
+              const wo = await prisma.workOrder.findUnique({
+                where: { id: args.jobId },
+                select: { inspectors: { select: { id: true } } }
+              }) as any;
+              const derived = wo?.inspectors?.[0]?.id;
+              if (derived) await updateSessionState(sessionId, { inspectorId: derived });
+            }
+          } catch {}
         }
         
         const locations = await getLocationsWithCompletionStatus(args.jobId) as any[];
@@ -1150,7 +1164,6 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           const success = await completeAllTasksForLocation(args.workOrderId, location);
           // Cache itemId to session for follow-up (condition/remarks/media)
           try {
-            const { getContractChecklistItemIdByLocation } = await import('@/lib/services/inspectorService')
             const itemIdForSession = await getContractChecklistItemIdByLocation(args.workOrderId, location)
             if (sessionId && itemIdForSession) await updateSessionState(sessionId, { currentItemId: itemIdForSession as any })
           } catch {}
@@ -1179,10 +1192,7 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           const condition = map[Number(args.conditionNumber)]
           if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number' })
           let itemId = (s as any).currentItemId as string
-          if (!itemId) {
-            const { getContractChecklistItemIdByLocation } = await import('@/lib/services/inspectorService')
-            itemId = (await getContractChecklistItemIdByLocation(args.workOrderId, loc)) as any
-          }
+          if (!itemId) itemId = (await getContractChecklistItemIdByLocation(args.workOrderId, loc)) as any
           if (!itemId) return JSON.stringify({ success: false, error: 'Unable to resolve checklist item' })
           await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { condition: condition as any, status: 'COMPLETED' } })
           const mediaRequired = !(condition === 'GOOD' || condition === 'UN_OBSERVABLE')
@@ -1254,18 +1264,20 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           });
         }
         
-        // Store inspector details in session cache
-        if (threadId) {
-          const inspectorMetadata = {
+        // Store inspector details in session cache immediately (use sessionId / phone key)
+        try {
+          const phoneKey = (sessionId && sessionId.toString()) || normalizedPhone.replace(/[^\d]/g, '');
+          await updateSessionState(phoneKey, {
             channel: 'whatsapp',
             phoneNumber: normalizedPhone,
             inspectorId: inspector.id,
             inspectorName: inspector.name,
             inspectorPhone: inspector.mobilePhone || normalizedPhone,
             identifiedAt: new Date().toISOString()
-          };
-          const phoneNumberForSession = (metadata.phoneNumber as string) || normalizedPhone.replace(/[^\d]/g, '');
-          await (await import('@/lib/chat-session')).updateSessionState(phoneNumberForSession, inspectorMetadata);
+          });
+          console.log('✅ Stored inspector info in session for', phoneKey);
+        } catch (e) {
+          console.warn('⚠️ Failed to persist inspector info to session', e);
         }
         
         return JSON.stringify({
@@ -1289,14 +1301,11 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
             console.log('🔍 Work order from session:', (metadata as any).workOrderId);
             
             if ((metadata as any).currentLocation && (metadata as any).workOrderId) {
-              // Use the imported helper function
-              const { getContractChecklistItemIdByLocation } = await import('@/lib/services/inspectorService');
               const actualTaskId = await getContractChecklistItemIdByLocation((metadata as any).workOrderId, (metadata as any).currentLocation);
               
               if (actualTaskId) {
                 console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
-                const { getTaskMedia } = await import('@/lib/services/inspectorService');
-                const mediaInfo = await getTaskMedia(actualTaskId) as any;
+                const mediaInfo = await getTaskMediaService(actualTaskId) as any;
                 
                 if (mediaInfo) {
                   console.log('📸 Found media for location:', metadata.currentLocation, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
@@ -1325,8 +1334,7 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           }
           
           // Normal case - try with the provided taskId
-          const { getTaskMedia } = await import('@/lib/services/inspectorService');
-          const mediaInfo = await getTaskMedia(args.taskId) as any;
+          const mediaInfo = await getTaskMediaService(args.taskId) as any;
           
           if (!mediaInfo) {
             console.log('❌ No media found for taskId:', args.taskId);
@@ -1395,8 +1403,7 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           
           // Get media using the ContractChecklistItem ID
           console.log('📎 Getting media for ContractChecklistItem ID:', targetLocation.contractChecklistItemId);
-          const { getTaskMedia: getTaskMediaFunc } = await import('@/lib/services/inspectorService');
-          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId) as any;
+          const locationMediaInfo = await getTaskMediaService(targetLocation.contractChecklistItemId) as any;
           
           if (!locationMediaInfo) {
             console.log('❌ No media found for WhatsApp location:', targetLocation.name);
@@ -1449,7 +1456,7 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
     
     // Get session state for context
     let metadata: any = await getSessionState(phoneNumber);
-    console.log('📋 Thread metadata for media upload:', metadata);
+    console.log('📋 Session state for media upload:', metadata);
     
     // Check if we have work order context
     const workOrderId = metadata.workOrderId;
@@ -1684,15 +1691,26 @@ async function handleMediaMessage(data: any, phoneNumber: string): Promise<strin
           } catch {}
         }
 
-        // If still no inspector, try deriving from the work order itself
+        // If still no inspector, try deriving from the work order's inspectors relation
         if (!inspectorId && workOrderId) {
           try {
-            const wo = await prisma.workOrder.findUnique({ where: { id: workOrderId }, select: { inspectorId: true } }) as any
-            if (wo?.inspectorId) {
-              inspectorId = wo.inspectorId
-              console.log('👤 Using inspector from work order:', inspectorId)
+            const wo = await prisma.workOrder.findUnique({
+              where: { id: workOrderId },
+              select: { inspectors: { select: { id: true } } }
+            }) as any
+            const first = wo?.inspectors?.[0]?.id
+            if (first) {
+              inspectorId = first
+              console.log('👤 Using inspector from work order inspectors[]:', inspectorId)
             }
-          } catch {}
+          } catch (e) {
+            console.warn('Failed to derive inspector from work order inspectors[]', e)
+          }
+        }
+
+        // Persist inspectorId into session for future uploads
+        if (inspectorId) {
+          try { await updateSessionState(phoneNumber, { inspectorId }); } catch {}
         }
 
         if (inspectorId) {
