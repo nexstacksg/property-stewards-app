@@ -100,6 +100,7 @@ CONVERSATION FLOW GUIDELINES:
    - Update status to STARTED automatically
    - Display available rooms/locations for inspection
    - CRITICAL: ALWAYS format locations with numbered brackets [1], [2], [3] etc.
+   - If the tool returns locationformatted, ALWAYS use that array verbatim (it already includes the “(Done)” suffix for completed rooms based on status)
    - When showing locations, automatically append "(Done)" to locations where all tasks are completed
    - Format as: "[1] Living Room (Done)" for completed locations
    - Example format:
@@ -159,7 +160,8 @@ CONVERSATION FLOW GUIDELINES:
    - Handle errors gracefully with helpful messages
 
 INSPECTOR IDENTIFICATION:
-- Check if inspector is already identified in thread metadata
+- First, call getSessionContext to see if inspectorId is already known for this session
+- If inspectorId is present, do NOT ask for identity again
 - If unknown, politely ask: "Hello! To assign you today's inspection jobs, I need your details. Please provide:
   [1] Your full name
   [2] Your phone number (with country code, e.g., +65 for Singapore)"
@@ -194,6 +196,48 @@ MEDIA DISPLAY FORMATTING:
 
 // Define tools for OpenAI Assistant API
 const assistantTools = [
+  {
+    type: 'function' as const,
+    function: {
+      name: 'getSessionContext',
+      description: 'Get session-scoped context such as identified inspector and job state',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'setLocationCondition',
+      description: 'Set the condition for the current location (Good, Fair, Unsatisfactory, Not Applicable, Un-Observable) using a number from 1-5',
+      parameters: {
+        type: 'object',
+        properties: {
+          workOrderId: { type: 'string', description: 'Work order ID' },
+          location: { type: 'string', description: 'Location/room name (optional if set in session)' },
+          conditionNumber: { type: 'number', description: '1=Good, 2=Fair, 3=Unsatisfactory, 4=Not Applicable, 5=Un-Observable' }
+        },
+        required: ['workOrderId', 'conditionNumber']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'addLocationRemarks',
+      description: 'Add remarks for the current location by the identified inspector and create/update an ItemEntry',
+      parameters: {
+        type: 'object',
+        properties: {
+          remarks: { type: 'string', description: 'Remarks to save' }
+        },
+        required: ['remarks']
+      }
+    }
+  },
   {
     type: 'function' as const,
     function: {
@@ -516,6 +560,23 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
   // Prefer session cache for context
   const metadata = sessionId ? await getSessionState(sessionId) : (threadId ? await getThreadMetadata(threadId) : {});
   switch (toolName) {
+    case 'getSessionContext':
+      try {
+        const s = sessionId ? await getSessionState(sessionId) : {}
+        return JSON.stringify({
+          success: true,
+          session: {
+            inspectorId: s.inspectorId || null,
+            inspectorName: s.inspectorName || null,
+            inspectorPhone: s.inspectorPhone || null,
+            workOrderId: s.workOrderId || null,
+            jobStatus: s.jobStatus || 'none',
+            currentLocation: s.currentLocation || null,
+          }
+        })
+      } catch (error) {
+        return JSON.stringify({ success: false, error: 'Failed to load session context' })
+      }
     case 'getTodayJobs':
       try {
         const { inspectorId, inspectorPhone } = args;
@@ -607,6 +668,12 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
         const { jobId } = args;
         const locationsWithStatus = (await getLocationsWithCompletionStatus(jobId)) as any[];
         
+        // Provide a pre-formatted list with (Done) suffix where completed
+        const locationsFormatted = locationsWithStatus.map((loc, index) => {
+          const label = loc.isCompleted ? `${loc.name} (Done)` : loc.name
+          return `[${index + 1}] ${label}`
+        })
+
         return JSON.stringify({
           success: true,
           locations: locationsWithStatus.map((loc, index) => ({
@@ -619,7 +686,8 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
             tasks: loc.totalTasks,
             completed: loc.completedTasks,
             pending: loc.totalTasks - loc.completedTasks
-          }))
+          })),
+          locationsFormatted
         });
       } catch (error) {
         return JSON.stringify({
@@ -667,8 +735,8 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           },
           // Include notes separately if available (from remarks field)
           locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null,
-          // Include overall location status based on enteredOn field
-          locationStatus: tasks.length > 0 && tasks[0].locationEnteredOn ? 'done' : 'pending'
+          // Include overall location status based on item status (COMPLETED -> done)
+          locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending'
         });
       } catch (error) {
         return JSON.stringify({
@@ -699,6 +767,14 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           }
           
           const success = await completeAllTasksForLocation(workOrderId, location);
+          // Store the current itemId for follow-up steps (condition, remarks, media)
+          let itemIdForSession: string | null = null;
+          try {
+            itemIdForSession = await getContractChecklistItemIdByLocation(workOrderId, location) as any
+          } catch {}
+          if (sessionId && itemIdForSession) {
+            await updateSessionState(sessionId, { currentItemId: itemIdForSession })
+          }
           
           if (success) {
             // Update remarks if notes are provided
@@ -733,7 +809,7 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
               message: `All tasks for ${location} have been marked complete!`,
               allTasksCompletedForLocation: true,
               locationCompleted: true,
-              nextAction: 'This location is now fully inspected. Choose another location to continue.'
+              nextAction: 'Please select the condition for this location: [1] Good, [2] Fair, [3] Unsatisfactory, [4] Not Applicable, [5] Un-Observable. Reply with the number.'
             });
           }
           
@@ -772,6 +848,78 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
           success: false,
           error: 'Failed to complete task. Please try again.',
         });
+      }
+
+    case 'setLocationCondition':
+      try {
+        const { workOrderId, location, conditionNumber } = args
+        const s = sessionId ? await getSessionState(sessionId) : {}
+        const loc = location || (s.currentLocation as string) || ''
+        if (!loc) {
+          return JSON.stringify({ success: false, error: 'No location in context. Please select a location first.' })
+        }
+        const map: Record<number, string> = {
+          1: 'GOOD',
+          2: 'FAIR',
+          3: 'UNSATISFACTORY',
+          4: 'NOT_APPLICABLE',
+          5: 'UN_OBSERVABLE'
+        }
+        const condition = map[Number(conditionNumber)]
+        if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number' })
+
+        let itemId = (s.currentItemId as string) || null
+        if (!itemId) itemId = await getContractChecklistItemIdByLocation(workOrderId, loc) as any
+        if (!itemId) return JSON.stringify({ success: false, error: 'Unable to resolve checklist item for location' })
+
+        await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { condition: condition as any, status: 'COMPLETED' } })
+
+        const mediaRequired = !(condition === 'GOOD' || condition === 'UN_OBSERVABLE')
+
+        // Build remaining locations list for convenience
+        let locationsFormatted: string[] = []
+        if (workOrderId) {
+          const locs = (await getLocationsWithCompletionStatus(workOrderId)) as any[]
+          locationsFormatted = locs.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
+        }
+
+        return JSON.stringify({
+          success: true,
+          itemId,
+          condition,
+          mediaRequired,
+          locationsFormatted,
+          message: mediaRequired
+            ? 'Please provide remarks and upload photos/videos for this location.'
+            : `Condition recorded. No media required.\n\nHere are the locations available for inspection:\n${locationsFormatted.join('\n')}`
+        })
+      } catch (error) {
+        return JSON.stringify({ success: false, error: 'Failed to set condition' })
+      }
+
+    case 'addLocationRemarks':
+      try {
+        const { remarks } = args
+        const s = sessionId ? await getSessionState(sessionId) : {}
+        const inspectorId = (s.inspectorId as string) || ''
+        const itemId = (s.currentItemId as string) || ''
+        if (!inspectorId || !itemId) return JSON.stringify({ success: false, error: 'Missing inspector or item context' })
+
+        const entry = await (prisma as any).itemEntry.upsert({
+          where: { itemId_inspectorId: { itemId, inspectorId } },
+          update: { remarks },
+          create: { itemId, inspectorId, remarks, photos: [], videos: [] }
+        })
+        // After saving remarks, show locations again to guide next step
+        let locationsFormatted: string[] = []
+        const workOrderId = (s.workOrderId as string) || ''
+        if (workOrderId) {
+          const locs = (await getLocationsWithCompletionStatus(workOrderId)) as any[]
+          locationsFormatted = locs.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
+        }
+        return JSON.stringify({ success: true, entryId: entry.id, locationsFormatted, message: `Remarks saved.\n\nHere are the locations available for inspection:\n${locationsFormatted.join('\n')}` })
+      } catch (error) {
+        return JSON.stringify({ success: false, error: 'Failed to save remarks' })
       }
 
     case 'confirmJobSelection':
@@ -842,13 +990,18 @@ async function executeTool(toolName: string, args: any, threadId?: string, sessi
         const locationsWithStatus = (await getLocationsWithCompletionStatus(jobId)) as any[];
         const progress = (await getWorkOrderProgress(jobId)) as any;
         
-        // Extract display names for the response
+        // Extract display names and formatted list for the response
         const locationDisplayNames = locationsWithStatus.map(loc => loc.displayName);
+        const locationsFormatted = locationsWithStatus.map((loc, index) => {
+          const label = loc.isCompleted ? `${loc.name} (Done)` : loc.name
+          return `[${index + 1}] ${label}`
+        })
         
         return JSON.stringify({
           success: true,
           message: 'Job started successfully! Ready for inspection.',
           locations: locationDisplayNames,
+          locationsFormatted,
           locationsDetail: locationsWithStatus,
           progress: {
             total: progress.total_tasks,
@@ -1246,7 +1399,7 @@ export async function POST(request: NextRequest) {
       const publicUrl = `${PUBLIC_URL}/${key}`;
       console.log('✅ Uploaded to:', publicUrl);
       
-      // Save to database (attach to the correct ContractChecklistItem)
+      // Save to database (attach to the correct ContractChecklistItem and ItemEntry if inspector is known)
       if (workOrderId && roomName !== 'general') {
         const rawLocation = (sessionState.currentLocation as string) || roomName;
         console.log('🗂 Attaching media to location:', rawLocation, 'for WO:', workOrderId);
@@ -1282,16 +1435,36 @@ export async function POST(request: NextRequest) {
 
         if (targetItemId) {
           console.log('✅ Target checklist item:', targetItemId, 'adding URL:', publicUrl);
-          if (mediaType === 'photo') {
-            const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { photos: true } });
-            const updatedPhotos = [ ...(existing?.photos || []), publicUrl ];
-            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { photos: updatedPhotos } });
+          const inspectorId = (sessionState.inspectorId as string) || ''
+          if (inspectorId) {
+            // Prefer saving into ItemEntry for this inspector
+            if (mediaType === 'photo') {
+              await (prisma as any).itemEntry.upsert({
+                where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } },
+                update: { photos: { push: publicUrl } },
+                create: { itemId: targetItemId, inspectorId, photos: [publicUrl], videos: [] }
+              })
+            } else {
+              await (prisma as any).itemEntry.upsert({
+                where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } },
+                update: { videos: { push: publicUrl } },
+                create: { itemId: targetItemId, inspectorId, photos: [], videos: [publicUrl] }
+              })
+            }
+            console.log('✅ Media saved to ItemEntry for inspector:', inspectorId)
           } else {
-            const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { videos: true } });
-            const updatedVideos = [ ...(existing?.videos || []), publicUrl ];
-            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { videos: updatedVideos } });
+            // Fallback: attach to item-level media arrays
+            if (mediaType === 'photo') {
+              const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { photos: true } });
+              const updatedPhotos = [ ...(existing?.photos || []), publicUrl ];
+              await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { photos: updatedPhotos } });
+            } else {
+              const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { videos: true } });
+              const updatedVideos = [ ...(existing?.videos || []), publicUrl ];
+              await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { videos: updatedVideos } });
+            }
+            console.log('✅ Media saved to ContractChecklistItem ID:', targetItemId);
           }
-          console.log('✅ Media saved to ContractChecklistItem ID:', targetItemId);
         }
       }
       

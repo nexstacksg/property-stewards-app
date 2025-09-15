@@ -15,6 +15,7 @@ export type ChatSessionState = {
 
   // inspection context
   currentLocation?: string
+  currentItemId?: string
 
   // audit
   createdAt?: string
@@ -42,4 +43,3 @@ export async function updateSessionState(sessionId: string, updates: Partial<Cha
   await cacheSetJSON(key, merged, { ttlSeconds: defaultTTL })
   return merged
 }
-
