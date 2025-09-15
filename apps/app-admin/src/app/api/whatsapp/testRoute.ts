@@ -13,7 +13,9 @@ import {
   getInspectorByPhone,
   updateWorkOrderDetails,
   completeAllTasksForLocation,
-  getWorkOrderProgress
+  getWorkOrderProgress,
+  getContractChecklistItemIdByLocation,
+  getTaskMedia as getTaskMediaService
 } from '@/lib/services/inspectorService';
 import prisma from '@/lib/prisma';
 
@@ -1128,14 +1130,11 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
             console.log('🔍 Work order from metadata:', metadata.workOrderId);
             
             if (metadata.currentLocation && metadata.workOrderId) {
-              // Use the imported helper function
-              const { getContractChecklistItemIdByLocation } = await import('@/lib/services/inspectorService');
               const actualTaskId = await getContractChecklistItemIdByLocation(metadata.workOrderId, metadata.currentLocation);
               
               if (actualTaskId) {
                 console.log('✅ Found actual ContractChecklistItem ID:', actualTaskId);
-                const { getTaskMedia } = await import('@/lib/services/inspectorService');
-                const mediaInfo = await getTaskMedia(actualTaskId) as any;
+                const mediaInfo = await getTaskMediaService(actualTaskId) as any;
                 
                 if (mediaInfo) {
                   console.log('📸 Found media for location:', metadata.currentLocation, 'photos:', mediaInfo.photoCount, 'videos:', mediaInfo.videoCount);
@@ -1164,8 +1163,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           }
           
           // Normal case - try with the provided taskId
-          const { getTaskMedia } = await import('@/lib/services/inspectorService');
-          const mediaInfo = await getTaskMedia(args.taskId) as any;
+          const mediaInfo = await getTaskMediaService(args.taskId) as any;
           
           if (!mediaInfo) {
             console.log('❌ No media found for taskId:', args.taskId);
@@ -1234,8 +1232,7 @@ async function executeTool(toolName: string, args: any, threadId?: string): Prom
           
           // Get media using the ContractChecklistItem ID
           console.log('📎 Getting media for ContractChecklistItem ID:', targetLocation.contractChecklistItemId);
-          const { getTaskMedia: getTaskMediaFunc } = await import('@/lib/services/inspectorService');
-          const locationMediaInfo = await getTaskMediaFunc(targetLocation.contractChecklistItemId) as any;
+          const locationMediaInfo = await getTaskMediaService(targetLocation.contractChecklistItemId) as any;
           
           if (!locationMediaInfo) {
             console.log('❌ No media found for WhatsApp location:', targetLocation.name);
