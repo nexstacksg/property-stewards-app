@@ -42,10 +42,9 @@ class SimpleCache<T> {
 }
 
 // Cache instances with unified 12-hour TTL
-const TWELVE_HOURS_SECONDS = 12 * 60 * 60
-const inspectorCache = new SimpleCache(TWELVE_HOURS_SECONDS)
-const workOrderCache = new SimpleCache(TWELVE_HOURS_SECONDS)
-const locationCache = new SimpleCache(TWELVE_HOURS_SECONDS)
+const inspectorCache = new SimpleCache(300) // 5 minutes for inspector data
+const workOrderCache = new SimpleCache(60) // 1 minute for work orders
+const locationCache = new SimpleCache(120) // 2 minutes for locations
 
 // Debug helper; set INSPECTOR_DEBUG=0 to silence
 function debugLog(...args: any[]) {
