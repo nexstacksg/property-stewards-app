@@ -7,6 +7,16 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Application users for admin access
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(ADMIN)
+  confirmed    Boolean  @default(false)
+}
+
 model Customer {
   id              String            @id @default(cuid())
   name            String
@@ -310,4 +320,9 @@ enum WorkOrderStatus {
   STARTED
   CANCELLED
   COMPLETED
+}
+
+// Roles for application users
+enum Role {
+  ADMIN
 }
