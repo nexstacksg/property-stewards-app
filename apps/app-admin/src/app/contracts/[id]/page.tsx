@@ -279,7 +279,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {contract.workOrders.map((workOrder) => (
+                    {contract.workOrders.map((workOrder: any) => (
                       <TableRow key={workOrder.id}>
                         <TableCell className="font-medium">
                           #{workOrder.id.slice(-8).toUpperCase()}

@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2, Save, Pencil } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
 import { DatePicker } from "@/components/ui/date-picker"
+import { PropertyAddressesSection } from '@/components/customers/property-addresses-section'
 
 interface Address {
   id?: string
@@ -445,246 +446,23 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
             </Card>
 
             {/* Property Addresses */}
-            <Card className="mt-6">
-              <CardHeader>
-                <div className="flex justify-between items-center">
-                  <div>
-                    <CardTitle>Property Addresses</CardTitle>
-                    <CardDescription>Manage property addresses for this customer</CardDescription>
-                  </div>
-                  {!showAddressForm && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowAddressForm(true)}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Address
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {showAddressForm && (
-                  <div className="border rounded-lg p-4 mb-4 space-y-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2 md:col-span-2">
-                        <Label>Address</Label>
-                        <Input
-                          value={newAddress.address}
-                          onChange={(e) => setNewAddress({ ...newAddress, address: e.target.value })}
-                          placeholder="Block 123, Street Name, #01-01"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Postal Code</Label>
-                        <Input
-                          value={newAddress.postalCode}
-                          onChange={(e) => setNewAddress({ ...newAddress, postalCode: e.target.value })}
-                          placeholder="123456"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Property Type</Label>
-                          <PropertyTypeSelect
-                            value={newAddress.propertyType}
-                            onChange={(value) => {
-                              setNewAddress({
-                                ...newAddress,
-                                propertyType: value,
-                                propertySize: ''
-                              })
-                            }}
-                          />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Property Size</Label>
-                        <Select
-                          value={newAddress.propertySize}
-                          onValueChange={(value) => setNewAddress({ ...newAddress, propertySize: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {newSizeOptions.map(option => (
-                              <SelectItem key={option.code} value={option.code}>
-                                {option.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2 md:col-span-2">
-                        <Label>Remarks</Label>
-                        <Input
-                          value={newAddress.remarks}
-                          onChange={(e) => setNewAddress({ ...newAddress, remarks: e.target.value })}
-                          placeholder="Optional notes about this property"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setShowAddressForm(false)
-                          setNewAddress({
-                            address: "",
-                            postalCode: "",
-                            propertyType: "HDB",
-                            propertySize: "",
-                            remarks: ""
-                          })
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={addAddress}
-                          disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize}
-                        >
-                          Add Address
-                        </Button>
-                    </div>
-                  </div>
-                )}
-
-                {addresses.length > 0 ? (
-                  <div className="space-y-3">
-                    {addresses.map((addr, index) => {
-                      const isEditing = editingAddressIndex === index && editedAddress
-                      return (
-                        <div key={addr.id || index} className="border rounded-lg p-3">
-                          {isEditing ? (
-                            <div className="space-y-3">
-                              <div className="grid gap-4 md:grid-cols-2">
-                                <div className="space-y-2 md:col-span-2">
-                                  <Label>Address</Label>
-                                  <Input
-                                    value={editedAddress!.address}
-                                    onChange={(e) => setEditedAddress({ ...editedAddress!, address: e.target.value })}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Postal Code</Label>
-                                  <Input
-                                    value={editedAddress!.postalCode}
-                                    onChange={(e) => setEditedAddress({ ...editedAddress!, postalCode: e.target.value })}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Property Type</Label>
-                                  <PropertyTypeSelect
-                                    value={editedAddress!.propertyType}
-                                    onChange={(value) => {
-                                      setEditedAddress({
-                                        ...editedAddress!,
-                                        propertyType: value,
-                                        propertySize: ''
-                                      })
-                                    }}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Property Size</Label>
-                                  <Select
-                                    value={editedAddress!.propertySize}
-                                    onValueChange={(value) => setEditedAddress({ ...editedAddress!, propertySize: value })}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {editSizeOptions.map(option => (
-                                        <SelectItem key={option.code} value={option.code}>
-                                          {option.name}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-2 md:col-span-2">
-                                  <Label>Remarks</Label>
-                                  <Input
-                                    value={editedAddress!.remarks || ""}
-                                    onChange={(e) => setEditedAddress({ ...editedAddress!, remarks: e.target.value })}
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex justify-end gap-2">
-                                <Button type="button" variant="outline" size="sm" onClick={cancelEditAddress}>
-                                  Cancel
-                                </Button>
-                                <Button type="button" size="sm" onClick={saveEditedAddress} disabled={!editedAddress!.address || !editedAddress!.postalCode}>
-                                  Save
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <p className="font-medium">{addr.address}</p>
-                                <p className="text-sm text-muted-foreground">
-                                  {addr.postalCode} • {addr.propertyType} • {addr.propertySize.replace(/_/g, ' ')}
-                                </p>
-                                {addr.remarks && (
-                                  <p className="text-sm text-muted-foreground mt-1">{addr.remarks}</p>
-                                )}
-                                {addr.status && (
-                                  <Badge 
-                                    variant={addr.status === 'ACTIVE' ? 'success' : 'secondary'} 
-                                    className="mt-2"
-                                  >
-                                    {addr.status}
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => startEditAddress(index)}
-                                  aria-label="Edit address"
-                                  title="Edit address"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => removeAddress(index)}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  !showAddressForm && (
-                    <p className="text-muted-foreground text-center py-4">
-                      No addresses added yet
-                    </p>
-                  )
-                )}
-              </CardContent>
-            </Card>
+            <PropertyAddressesSection
+              showAddressForm={showAddressForm}
+              setShowAddressForm={setShowAddressForm}
+              newAddress={newAddress}
+              setNewAddress={setNewAddress as any}
+              newSizeOptions={newSizeOptions}
+              addresses={addresses}
+              removeAddress={removeAddress}
+              startEditAddress={startEditAddress}
+              editingAddressIndex={editingAddressIndex}
+              editedAddress={editedAddress}
+              setEditedAddress={setEditedAddress as any}
+              editSizeOptions={editSizeOptions}
+              addAddress={addAddress}
+              saveEditedAddress={saveEditedAddress}
+              cancelEditAddress={cancelEditAddress}
+            />
           </div>
 
           {/* Membership Information */}
