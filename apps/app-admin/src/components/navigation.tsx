@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { 
   Home, 
   Users, 
@@ -15,7 +15,15 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+
+type SessionUser = {
+  id: string
+  email: string
+  role: string
+  username?: string
+}
 
 const navigationItems = [
   {
@@ -57,7 +65,78 @@ const navigationItems = [
 
 export function Navigation() {
   const pathname = usePathname()
+  const router = useRouter()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [sessionUser, setSessionUser] = useState<SessionUser | null | undefined>(undefined)
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    async function loadSession() {
+      try {
+        const res = await fetch('/api/auth/session', { credentials: 'include', cache: 'no-store' })
+        if (!res.ok) {
+          throw new Error(`Failed to load session: ${res.status}`)
+        }
+        const data = await res.json()
+        if (active) setSessionUser(data.user)
+      } catch (err) {
+        if (active) setSessionUser(null)
+        console.warn('Failed to load session user', err)
+      }
+    }
+
+    loadSession()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const triggerLogout = () => {
+    setLogoutError(null)
+    setIsLoggingOut(false)
+    setIsLogoutDialogOpen(true)
+  }
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setIsLogoutDialogOpen(open)
+    if (!open) {
+      setIsLoggingOut(false)
+      setLogoutError(null)
+    }
+  }
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true)
+    setLogoutError(null)
+    try {
+      const res = await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        throw new Error(`Logout failed: ${res.status}`)
+      }
+      setIsLogoutDialogOpen(false)
+    } catch (err) {
+      console.error('Logout failed', err)
+      setLogoutError('Unable to log out. Please try again.')
+      setIsLoggingOut(false)
+      return
+    }
+
+    setIsLoggingOut(false)
+    setIsMobileMenuOpen(false)
+    router.replace('/login')
+    router.refresh()
+  }
+
+  const displayName = sessionUser?.username && sessionUser.username.length > 0 ? sessionUser.username : 'Signed in'
+  const displayEmail = sessionUser?.email && sessionUser.email.length > 0 ? sessionUser.email : '—'
 
   return (
     <>
@@ -94,6 +173,18 @@ export function Navigation() {
             })}
           </ul>
         </nav>
+
+        <div className="border-t px-4 py-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground truncate">{displayName}</p>
+              <p className="text-xs text-muted-foreground truncate">{displayEmail}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={triggerLogout}>
+              Log out
+            </Button>
+          </div>
+        </div>
       </aside>
 
       {/* Mobile Header */}
@@ -115,8 +206,8 @@ export function Navigation() {
       {/* Mobile Menu */}
       {isMobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 z-40 bg-background pt-16">
-          <nav className="p-4">
-            <ul className="space-y-2">
+          <nav className="flex h-full flex-col">
+            <ul className="flex-1 space-y-2 overflow-y-auto p-4">
               {navigationItems.map((item) => {
                 const Icon = item.icon
                 const isActive = pathname === item.href || 
@@ -141,9 +232,42 @@ export function Navigation() {
                 )
               })}
             </ul>
+            <div className="border-t p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{displayName}</p>
+                  <p className="text-xs text-muted-foreground truncate">{displayEmail}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => { triggerLogout(); setIsMobileMenuOpen(false) }}>
+                  Log out
+                </Button>
+              </div>
+            </div>
           </nav>
         </div>
       )}
+
+      <Dialog open={isLogoutDialogOpen} onOpenChange={handleDialogOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Sign out?</DialogTitle>
+            <DialogDescription>
+              You will need to enter your credentials again to access the admin dashboard.
+            </DialogDescription>
+          </DialogHeader>
+          {logoutError && (
+            <p className="text-sm text-destructive">{logoutError}</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsLogoutDialogOpen(false)} disabled={isLoggingOut}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleLogout} disabled={isLoggingOut}>
+              {isLoggingOut ? 'Signing out…' : 'Yes, sign out'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

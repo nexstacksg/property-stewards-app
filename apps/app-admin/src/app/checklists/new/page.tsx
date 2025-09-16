@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2, GripVertical, Save, Pencil } from "lucide-react"
+import { ChecklistItemsBuilder } from '@/components/checklists/checklist-items-builder'
+import { ChecklistPreview } from '@/components/checklists/checklist-preview'
 
 interface ChecklistItem {
   item: string
@@ -86,6 +88,16 @@ const AREA_TEMPLATES = {
   // Inline row edit state
   const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
   const [rowEditItem, setRowEditItem] = useState<ChecklistItem | null>(null)
+  // Helper used by builder to update a single field on an item
+  const updateItemField = (index: number, field: keyof ChecklistItem, value: any) => {
+    setItems(prev => {
+      const next = [...prev]
+      const target = next[index]
+      if (!target) return prev
+      next[index] = { ...target, [field]: value }
+      return next
+    })
+  }
   const [showItemForm, setShowItemForm] = useState(false)
   const [editingItems, setEditingItems] = useState<ChecklistItem[]>([])
   const [currentArea, setCurrentArea] = useState("")
@@ -376,250 +388,27 @@ const AREA_TEMPLATES = {
                 </div>
               </CardHeader>
               <CardContent>
-                {showItemForm && (
-                  <div className="border rounded-lg p-4 mb-4 space-y-4 bg-muted/30">
-                    <div className="flex justify-between items-center">
-                      <h4 className="font-semibold">Adding Items</h4>
-                      <div className="flex gap-2">
-                        <Select value={selectedTemplate} onValueChange={(value) => {
-                          loadTemplate(value)
-                        }}>
-                          <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Load template..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.keys(AREA_TEMPLATES).map(area => (
-                              <SelectItem key={area} value={area}>{area}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={addSingleItem}
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Add Blank Item
-                        </Button>
-                      </div>
-                    </div>
-
-                    {editingItems.length > 0 && (
-                      <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                        {editingItems.map((item, index) => (
-                          <div key={index} className="border rounded-lg p-3 bg-background">
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label>Item Name *</Label>
-                                <Input
-                                  value={item.item}
-                                  onChange={(e) => updateEditingItem(index, 'item', e.target.value)}
-                                  placeholder="e.g., Ceiling condition"
-                                />
-                              </div>
-
-                              <div className="space-y-2">
-                                <Label>Category</Label>
-                                <Select
-                                  value={item.category}
-                                  onValueChange={(value) => updateEditingItem(index, 'category', value)}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {CATEGORIES.map(cat => (
-                                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              <div className="space-y-2 md:col-span-2">
-                                <Label>Description</Label>
-                                <Input
-                                  value={item.description}
-                                  onChange={(e) => updateEditingItem(index, 'description', e.target.value)}
-                                  placeholder="Optional inspection guidelines"
-                                />
-                              </div>
-
-                              <div className="flex items-center justify-between md:col-span-2">
-                                <div className="flex items-center space-x-2">
-                                  <input
-                                    type="checkbox"
-                                    id={`required-${index}`}
-                                    checked={item.isRequired}
-                                    onChange={(e) => updateEditingItem(index, 'isRequired', e.target.checked)}
-                                    className="rounded"
-                                  />
-                                  <Label htmlFor={`required-${index}`}>Required Item</Label>
-                                </div>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => removeEditingItem(index)}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex justify-end gap-2 pt-2 border-t">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={cancelEditing}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={saveItemsToList}
-                        disabled={editingItems.filter(i => i.item.trim()).length === 0}
-                      >
-                        <Save className="h-4 w-4 mr-2" />
-                        Save {editingItems.filter(i => i.item.trim()).length} Items
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {items.length > 0 ? (
-                  <div className="space-y-2">
-                    {items.map((item, index) => (
-                      <div key={index} className="border rounded-lg p-3 flex items-start gap-2">
-                        <div className="flex flex-col gap-1 pt-1">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => moveItem(index, 'up')}
-                            disabled={index === 0}
-                          >
-                            ↑
-                          </Button>
-                          <GripVertical className="h-4 w-4 text-muted-foreground mx-auto" />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => moveItem(index, 'down')}
-                            disabled={index === items.length - 1}
-                          >
-                            ↓
-                          </Button>
-                        </div>
-                        <div className="flex-1">
-                          {rowEditIndex === index ? (
-                            <div className="space-y-2">
-                              <div className="grid gap-3 md:grid-cols-2">
-                                <div className="space-y-1">
-                                  <Label>Item Name *</Label>
-                                  <Input
-                                    value={rowEditItem?.item || ''}
-                                    onChange={(e) => setRowEditItem(prev => prev ? { ...prev, item: e.target.value } : prev)}
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label>Category</Label>
-                                  <Select
-                                    value={rowEditItem?.category || 'GENERAL'}
-                                    onValueChange={(val) => setRowEditItem(prev => prev ? { ...prev, category: val } : prev)}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {CATEGORIES.map(cat => (
-                                        <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-1 md:col-span-2">
-                                  <Label>Description</Label>
-                                  <Input
-                                    value={rowEditItem?.description || ''}
-                                    onChange={(e) => setRowEditItem(prev => prev ? { ...prev, description: e.target.value } : prev)}
-                                  />
-                                </div>
-                                <div className="flex items-center justify-between md:col-span-2">
-                                  <div className="flex items-center space-x-2">
-                                    <input
-                                      type="checkbox"
-                                      id={`row-required-${index}`}
-                                      checked={!!rowEditItem?.isRequired}
-                                      onChange={(e) => setRowEditItem(prev => prev ? { ...prev, isRequired: e.target.checked } : prev)}
-                                      className="rounded"
-                                    />
-                                    <Label htmlFor={`row-required-${index}`}>Required Item</Label>
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <Button type="button" variant="outline" size="sm" onClick={cancelRowEdit}>Cancel</Button>
-                                    <Button type="button" size="sm" onClick={saveRowEdit} disabled={!rowEditItem?.item?.trim()}>Save</Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="font-medium">
-                                  {item.order}. {item.item}
-                                </p>
-                                {item.description && (
-                                  <p className="text-sm text-muted-foreground">{item.description}</p>
-                                )}
-                                <div className="flex gap-2 mt-1">
-                                  <Badge variant="outline">{item.category}</Badge>
-                                  <Badge variant={item.isRequired ? 'default' : 'secondary'}>
-                                    {item.isRequired ? 'Required' : 'Optional'}
-                                  </Badge>
-                                </div>
-                              </div>
-                              <div className="flex gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => startRowEdit(index)}
-                                  aria-label="Edit item"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => removeItem(index)}
-                                >
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  !showItemForm && (
-                    <p className="text-muted-foreground text-center py-4">
-                      No items added yet. Click "Add Items" to start building your checklist.
-                    </p>
-                  )
-                )}
+                <ChecklistItemsBuilder
+                  showItemForm={showItemForm}
+                  setShowItemForm={setShowItemForm}
+                  selectedTemplate={selectedTemplate}
+                  loadTemplate={loadTemplate}
+                  templateOptions={Object.keys(AREA_TEMPLATES)}
+                  CATEGORIES={CATEGORIES}
+                  editingItems={editingItems}
+                  updateEditingItem={updateEditingItem}
+                  removeEditingItem={removeEditingItem}
+                  cancelEditing={cancelEditing}
+                  saveItemsToList={saveItemsToList}
+                  addSingleItem={addSingleItem}
+                  items={items}
+                  rowEditIndex={rowEditIndex}
+                  rowEditItem={rowEditItem}
+                  setRowEditItem={setRowEditItem as any}
+                  moveItem={moveItem}
+                  updateItemField={updateItemField}
+                  removeItem={removeItem}
+                />
               </CardContent>
             </Card>
           </div>
@@ -697,59 +486,7 @@ const AREA_TEMPLATES = {
 
             {/* Checklist Preview */}
             {(items.length > 0 || editingItems.length > 0) && (
-              <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle className="text-sm">Checklist Preview</CardTitle>
-                  <CardDescription className="text-xs">How inspectors will see this checklist</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {(() => {
-                    const allItems = [
-                      ...items,
-                      ...editingItems.filter(item => item.item.trim() !== "")
-                    ]
-                    
-                    if (allItems.length === 0) {
-                      return (
-                        <p className="text-xs text-muted-foreground text-center py-4">
-                          Add items to see preview
-                        </p>
-                      )
-                    }
-                    
-                    const categories = Array.from(new Set(allItems.map(item => item.category)))
-                    
-                    return (
-                      <div className="space-y-3">
-                        {categories.map(category => {
-                          const categoryItems = allItems.filter(item => item.category === category)
-                          return (
-                            <div key={category}>
-                              <p className="text-xs font-medium text-orange-600 mb-1">{category}</p>
-                              <ul className="text-sm space-y-1 text-muted-foreground">
-                                {categoryItems.map((item, idx) => (
-                                  <li key={`${category}-${idx}`} className="flex items-start">
-                                    <span className="text-orange-400 mr-1">•</span>
-                                    <span className="text-xs">
-                                      {item.item}
-                                      {item.isRequired && <span className="text-red-500 ml-0.5">*</span>}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )
-                        })}
-                        <div className="pt-2 border-t">
-                          <p className="text-xs text-muted-foreground">
-                            Total: {allItems.length} items
-                          </p>
-                        </div>
-                      </div>
-                    )
-                  })()}
-                </CardContent>
-              </Card>
+              <ChecklistPreview items={items} editingItems={editingItems} />
             )}
           </div>
         </div>

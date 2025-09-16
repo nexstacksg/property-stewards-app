@@ -23,7 +23,8 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     }
   }
 
-  const ttl = Number(process.env.MEMCACHE_DEFAULT_TTL ?? 600)
+  // Default to 6 hours unless overridden
+  const ttl = Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
 
   const results: Record<string, WarmupResult> = {}
 
@@ -59,6 +60,8 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
         videos: true,
         enteredOn: true,
         enteredById: true,
+        status: true,
+        condition:true,
         order: true,
         tasks: true,
         contractChecklist: {
@@ -116,9 +119,16 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     console.log('[cache-warmup] workOrders total =', workOrders.length, 'sample =', woSample)
   } catch {}
 
+  // Helper to delete base and index keys so warmup always refreshes sets
+  const delKeys = async (base: string) => {
+    try { await client.delete(base) } catch {}
+    try { await client.delete(`${base}:index`) } catch {}
+  }
+
   // Inspectors
   try {
     const key = 'mc:inspectors:all'
+    await delKeys(key)
     const { keys } = await cacheSetLargeArray(key, inspectors, undefined, { ttlSeconds: ttl })
     results.inspectors = { ok: true, skipped: false, message: `Cached ${inspectors.length} inspectors`, keys }
   } catch (e) {
@@ -128,6 +138,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   // Work Orders (potentially large)
   try {
     const key = 'mc:work-orders:all'
+    await delKeys(key)
     const { keys } = await cacheSetLargeArray(key, workOrders, undefined, { ttlSeconds: ttl })
     results.workOrders = { ok: true, skipped: false, message: `Cached ${workOrders.length} work orders`, keys }
   } catch (e) {
@@ -137,6 +148,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   // Customers
   try {
     const key = 'mc:customers:all'
+    await delKeys(key)
     const { keys } = await cacheSetLargeArray(key, customers, undefined, { ttlSeconds: ttl })
     results.customers = { ok: true, skipped: false, message: `Cached ${customers.length} customers`, keys }
   } catch (e) {
@@ -146,6 +158,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   // Customer Addresses
   try {
     const key = 'mc:customer-addresses:all'
+    await delKeys(key)
     const { keys } = await cacheSetLargeArray(key, customerAddresses, undefined, { ttlSeconds: ttl })
     results.customerAddresses = { ok: true, skipped: false, message: `Cached ${customerAddresses.length} addresses`, keys }
   } catch (e) {
@@ -155,6 +168,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   // Contract Checklist Items (potentially large)
   try {
     const key = 'mc:contract-checklist-items:all'
+    await delKeys(key)
     const { keys } = await cacheSetLargeArray(key, checklistItems, undefined, { ttlSeconds: ttl })
     results.contractChecklistItems = { ok: true, skipped: false, message: `Cached ${checklistItems.length} checklist items`, keys }
   } catch (e) {

@@ -5,6 +5,10 @@ export type ChatSessionState = {
   inspectorId?: string
   inspectorName?: string
   inspectorPhone?: string
+  // channel + contact metadata
+  channel?: string
+  phoneNumber?: string
+  identifiedAt?: string
 
   // job context
   workOrderId?: string
@@ -15,6 +19,10 @@ export type ChatSessionState = {
 
   // inspection context
   currentLocation?: string
+  currentItemId?: string
+
+  // assistant/thread context
+  threadId?: string
 
   // audit
   createdAt?: string
@@ -42,4 +50,3 @@ export async function updateSessionState(sessionId: string, updates: Partial<Cha
   await cacheSetJSON(key, merged, { ttlSeconds: defaultTTL })
   return merged
 }
-

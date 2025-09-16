@@ -46,7 +46,8 @@ export async function cacheSetJSON(key: string, value: unknown, opts: CacheSetOp
   const c = getMemcacheClient()
   if (!c) return false
   try {
-    const ttl = opts.ttlSeconds ?? Number(process.env.MEMCACHE_DEFAULT_TTL ?? 86400)
+    // Default TTL: 6 hours (override via MEMCACHE_DEFAULT_TTL or opts)
+    const ttl = opts.ttlSeconds ?? Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
     const payload = Buffer.from(JSON.stringify(value))
     await c.set(key, payload, { expires: ttl })
     return true
@@ -101,7 +102,7 @@ export async function cacheSetLargeArray(
   const c = getMemcacheClient()
   if (!c) return { chunks: 0, keys: [] }
 
-  const ttl = opts.ttlSeconds ?? Number(process.env.MEMCACHE_DEFAULT_TTL ?? 86400)
+  const ttl = opts.ttlSeconds ?? Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
 
   // If it fits in one item, store directly
   const serialized = JSON.stringify(items)
@@ -126,4 +127,17 @@ export async function cacheSetLargeArray(
   const indexKey = `${baseKey}:index`
   await cacheSetJSON(indexKey, { total, chunkSize, chunks: chunkIndex, keys }, { ttlSeconds: ttl })
   return { chunks: chunkIndex, keys: [indexKey, ...keys] }
+}
+
+// Delete a key (for invalidation on updates)
+export async function cacheDel(key: string): Promise<boolean> {
+  const c = getMemcacheClient()
+  if (!c) return false
+  try {
+    await c.delete(key)
+    return true
+  } catch (err) {
+    console.error('[memcache] delete error for key', key, err)
+    return false
+  }
 }

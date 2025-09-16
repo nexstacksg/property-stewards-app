@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import PropertyTypeSelect from '@/components/property-type-select'
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
+import { PropertyAddressesNewSection } from '@/components/customers/property-addresses-new-section'
 import { PhoneInput } from "@/components/ui/phone-input"
 import { DatePicker } from "@/components/ui/date-picker"
 
@@ -118,10 +119,9 @@ export default function NewCustomerPage() {
       setShowAddressForm(false)
     }
   }
+  const removeAddress = (index: number) => setAddresses(addresses.filter((_, i) => i !== index))
 
-  const removeAddress = (index: number) => {
-    setAddresses(addresses.filter((_, i) => i !== index))
-  }
+
 
   const getPropertySizeOptions = (propertyType: string) => {
     switch (propertyType) {
@@ -316,160 +316,16 @@ export default function NewCustomerPage() {
               </CardContent>
             </Card>
 
-            {/* Property Addresses */}
-            <Card className="mt-6">
-              <CardHeader>
-                <div className="flex justify-between items-center">
-                  <div>
-                    <CardTitle>Property Addresses <span className="text-destructive">*</span></CardTitle>
-                    <CardDescription>At least one property address is required</CardDescription>
-                  </div>
-                  {!showAddressForm && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowAddressForm(true)}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Address
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {error && error.includes("address") && (
-                  <div className="bg-destructive/10 text-destructive px-4 py-3 rounded-md mb-4">
-                    {error}
-                  </div>
-                )}
-                {showAddressForm && (
-                  <div className="border rounded-lg p-4 mb-4 space-y-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2 md:col-span-2">
-                        <Label>Address</Label>
-                        <Input
-                          value={newAddress.address}
-                          onChange={(e) => setNewAddress({ ...newAddress, address: e.target.value })}
-                          placeholder="Block 123, Street Name, #01-01"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Postal Code</Label>
-                        <Input
-                          value={newAddress.postalCode}
-                          onChange={(e) => setNewAddress({ ...newAddress, postalCode: e.target.value })}
-                          placeholder="123456"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Property Type</Label>
-                        <PropertyTypeSelect
-                          value={newAddress.propertyType}
-                          onChange={(value) => {
-                            setNewAddress({
-                              ...newAddress,
-                              propertyType: value,
-                              propertySize: ''
-                            })
-                          }}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label>Property Size</Label>
-                        <Select
-                          value={newAddress.propertySize}
-                          onValueChange={(value) => setNewAddress({ ...newAddress, propertySize: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                         <SelectContent>
-                            {sizeOptions.map(option => (
-                              <SelectItem key={option.code} value={option.code}>
-                                {option.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2 md:col-span-2">
-                        <Label>Remarks</Label>
-                        <Input
-                          value={newAddress.remarks}
-                          onChange={(e) => setNewAddress({ ...newAddress, remarks: e.target.value })}
-                          placeholder="Optional notes about this property"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setShowAddressForm(false)
-                          setNewAddress({
-                            address: "",
-                            postalCode: "",
-                            propertyType: "HDB",
-                            propertySize: "",
-                            remarks: ""
-                          })
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={addAddress}
-                        disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize}
-                      >
-                        Add Address
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {addresses.length > 0 ? (
-                  <div className="space-y-3">
-                    {addresses.map((addr, index) => (
-                      <div key={index} className="border rounded-lg p-3 flex justify-between items-start">
-                        <div>
-                          <p className="font-medium">{addr.address}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {addr.postalCode} • {addr.propertyType} • {addr.propertySize.replace(/_/g, ' ')}
-                          </p>
-                          {addr.remarks && (
-                            <p className="text-sm text-muted-foreground mt-1">{addr.remarks}</p>
-                          )}
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeAddress(index)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  !showAddressForm && (
-                    <p className="text-muted-foreground text-center py-4">
-                      No addresses added yet
-                    </p>
-                  )
-                )}
-              </CardContent>
-            </Card>
+            <PropertyAddressesNewSection
+              showAddressForm={showAddressForm}
+              setShowAddressForm={setShowAddressForm}
+              newAddress={newAddress}
+              setNewAddress={setNewAddress as any}
+              sizeOptions={sizeOptions}
+              addresses={addresses}
+              addAddress={addAddress}
+              removeAddress={removeAddress}
+            />
           </div>
 
           {/* Membership Information */}

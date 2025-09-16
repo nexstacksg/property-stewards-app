@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetLargeArray } from '@/lib/memcache'
+import { cacheGetLargeArray, cacheDel } from '@/lib/memcache'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -41,7 +41,7 @@ class SimpleCache<T> {
   }
 }
 
-// Cache instances with different TTLs
+// Cache instances with unified 12-hour TTL
 const inspectorCache = new SimpleCache(300) // 5 minutes for inspector data
 const workOrderCache = new SimpleCache(60) // 1 minute for work orders
 const locationCache = new SimpleCache(120) // 2 minutes for locations
@@ -227,6 +227,8 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
     // Invalidate relevant caches
     workOrderCache.invalidate(workOrderId)
     locationCache.invalidate(workOrderId)
+    // Also invalidate Memcache collections to avoid stale results
+    try { await cacheDel('mc:work-orders:all') } catch {}
 
     return updated
   } catch (error) {
@@ -267,61 +269,41 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
 
 export async function getLocationsWithCompletionStatus(workOrderId: string) {
   try {
-    const cacheKey = `locations-status:${workOrderId}`
-    const cached = locationCache.get(cacheKey)
-    if (cached) return cached
+    // Always query DB for freshest status
+    const items = await prisma.contractChecklistItem.findMany({
+      where: {
+        contractChecklist: {
+          contract: { workOrders: { some: { id: workOrderId } } }
+        }
+      },
+      select: { id: true, name: true, order: true, status: true }
+    })
 
-    // Cache-only: use precomputed workOrderIds index on items
-    const itemsCache = await getCachedChecklistItems()
-    if (itemsCache) {
-      debugLog('getLocationsWithCompletionStatus: cache items =', itemsCache.length, 'workOrderId =', workOrderId)
-      const items = itemsCache
-        .filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
-        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
-      debugLog('getLocationsWithCompletionStatus: matched items =', items.length)
+    const sorted = items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
-    // Process with Map for O(n) complexity
-    const locationMap = new Map<string, {
-      total: number
-      completed: number
-      contractChecklistItemId: string
-    }>()
-    
-    for (const item of items) {
-      const location = item.name
-      if (!locationMap.has(location)) {
-        locationMap.set(location, {
-          total: 0,
-          completed: 0,
-          contractChecklistItemId: item.id
-        })
-      }
-      const locData = locationMap.get(location)!
-      locData.total++
-      if (item.enteredOn !== null) {
-        locData.completed++
-      }
+    const locationMap = new Map<string, { total: number; completed: number; anyId: string }>()
+    for (const item of sorted) {
+      const loc = item.name
+      if (!locationMap.has(loc)) locationMap.set(loc, { total: 0, completed: 0, anyId: item.id })
+      const ref = locationMap.get(loc)!
+      ref.total += 1
+      if (item.status === 'COMPLETED') ref.completed += 1
     }
 
-    const locationsWithStatus = Array.from(locationMap.entries()).map(([name, data]) => {
-      const isCompleted = data.completed === data.total && data.total > 0
+    const result = Array.from(locationMap.entries()).map(([name, data]) => {
+      const isCompleted = data.total > 0 && data.completed === data.total
       return {
         name,
         displayName: isCompleted ? `${name} (Done)` : name,
         isCompleted,
         totalTasks: data.total,
         completedTasks: data.completed,
-        contractChecklistItemId: data.contractChecklistItemId
+        contractChecklistItemId: data.anyId
       }
     })
 
-    locationCache.set(cacheKey, locationsWithStatus)
-    return locationsWithStatus
-    }
-
-    // Cache required; no DB fallback
-    debugLog('getLocationsWithCompletionStatus: no cache or no items matched for workOrderId =', workOrderId)
-    return []
+    locationCache.set(`locations-status:${workOrderId}`, result)
+    return result
   } catch (error) {
     console.error('Error fetching locations with status:', error)
     return []
@@ -330,68 +312,65 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
 export async function getTasksByLocation(workOrderId: string, location: string, contractChecklistItemId?: string) {
   try {
-    const cacheKey = `tasks:${workOrderId}:${location}`
-    const cached = locationCache.get(cacheKey)
-    if (cached) return cached
-
-    // Cache-only
-    const itemsCache = await getCachedChecklistItems()
-    let checklistItem: any = null
-    if (itemsCache) {
-      debugLog('getTasksByLocation: cache items =', itemsCache.length, 'workOrderId =', workOrderId, 'location =', location, 'itemId =', contractChecklistItemId)
-      if (contractChecklistItemId) {
-        checklistItem = itemsCache.find((it: any) => it.id === contractChecklistItemId)
-        // sanity: ensure it belongs to the work order
-        if (checklistItem && !(Array.isArray(checklistItem.workOrderIds) && checklistItem.workOrderIds.includes(workOrderId))) {
-          debugLog('getTasksByLocation: provided itemId does not belong to workOrder')
-          checklistItem = null
-        }
+    const item = await prisma.contractChecklistItem.findFirst({
+      where: {
+        OR: [
+          { id: contractChecklistItemId || '' },
+          {
+            AND: [
+              { name: location },
+              { contractChecklist: { contract: { workOrders: { some: { id: workOrderId } } } } }
+            ]
+          }
+        ]
+      },
+      select: {
+        id: true,
+        name: true,
+        remarks: true,
+        photos: true,
+        videos: true,
+        tasks: true,
+        status: true,
+        enteredOn: true,
+        enteredById: true
       }
-      if (!checklistItem) {
-        checklistItem = itemsCache.find((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId) && it.name === location)
-      }
-      debugLog('getTasksByLocation: found checklistItem =', Boolean(checklistItem), checklistItem ? { id: checklistItem.id, name: checklistItem.name } : null)
-    }
+    }) as any
 
-    if (!checklistItem) {
-      return []
-    }
+    if (!item) return []
 
     let result
-    if (checklistItem.tasks && typeof checklistItem.tasks === 'object') {
-      const tasks = Array.isArray(checklistItem.tasks) ? checklistItem.tasks : []
-      debugLog('getTasksByLocation: tasks length =', tasks.length)
-      
+    if (item.tasks && typeof item.tasks === 'object') {
+      const tasks = Array.isArray(item.tasks) ? item.tasks : []
       result = tasks.map((task: any, index: number) => ({
-        id: `${checklistItem.id}_task_${index}`,
-        location: checklistItem.name,
+        id: `${item.id}_task_${index}`,
+        location: item.name,
         action: typeof task === 'string' ? task : (task.task || task.action || 'Inspect area'),
         status: typeof task === 'object' && task.status === 'done' ? 'completed' : 'pending',
-        notes: checklistItem.remarks,
-        photos: checklistItem.photos,
-        videos: checklistItem.videos,
-        completed_at: checklistItem.enteredOn,
-        completed_by: checklistItem.enteredById,
+        notes: item.remarks,
+        photos: item.photos,
+        videos: item.videos,
+        completed_at: item.enteredOn,
+        completed_by: item.enteredById,
         isSubTask: true,
         taskIndex: index,
-        locationEnteredOn: checklistItem.enteredOn
+        locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
       }))
     } else {
       result = [{
-        id: checklistItem.id,
-        location: checklistItem.name,
-        action: checklistItem.remarks || 'Inspect area',
-        status: checklistItem.enteredOn ? 'completed' : 'pending',
-        notes: checklistItem.remarks,
-        photos: checklistItem.photos,
-        videos: checklistItem.videos,
-        completed_at: checklistItem.enteredOn,
-        completed_by: checklistItem.enteredById,
+        id: item.id,
+        location: item.name,
+        action: item.remarks || 'Inspect area',
+        status: item.status === 'COMPLETED' ? 'completed' : 'pending',
+        notes: item.remarks,
+        photos: item.photos,
+        videos: item.videos,
+        completed_at: item.enteredOn,
+        completed_by: item.enteredById,
         isSubTask: false
       }]
     }
 
-    locationCache.set(cacheKey, result)
     return result
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
@@ -432,6 +411,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
         
         // Invalidate cache
         locationCache.invalidate(checklistItemId)
+        try { await cacheDel('mc:contract-checklist-items:all') } catch {}
         return true
       }
       return false
@@ -442,11 +422,13 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
     
     if (status === 'completed') {
       updateData.enteredOn = new Date()
+      ;(updateData as any).status = 'COMPLETED'
       if (notes) {
         updateData.remarks = notes
       }
     } else {
       updateData.enteredOn = null
+      ;(updateData as any).status = 'PENDING'
     }
 
     await prisma.contractChecklistItem.update({
@@ -456,6 +438,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
 
     // Invalidate cache
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error updating task status:', error)
@@ -503,12 +486,14 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
       data: {
         tasks: tasks,
         enteredOn: new Date(),
-        enteredById: inspectorId || checklistItem.enteredById
+        enteredById: inspectorId || checklistItem.enteredById,
+        status: 'COMPLETED'
       }
     })
 
     // Invalidate cache
     locationCache.invalidate(workOrderId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error completing all tasks for location:', error)
@@ -528,6 +513,7 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
     })
 
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error adding task photo:', error)
@@ -547,6 +533,7 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
     })
 
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error adding task video:', error)
@@ -647,6 +634,7 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
     }
 
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error deleting task media:', error)
@@ -656,21 +644,18 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
 
 export async function getWorkOrderProgress(workOrderId: string) {
   try {
-    // Cache-only using items linked by workOrderIds
-    const items = await getCachedChecklistItems()
-    if (items) {
-      const related = items.filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
-      const total = related.length
-      const completed = related.filter((it: any) => it.enteredOn != null).length
-      return {
-        total_tasks: total,
-        completed_tasks: completed,
-        pending_tasks: total - completed,
-        in_progress_tasks: 0
-      }
+    const items = await prisma.contractChecklistItem.findMany({
+      where: { contractChecklist: { contract: { workOrders: { some: { id: workOrderId } } } } },
+      select: { status: true }
+    })
+    const total = items.length
+    const completed = items.filter(i => i.status === 'COMPLETED').length
+    return {
+      total_tasks: total,
+      completed_tasks: completed,
+      pending_tasks: total - completed,
+      in_progress_tasks: 0
     }
-    // Cache required; no DB fallback
-    return { total_tasks: 0, completed_tasks: 0, pending_tasks: 0, in_progress_tasks: 0 }
   } catch (error) {
     console.error('Error fetching work order progress:', error)
     return {
@@ -787,6 +772,11 @@ export async function updateWorkOrderDetails(
     // Invalidate caches
     workOrderCache.invalidate(workOrderId)
     locationCache.invalidate(workOrderId)
+    try { await cacheDel('mc:work-orders:all') } catch {}
+    if (updateType === 'customer' || updateType === 'address') {
+      try { await cacheDel('mc:customers:all') } catch {}
+      try { await cacheDel('mc:customer-addresses:all') } catch {}
+    }
     
     return true
   } catch (error) {
