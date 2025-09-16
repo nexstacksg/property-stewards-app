@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetLargeArray } from '@/lib/memcache'
+import { cacheGetLargeArray, cacheDel } from '@/lib/memcache'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -227,6 +227,8 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
     // Invalidate relevant caches
     workOrderCache.invalidate(workOrderId)
     locationCache.invalidate(workOrderId)
+    // Also invalidate Memcache collections to avoid stale results
+    try { await cacheDel('mc:work-orders:all') } catch {}
 
     return updated
   } catch (error) {
@@ -409,6 +411,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
         
         // Invalidate cache
         locationCache.invalidate(checklistItemId)
+        try { await cacheDel('mc:contract-checklist-items:all') } catch {}
         return true
       }
       return false
@@ -435,6 +438,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
 
     // Invalidate cache
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error updating task status:', error)
@@ -489,6 +493,7 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
 
     // Invalidate cache
     locationCache.invalidate(workOrderId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error completing all tasks for location:', error)
@@ -508,6 +513,7 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
     })
 
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error adding task photo:', error)
@@ -527,6 +533,7 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
     })
 
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error adding task video:', error)
@@ -627,6 +634,7 @@ export async function deleteTaskMedia(taskId: string, mediaUrl: string, mediaTyp
     }
 
     locationCache.invalidate(taskId)
+    try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
     console.error('Error deleting task media:', error)
@@ -764,6 +772,11 @@ export async function updateWorkOrderDetails(
     // Invalidate caches
     workOrderCache.invalidate(workOrderId)
     locationCache.invalidate(workOrderId)
+    try { await cacheDel('mc:work-orders:all') } catch {}
+    if (updateType === 'customer' || updateType === 'address') {
+      try { await cacheDel('mc:customers:all') } catch {}
+      try { await cacheDel('mc:customer-addresses:all') } catch {}
+    }
     
     return true
   } catch (error) {
