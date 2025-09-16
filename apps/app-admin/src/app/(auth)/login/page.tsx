@@ -1,12 +1,12 @@
 "use client"
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter()
   const search = useSearchParams()
   const next = search.get('next') || '/'
@@ -90,11 +90,19 @@ export default function LoginPage() {
                   </Button>
                 </form>
             <p className="text-sm text-gray-600 mt-6 text-center">
-              Don’t have an account? <a href="/signup" className="text-primary hover:underline">Sign up</a>
+              Don't have an account? <a href="/signup" className="text-primary hover:underline">Sign up</a>
             </p>
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <LoginPageContent />
+    </Suspense>
   )
 }
