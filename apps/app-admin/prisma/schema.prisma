@@ -14,6 +14,7 @@ model User {
   email        String   @unique
   passwordHash String
   role         Role     @default(ADMIN)
+  confirmed    Boolean  @default(false)
 }
 
 model Customer {

@@ -10,11 +10,21 @@ export default function LoginPage() {
   const router = useRouter()
   const search = useSearchParams()
   const next = search.get('next') || '/'
+  const confirmationState = search.get('confirmation')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const confirmationMessage = confirmationState === 'success'
+    ? 'Email confirmed. You can sign in now.'
+    : confirmationState === 'invalid'
+      ? 'Confirmation link was invalid or expired. Request a new signup.'
+      : confirmationState === 'missing-user'
+        ? 'Account could not be found. Contact support if this persists.'
+        : confirmationState === 'server-error'
+          ? 'We could not validate your confirmation due to a server configuration issue. Please contact support.'
+          : null
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -68,6 +78,11 @@ export default function LoginPage() {
                   {error && (
                     <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
                       {error}
+                    </div>
+                  )}
+                  {confirmationMessage && (
+                    <div className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-md px-3 py-2">
+                      {confirmationMessage}
                     </div>
                   )}
                   <Button type="submit" disabled={loading} className="w-full h-11 text-white">

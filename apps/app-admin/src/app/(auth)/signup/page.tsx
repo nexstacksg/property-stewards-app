@@ -1,34 +1,37 @@
 "use client"
 import { useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 export default function SignupPage() {
   const router = useRouter()
-  const search = useSearchParams()
-  const next = search.get('next') || '/'
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setLoading(true)
+    setSuccess(null)
     try {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password }),
       })
+      const j = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
         throw new Error(j.error || 'Signup failed')
       }
-      router.replace(next)
+      setSuccess(j.message || 'Account created. Check your email to confirm your address.')
+      setUsername('')
+      setEmail('')
+      setPassword('')
     } catch (err: any) {
       setError(err.message || 'Signup failed')
     } finally {
@@ -63,6 +66,14 @@ export default function SignupPage() {
                   {error && (
                     <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
                       {error}
+                    </div>
+                  )}
+                  {success && (
+                    <div className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-md px-3 py-2">
+                      {success}{' '}
+                      <button type="button" className="font-semibold text-primary underline" onClick={() => router.replace('/login')}>
+                        Go to sign in
+                      </button>
                     </div>
                   )}
                   <Button type="submit" disabled={loading} className="w-full h-11 text-white">

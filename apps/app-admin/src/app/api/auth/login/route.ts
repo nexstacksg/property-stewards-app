@@ -16,6 +16,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
+    if (!user.confirmed) {
+      return NextResponse.json({ error: 'Please confirm your email address before signing in.' }, { status: 403 })
+    }
+
     const secret = getAuthSecret()
     if (!secret) {
       return NextResponse.json({ error: 'Server misconfigured: AUTH_SECRET or NEXTAUTH_SECRET missing' }, { status: 500 })
