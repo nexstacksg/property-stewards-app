@@ -64,7 +64,7 @@ model Inspector {
   name           String
   mobilePhone    String                  @unique
   type           InspectorType
-  specialization String[]
+  specialization String?
   remarks        String?
   createdOn      DateTime                @default(now())
   updatedOn      DateTime                @updatedAt
@@ -118,6 +118,7 @@ model Contract {
   actualEndDate      DateTime?
   remarks            String?
   servicePackage     String?
+  contractType       ContractType       @default(INSPECTION)
   customerComments   String?
   customerRating     Int?
   createdOn          DateTime           @default(now())
@@ -313,6 +314,11 @@ enum ContractStatus {
   COMPLETED
   CLOSED
   CANCELLED
+}
+
+enum ContractType {
+  INSPECTION
+  REPAIR
 }
 
 enum WorkOrderStatus {

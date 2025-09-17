@@ -103,7 +103,9 @@ export async function POST(request: NextRequest) {
         name,
         mobilePhone,
         type,
-        specialization: specialization || [],
+        specialization: typeof specialization === 'string'
+          ? specialization
+          : null,
         remarks
       }
     })

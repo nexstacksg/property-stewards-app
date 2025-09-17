@@ -89,7 +89,8 @@ export async function POST(request: NextRequest) {
       scheduledStartDate,
       scheduledEndDate,
       servicePackage,
-      remarks
+      remarks,
+      contractType
     } = body
 
     // Validate required fields
@@ -121,6 +122,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Create contract
+    const normalizedContractType = contractType === 'REPAIR' ? 'REPAIR' : 'INSPECTION'
+
     const contract = await prisma.contract.create({
       data: {
         customerId,
@@ -133,6 +136,7 @@ export async function POST(request: NextRequest) {
         scheduledEndDate: new Date(scheduledEndDate),
         servicePackage,
         remarks,
+        contractType: normalizedContractType,
         status: 'DRAFT'
       },
       include: {
