@@ -453,8 +453,8 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                             <WorkOrderItemMedia 
                               itemId={item.id}
                               workOrderId={workOrder.id}
-                              photos={item.photos}
-                              videos={item.videos}
+                              photos={(item.contributions || []).flatMap((entry: any) => entry.photos || [])}
+                              videos={(item.contributions || []).flatMap((entry: any) => entry.videos || [])}
                               itemName={item.name || item.item}
                             />
                             <ItemEntriesDialog
