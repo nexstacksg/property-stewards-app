@@ -56,10 +56,19 @@ export async function POST(
       select: { id: true, videos: true }
     })
 
-    return NextResponse.json({ url: publicUrl, item: updated })
+    const entry = await prisma.itemEntry.create({
+      data: {
+        itemId: id,
+        inspectorId: null,
+        photos: [],
+        videos: [publicUrl]
+      },
+      select: { id: true }
+    })
+
+    return NextResponse.json({ url: publicUrl, item: updated, entry })
   } catch (error) {
     console.error('Error uploading checklist item video:', error)
     return NextResponse.json({ error: 'Failed to upload video' }, { status: 500 })
   }
 }
-

@@ -172,18 +172,18 @@ model ContractChecklistItem {
 
 // Per-inspector contribution to a checklist item (remarks/media/selection)
 model ItemEntry {
-  id          String   @id @default(cuid())
-  itemId      String
-  inspectorId String
-  remarks     String?
-  photos      String[]
-  videos      String[]
+  id              String   @id @default(cuid())
+  itemId          String
+  inspectorId     String?
+  remarks         String?
+  photos          String[]
+  videos          String[]
   includeInReport Boolean @default(false)
-  createdOn   DateTime @default(now())
-  updatedOn   DateTime @updatedAt
+  createdOn       DateTime @default(now())
+  updatedOn       DateTime @updatedAt
 
-  item        ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  inspector   Inspector @relation(fields: [inspectorId], references: [id])
+  item            ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
 
   @@unique([itemId, inspectorId])
   @@index([itemId])
