@@ -72,10 +72,15 @@ export async function PATCH(
       actualEndDate,
       servicePackage,
       remarks,
+      contractType,
       customerComments,
       customerRating,
       status
     } = body
+
+    const normalizedContractType = contractType === 'INSPECTION' || contractType === 'REPAIR'
+      ? contractType
+      : undefined
 
     const contract = await prisma.contract.update({
       where: { id },
@@ -89,6 +94,7 @@ export async function PATCH(
         actualEndDate: actualEndDate ? new Date(actualEndDate) : null,
         servicePackage,
         remarks,
+        contractType: normalizedContractType,
         customerComments,
         customerRating,
         status

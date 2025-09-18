@@ -103,6 +103,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   const completedWorkOrders = contract.workOrders.filter(wo => wo.status === 'COMPLETED').length
   const totalWorkOrders = contract.workOrders.length
   const completionRate = totalWorkOrders > 0 ? (completedWorkOrders / totalWorkOrders) * 100 : 0
+  const contractTypeLabel = contract.contractType === 'REPAIR' ? 'Repair' : 'Inspection'
 
   return (
     <div className="p-6 space-y-6">
@@ -119,6 +120,9 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               <h1 className="text-3xl font-bold">Contract #{contract.id.slice(-8).toUpperCase()}</h1>
               <Badge variant={getContractStatusVariant(contract.status)}>
                 {contract.status}
+              </Badge>
+              <Badge variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                {contractTypeLabel}
               </Badge>
             </div>
             <p className="text-muted-foreground mt-1">Contract Details</p>
@@ -179,6 +183,13 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               <div>
                 <p className="text-sm text-muted-foreground">Contract Value</p>
                 <p className="text-2xl font-bold">{formatCurrency(Number(contract.value))}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-muted-foreground">Contract Type</p>
+                <Badge variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                  {contractTypeLabel}
+                </Badge>
               </div>
 
               <div>

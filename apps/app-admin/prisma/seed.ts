@@ -22,7 +22,7 @@ async function main() {
       name: 'John Tan',
       mobilePhone: '91234567',
       type: 'FULL_TIME',
-      specialization: ['HDB', 'Condo', 'Electrical'],
+      specialization: 'HDB, Condo, Electrical',
       remarks: 'Senior inspector with 5 years experience',
       status: 'ACTIVE'
     }
@@ -33,7 +33,7 @@ async function main() {
       name: 'Sarah Lim',
       mobilePhone: '98765432',
       type: 'FULL_TIME',
-      specialization: ['Condo', 'Landed', 'Plumbing'],
+      specialization: 'Condo, Landed, Plumbing',
       remarks: 'Specializes in high-end properties',
       status: 'ACTIVE'
     }
@@ -44,7 +44,7 @@ async function main() {
       name: 'Ahmad Rahman',
       mobilePhone: '92345678',
       type: 'PART_TIME',
-      specialization: ['HDB', 'General'],
+      specialization: 'HDB, General',
       remarks: 'Available weekends only',
       status: 'ACTIVE'
     }
@@ -214,6 +214,7 @@ async function main() {
       actualStartDate: new Date('2024-08-25T10:15:00Z'),
       actualEndDate: new Date('2024-08-25T11:45:00Z'),
       servicePackage: 'Premium Inspection',
+      contractType: 'INSPECTION',
       customerComments: 'Very thorough inspection, satisfied with service',
       customerRating: 5,
       status: 'COMPLETED'
@@ -230,6 +231,7 @@ async function main() {
       scheduledStartDate: new Date('2024-08-27T14:00:00Z'),
       scheduledEndDate: new Date('2024-08-27T16:00:00Z'),
       servicePackage: 'Standard Inspection',
+      contractType: 'INSPECTION',
       status: 'SCHEDULED'
     }
   })
@@ -244,6 +246,7 @@ async function main() {
       scheduledStartDate: new Date('2024-08-28T09:00:00Z'),
       scheduledEndDate: new Date('2024-08-28T11:00:00Z'),
       servicePackage: 'Basic Inspection',
+      contractType: 'REPAIR',
       status: 'CONFIRMED'
     }
   })
@@ -258,6 +261,7 @@ async function main() {
       scheduledStartDate: new Date('2024-08-30T10:00:00Z'),
       scheduledEndDate: new Date('2024-08-30T13:00:00Z'),
       servicePackage: 'Luxury Property Inspection',
+      contractType: 'INSPECTION',
       remarks: 'High-priority client, ensure senior inspector',
       status: 'CONFIRMED'
     }

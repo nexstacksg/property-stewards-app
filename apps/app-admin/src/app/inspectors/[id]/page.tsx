@@ -42,7 +42,12 @@ async function getInspector(id: string) {
     notFound()
   }
 
-  return inspector
+  return {
+    ...inspector,
+    specialization: Array.isArray(inspector.specialization)
+      ? inspector.specialization.join(', ')
+      : inspector.specialization,
+  }
 }
 
 function formatDate(date: Date | string | null) {
@@ -145,13 +150,9 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
 
               <div>
                 <p className="text-sm text-muted-foreground">Specialization</p>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {inspector.specialization.map((spec) => (
-                    <Badge key={spec} variant="secondary" className="text-xs">
-                      {spec}
-                    </Badge>
-                  ))}
-                </div>
+                <p className="text-sm mt-1">
+                  {inspector.specialization ? inspector.specialization : '—'}
+                </p>
               </div>
 
               {inspector.remarks && (

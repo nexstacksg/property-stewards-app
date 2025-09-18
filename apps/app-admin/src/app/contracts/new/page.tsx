@@ -47,6 +47,7 @@ function NewContractPageContent() {
   // Form fields
   const [addressId, setAddressId] = useState("")
   const [servicePackage, setServicePackage] = useState<string>("")
+  const [contractType, setContractType] = useState<'INSPECTION' | 'REPAIR'>("INSPECTION")
   const [value, setValue] = useState("")
   const [scheduledStartDate, setScheduledStartDate] = useState("")
   const [scheduledEndDate, setScheduledEndDate] = useState("")
@@ -245,7 +246,8 @@ function NewContractPageContent() {
           scheduledStartDate,
           scheduledEndDate: scheduledEndDate || scheduledStartDate,
           firstPaymentOn: firstPaymentOn || scheduledStartDate,
-          remarks
+          remarks,
+          contractType
         })
       })
 
@@ -274,6 +276,8 @@ function NewContractPageContent() {
       setLoading(false)
     }
   }
+
+  const contractTypeLabel = contractType === 'REPAIR' ? 'Repair' : 'Inspection'
 
   return (
     <div className="p-6 space-y-6">
@@ -409,6 +413,22 @@ function NewContractPageContent() {
                       onChange={(e) => setServicePackage(e.target.value)}
                       placeholder="e.g., Premium Inspection"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contractType">Contract Type</Label>
+                    <Select
+                      value={contractType}
+                      onValueChange={(value) => setContractType(value as 'INSPECTION' | 'REPAIR')}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="INSPECTION">Inspection</SelectItem>
+                        <SelectItem value="REPAIR">Repair</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="space-y-2">
@@ -559,7 +579,9 @@ function NewContractPageContent() {
 
                 <div>
                   <p className="text-sm text-muted-foreground">Type</p>
-                  <Badge variant="secondary">Inspection</Badge>
+                  <Badge variant={contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                    {contractTypeLabel}
+                  </Badge>
                 </div>
 
                 {value && (
