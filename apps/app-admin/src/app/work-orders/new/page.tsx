@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, Suspense, useRef } from "react"
+import { useState, useEffect, Suspense, useRef, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,6 +13,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Loader2, Search, User, MapPin, Calendar, Clock, AlertCircle } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+const DEFAULT_SCHEDULE_START_TIME = "09:00"
+const DEFAULT_SCHEDULE_END_TIME = "17:00"
+
+const formatDateInput = (date: Date) => {
+  const normalized = new Date(date)
+  normalized.setHours(0, 0, 0, 0)
+  const year = normalized.getFullYear()
+  const month = String(normalized.getMonth() + 1).padStart(2, '0')
+  const day = String(normalized.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getDayAfterTomorrowStart = () => {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() + 2)
+  return date
+}
 
 interface Contract {
   id: string
@@ -68,6 +86,7 @@ function NewWorkOrderPageContent() {
   const [inspectorQuery, setInspectorQuery] = useState("")
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const [triggerWidth, setTriggerWidth] = useState<number>(0)
+  const defaultScheduleDate = useMemo(() => getDayAfterTomorrowStart(), [])
 
   useEffect(() => {
     const update = () => setTriggerWidth(triggerRef.current?.offsetWidth || 0)
@@ -82,6 +101,14 @@ function NewWorkOrderPageContent() {
   const [scheduledEndDateTime, setScheduledEndDateTime] = useState("")
   const [scheduledEndTime, setScheduledEndTime] = useState("")
   const [remarks, setRemarks] = useState("")
+
+  useEffect(() => {
+    const formattedDefault = formatDateInput(defaultScheduleDate)
+    setScheduledStartDateTime((prev) => prev || formattedDefault)
+    setScheduledEndDateTime((prev) => prev || formattedDefault)
+    setScheduledStartTime((prev) => prev || DEFAULT_SCHEDULE_START_TIME)
+    setScheduledEndTime((prev) => prev || DEFAULT_SCHEDULE_END_TIME)
+  }, [defaultScheduleDate])
 
   useEffect(() => {
     fetchInspectors()
@@ -144,12 +171,6 @@ function NewWorkOrderPageContent() {
       const contract: Contract = await response.json()
       setSelectedContract(contract)
       
-      // Set default dates based on contract schedule
-      const startDate = new Date(contract.scheduledStartDate)
-      setScheduledStartDateTime(startDate.toISOString().split('T')[0])
-      setScheduledStartTime('09:00')
-      setScheduledEndDateTime(startDate.toISOString().split('T')[0])
-      setScheduledEndTime('17:00')
     } catch (err) {
       console.error('Error fetching contract:', err)
     }
@@ -209,12 +230,6 @@ function NewWorkOrderPageContent() {
     setContracts([])
     setSearchTerm("")
     
-    // Set default dates based on contract schedule
-    const startDate = new Date(contract.scheduledStartDate)
-    setScheduledStartDateTime(startDate.toISOString().split('T')[0])
-    setScheduledStartTime('09:00')
-    setScheduledEndDateTime(startDate.toISOString().split('T')[0])
-    setScheduledEndTime('17:00')
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

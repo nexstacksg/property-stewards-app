@@ -18,6 +18,7 @@ interface Contract {
   actualStartDate?: string
   actualEndDate?: string
   servicePackage?: string
+  contractType: string
   customerRating?: number
   status: string
   customer: {
@@ -228,6 +229,7 @@ export default function ContractsPage() {
                     <TableHead>Customer</TableHead>
                     <TableHead>Property</TableHead>
                     <TableHead>Value</TableHead>
+                    <TableHead>Type</TableHead>
                     <TableHead>Schedule</TableHead>
                     <TableHead>Service</TableHead>
                     <TableHead>Status</TableHead>
@@ -265,6 +267,11 @@ export default function ContractsPage() {
                         </div>
                       </TableCell>
                       <TableCell>{formatCurrency(Number(contract.value))}</TableCell>
+                      <TableCell>
+                        <Badge variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                          {contract.contractType === 'REPAIR' ? 'Repair' : 'Inspection'}
+                        </Badge>
+                      </TableCell>
                       <TableCell>
                         <div className="space-y-1">
                           <div className="text-sm">

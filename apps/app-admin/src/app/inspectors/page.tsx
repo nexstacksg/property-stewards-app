@@ -13,7 +13,7 @@ interface Inspector {
   name: string
   mobilePhone: string
   type: string
-  specialization: string[]
+  specialization: string | null
   remarks?: string
   status: string
   _count: {
@@ -49,9 +49,19 @@ export default function InspectorsPage() {
       
       // Handle both old array format and new object format
       if (Array.isArray(data)) {
-        setInspectors(data)
+        setInspectors(data.map((inspector: any) => ({
+          ...inspector,
+          specialization: Array.isArray(inspector.specialization)
+            ? inspector.specialization.join(', ')
+            : inspector.specialization,
+        })))
       } else if (data.inspectors) {
-        setInspectors(data.inspectors)
+        setInspectors(data.inspectors.map((inspector: any) => ({
+          ...inspector,
+          specialization: Array.isArray(inspector.specialization)
+            ? inspector.specialization.join(', ')
+            : inspector.specialization,
+        })))
       } else {
         setInspectors([])
       }
@@ -221,13 +231,11 @@ export default function InspectorsPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {inspector.specialization.map((spec, idx) => (
-                            <Badge key={idx} variant="secondary" className="text-xs">
-                              {spec}
-                            </Badge>
-                          ))}
-                        </div>
+                        {inspector.specialization ? (
+                          <span>{inspector.specialization}</span>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
                       </TableCell>
                       <TableCell>{inspector._count.workOrders}</TableCell>
                       <TableCell>

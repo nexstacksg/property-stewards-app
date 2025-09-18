@@ -84,7 +84,9 @@ export async function PUT(
         name,
         mobilePhone,
         type,
-        specialization,
+        specialization: typeof specialization === 'string'
+          ? specialization
+          : undefined,
         remarks,
         status
       }

@@ -64,7 +64,7 @@ model Inspector {
   name           String
   mobilePhone    String                  @unique
   type           InspectorType
-  specialization String[]
+  specialization String?
   remarks        String?
   createdOn      DateTime                @default(now())
   updatedOn      DateTime                @updatedAt
@@ -118,6 +118,7 @@ model Contract {
   actualEndDate      DateTime?
   remarks            String?
   servicePackage     String?
+  contractType       ContractType       @default(INSPECTION)
   customerComments   String?
   customerRating     Int?
   createdOn          DateTime           @default(now())
@@ -171,18 +172,18 @@ model ContractChecklistItem {
 
 // Per-inspector contribution to a checklist item (remarks/media/selection)
 model ItemEntry {
-  id          String   @id @default(cuid())
-  itemId      String
-  inspectorId String
-  remarks     String?
-  photos      String[]
-  videos      String[]
+  id              String   @id @default(cuid())
+  itemId          String
+  inspectorId     String?
+  remarks         String?
+  photos          String[]
+  videos          String[]
   includeInReport Boolean @default(false)
-  createdOn   DateTime @default(now())
-  updatedOn   DateTime @updatedAt
+  createdOn       DateTime @default(now())
+  updatedOn       DateTime @updatedAt
 
-  item        ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  inspector   Inspector @relation(fields: [inspectorId], references: [id])
+  item            ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
 
   @@unique([itemId, inspectorId])
   @@index([itemId])
@@ -313,6 +314,11 @@ enum ContractStatus {
   COMPLETED
   CLOSED
   CANCELLED
+}
+
+enum ContractType {
+  INSPECTION
+  REPAIR
 }
 
 enum WorkOrderStatus {

@@ -27,6 +27,7 @@ export default function ItemEntriesDialog({
 }) {
   const [open, setOpen] = useState(false)
   const [localEntries, setLocalEntries] = useState<Entry[]>(entries)
+  const displayEntries = localEntries.filter((entry) => entry.inspector)
 
   const toggleInclude = async (entryId: string, value: boolean) => {
     setLocalEntries((prev) => prev.map((e) => (e.id === entryId ? { ...e, includeInReport: value } : e)))
@@ -39,7 +40,7 @@ export default function ItemEntriesDialog({
     } catch {}
   }
 
-  const count = entries?.length || 0
+  const count = displayEntries.length
   const disabled = count === 0
 
   return (
@@ -53,11 +54,11 @@ export default function ItemEntriesDialog({
         <DialogHeader>
           <DialogTitle>{itemName ? `${itemName} — ` : ''}Inspector Remarks</DialogTitle>
         </DialogHeader>
-        {(!localEntries || localEntries.length === 0) ? (
+        {count === 0 ? (
           <p className="text-sm text-muted-foreground">No remarks available.</p>
         ) : (
           <div className="space-y-3">
-            {localEntries.map((c) => (
+            {displayEntries.map((c) => (
               <div key={c.id} className="border rounded-md p-3">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-medium">By {c.inspector?.name || 'Inspector'}</p>

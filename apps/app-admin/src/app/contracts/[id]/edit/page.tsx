@@ -24,6 +24,7 @@ interface Contract {
   actualStartDate?: string
   actualEndDate?: string
   servicePackage?: string
+  contractType?: string
   remarks?: string
   status: string
   customer: {
@@ -51,6 +52,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
   // Form fields
   const [value, setValue] = useState("")
   const [servicePackage, setServicePackage] = useState("")
+  const [contractType, setContractType] = useState<'INSPECTION' | 'REPAIR'>("INSPECTION")
   const [scheduledStartDate, setScheduledStartDate] = useState("")
   const [scheduledEndDate, setScheduledEndDate] = useState("")
   const [actualStartDate, setActualStartDate] = useState("")
@@ -90,6 +92,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       
       setValue(contract.value.toString())
       setServicePackage(contract.servicePackage || "")
+      setContractType((contract.contractType as 'INSPECTION' | 'REPAIR') || 'INSPECTION')
       setScheduledStartDate(contract.scheduledStartDate.split('T')[0])
       setScheduledEndDate(contract.scheduledEndDate.split('T')[0])
       setActualStartDate(contract.actualStartDate ? contract.actualStartDate.split('T')[0] : "")
@@ -207,6 +210,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({
           value: parseFloat(value),
           servicePackage,
+          contractType,
           scheduledStartDate,
           scheduledEndDate,
           actualStartDate: actualStartDate || null,
@@ -250,6 +254,8 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       </div>
     )
   }
+
+  const contractTypeLabel = contractType === 'REPAIR' ? 'Repair' : 'Inspection'
 
   return (
     <div className="p-6 space-y-6">
@@ -324,6 +330,22 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                       onChange={(e) => setServicePackage(e.target.value)}
                       placeholder="e.g., Premium Inspection"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="contractType">Contract Type</Label>
+                    <Select
+                      value={contractType}
+                      onValueChange={(value) => setContractType(value as 'INSPECTION' | 'REPAIR')}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="INSPECTION">Inspection</SelectItem>
+                        <SelectItem value="REPAIR">Repair</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="space-y-2">
@@ -513,6 +535,13 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                     'default'
                   }>
                     {status}
+                  </Badge>
+                </div>
+
+                <div>
+                  <p className="text-sm text-muted-foreground">Type</p>
+                  <Badge variant={contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                    {contractTypeLabel}
                   </Badge>
                 </div>
 

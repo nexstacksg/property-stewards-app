@@ -8,19 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
+import { ArrowLeft, Loader2 } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
-
-const SPECIALIZATIONS = [
-  "HDB",
-  "CONDO",
-  "EC",
-  "APARTMENT",
-  "LANDED",
-  "COMMERCIAL",
-  "INDUSTRIAL"
-]
 
 export default function NewInspectorPage() {
   const router = useRouter()
@@ -31,32 +20,13 @@ export default function NewInspectorPage() {
   const [name, setName] = useState("")
   const [mobilePhone, setMobilePhone] = useState("")
   const [type, setType] = useState<string>("FULL_TIME")
-  const [specialization, setSpecialization] = useState<string[]>([])
+  const [specialization, setSpecialization] = useState("")
   const [remarks, setRemarks] = useState("")
-  
-  // Specialization selection
-  const [selectedSpec, setSelectedSpec] = useState("")
-
-  const addSpecialization = () => {
-    console.log('Adding specialization:', selectedSpec, 'to current:', specialization)
-    if (selectedSpec && !specialization.includes(selectedSpec)) {
-      const newSpecializations = [...specialization, selectedSpec]
-      console.log('New specializations:', newSpecializations)
-      setSpecialization(newSpecializations)
-      setSelectedSpec("")
-    }
-  }
-
-  const removeSpecialization = (spec: string) => {
-    setSpecialization(specialization.filter(s => s !== spec))
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setLoading(true)
-
-    console.log('Submitting inspector with specialization:', specialization)
 
     try {
       const response = await fetch("/api/inspectors", {
@@ -147,52 +117,14 @@ export default function NewInspectorPage() {
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Specialization</Label>
-                  <div className="flex gap-2">
-                    <Select value={selectedSpec} onValueChange={setSelectedSpec}>
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Select specialization" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {SPECIALIZATIONS.map(spec => (
-                          <SelectItem 
-                            key={spec} 
-                            value={spec}
-                            disabled={specialization.includes(spec)}
-                          >
-                            {spec}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={addSpecialization}
-                      disabled={!selectedSpec}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
                 <div className="space-y-2 md:col-span-2">
-                  {specialization.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {specialization.map(spec => (
-                        <Badge 
-                          key={spec}
-                          variant="secondary"
-                          className="cursor-pointer"
-                          onClick={() => removeSpecialization(spec)}
-                        >
-                          {spec}
-                          <X className="h-3 w-3 ml-1" />
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
+                  <Label htmlFor="specialization">Specialization</Label>
+                  <Input
+                    id="specialization"
+                    value={specialization}
+                    onChange={(e) => setSpecialization(e.target.value)}
+                    placeholder="e.g., Electrical Safety"
+                  />
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
