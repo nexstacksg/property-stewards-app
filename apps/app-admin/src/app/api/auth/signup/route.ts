@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
 import { hashPassword } from '@/lib/password'
-import { signJwt } from '@/lib/jwt'
-import { getAuthSecret } from '@/lib/auth-secret'
-import { sendEmail } from '@/lib/email'
-
-const CONFIRMATION_TTL_SECONDS = 60 * 60 * 24 // 24 hours
+import {
+  CONFIRMATION_TTL_SECONDS,
+  createConfirmationToken,
+  sendConfirmationEmail,
+} from '@/lib/auth-confirmation'
 
 export const runtime = 'nodejs'
 
@@ -17,27 +17,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
     }
 
+    console.info('[signup] Incoming signup request', { email, username })
+
     const existingUser = await prisma.user.findFirst({ where: { OR: [{ email }, { username }] } })
     if (existingUser) {
       if (!existingUser.confirmed) {
-        const secret = getAuthSecret()
-        if (!secret) {
-          return NextResponse.json({ error: 'Server misconfigured: AUTH_SECRET or NEXTAUTH_SECRET missing' }, { status: 500 })
-        }
-        const token = await signJwt({ sub: existingUser.id, purpose: 'email-confirm' }, secret, CONFIRMATION_TTL_SECONDS)
-        const confirmUrl = new URL('/confirm', req.nextUrl.origin)
-        confirmUrl.searchParams.set('token', token)
-        try {
-          await sendEmail({
-            to: existingUser.email,
-            subject: 'Confirm your Property Stewards admin account',
-            text: `Confirm your admin account by visiting ${confirmUrl.toString()}`,
-            html: `<p>Hello ${existingUser.username},</p><p>Please confirm your Property Stewards admin account by clicking <a href="${confirmUrl.toString()}">this link</a>.</p><p>This link expires in 24 hours.</p>`
-          })
-        } catch (emailErr) {
-          console.error('Failed to resend confirmation email', emailErr)
+        console.info('[signup] Existing unconfirmed user found, resending confirmation', { userId: existingUser.id })
+        const resend = await sendConfirmationEmail({
+          user: { id: existingUser.id, username: existingUser.username, email: existingUser.email },
+          origin: req.nextUrl.origin,
+        })
+
+        if (!resend) {
           return NextResponse.json({ error: 'Unable to send confirmation email. Try again later.' }, { status: 500 })
         }
+
         return NextResponse.json({ message: 'Account already pending confirmation. A new confirmation email has been sent if delivery is configured.' })
       }
       return NextResponse.json({ error: 'User already exists' }, { status: 409 })
@@ -54,24 +48,20 @@ export async function POST(req: NextRequest) {
       throw err
     }
 
-    const secret = getAuthSecret()
-    if (!secret) {
+    console.info('[signup] Created user', { userId: user.id })
+
+    const token = await createConfirmationToken(user.id, CONFIRMATION_TTL_SECONDS)
+    if (!token) {
       return NextResponse.json({ error: 'Server misconfigured: AUTH_SECRET or NEXTAUTH_SECRET missing' }, { status: 500 })
     }
 
-    const token = await signJwt({ sub: user.id, purpose: 'email-confirm' }, secret, CONFIRMATION_TTL_SECONDS)
-    const confirmUrl = new URL('/confirm', req.nextUrl.origin)
-    confirmUrl.searchParams.set('token', token)
+    const emailResult = await sendConfirmationEmail({
+      user: { id: user.id, username: user.username, email: user.email },
+      origin: req.nextUrl.origin,
+      token,
+    })
 
-    try {
-      await sendEmail({
-        to: user.email,
-        subject: 'Confirm your Property Stewards admin account',
-        text: `Confirm your admin account by visiting ${confirmUrl.toString()}`,
-        html: `<p>Hello ${user.username},</p><p>Thanks for signing up for the Property Stewards admin portal.</p><p>Please confirm your account by clicking <a href="${confirmUrl.toString()}">this link</a>. This link expires in 24 hours.</p>`
-      })
-    } catch (emailErr) {
-      console.error('Failed to send confirmation email', emailErr)
+    if (!emailResult) {
       return NextResponse.json({ error: 'Unable to send confirmation email. Try again later.' }, { status: 500 })
     }
 

@@ -5,6 +5,7 @@ import { getAuthSecret } from '@/lib/auth-secret'
 const PUBLIC_PATHS = [
   '/login',
   '/signup',
+  '/confirm',
 ]
 
 export async function middleware(req: NextRequest) {
