@@ -5,7 +5,9 @@ export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('token')
+  console.info('[confirm-api] Incoming confirmation request', { hasToken: Boolean(token) })
   const result = await confirmUserByToken(token)
+  console.info('[confirm-api] Confirmation result', { result })
 
   if (result === 'missing-token') {
     return NextResponse.json({ error: 'Missing token' }, { status: 400 })
@@ -22,6 +24,7 @@ export async function GET(req: NextRequest) {
     'missing-user': 'missing-user',
     'config-error': 'server-error',
     'missing-token': 'invalid',
+    'email-error': 'server-error',
   }
   url.searchParams.set('confirmation', map[result] ?? 'invalid')
   return NextResponse.redirect(url)
