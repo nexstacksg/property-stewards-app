@@ -5,7 +5,10 @@ import { Navigation } from '@/components/navigation'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const isAuth = pathname.startsWith('/login') || pathname.startsWith('/signup')
+  const isAuth =
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/signup') ||
+    pathname.startsWith('/confirm')
 
   if (isAuth) return <div className="min-h-screen">{children}</div>
 
