@@ -4,17 +4,16 @@ import prisma from '@/lib/prisma'
 // PATCH /api/checklist-items/[id] - Update a contract checklist item (e.g., name/remarks)
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     const { remarks, name, tasks, status, condition } = body as { remarks?: string; name?: string; tasks?: unknown; status?: string; condition?: string }
 
     const data: any = {}
     if (typeof remarks === 'string') data.remarks = remarks
     if (typeof name === 'string' && name.trim()) data.name = name
-    if (typeof tasks !== 'undefined') data.tasks = tasks
 
     // Status
     if (typeof status === 'string') {
@@ -33,9 +32,51 @@ export async function PATCH(
       return NextResponse.json({ error: 'No updatable fields provided' }, { status: 400 })
     }
 
-    const item = await prisma.contractChecklistItem.update({
-      where: { id },
-      data
+    const item = await prisma.$transaction(async (tx) => {
+      const updatedItem = await tx.contractChecklistItem.update({
+        where: { id },
+        data
+      })
+
+      if (Array.isArray(tasks)) {
+        await tx.checklistTask.deleteMany({ where: { itemId: id, entryId: null } })
+        const parsedTasks = tasks.map((task: any, index: number) => {
+          if (typeof task === 'string') {
+            return {
+              itemId: id,
+              name: task,
+              status: 'PENDING' as const,
+              order: index
+            }
+          }
+          const label = task?.task || task?.action || `Task ${index + 1}`
+          const statusValue = typeof task?.status === 'string' && task.status.toLowerCase() === 'done'
+            ? 'COMPLETED'
+            : 'PENDING'
+          return {
+            itemId: id,
+            name: label,
+            status: statusValue as 'PENDING' | 'COMPLETED',
+            order: index
+          }
+        })
+
+        if (parsedTasks.length > 0) {
+          await tx.checklistTask.createMany({
+            data: parsedTasks.map(({ itemId, name, status }) => ({ itemId, name, status }))
+          })
+        } else {
+          await tx.checklistTask.create({
+            data: {
+              itemId: id,
+              name: updatedItem.name || 'Inspection task',
+              status: 'PENDING'
+            }
+          })
+        }
+      }
+
+      return updatedItem
     })
 
     return NextResponse.json(item)

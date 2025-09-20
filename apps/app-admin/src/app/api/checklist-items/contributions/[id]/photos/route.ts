@@ -40,12 +40,36 @@ export async function POST(
     } as any))
 
     const publicUrl = `${PUBLIC_URL}/${key}`
-    const updated = await prisma.itemEntry.update({
+
+    const entry = await prisma.itemEntry.findUnique({
       where: { id },
+      include: { tasks: true, item: { select: { name: true, status: true } }, inspector: { select: { id: true } } }
+    })
+
+    if (!entry) {
+      return NextResponse.json({ error: 'Contribution not found' }, { status: 404 })
+    }
+
+    let task = entry.tasks[0]
+    if (!task) {
+      task = await prisma.checklistTask.create({
+        data: {
+          itemId: entry.itemId,
+          entryId: entry.id,
+          inspectorId: entry.inspectorId ?? entry.inspector?.id ?? null,
+          name: entry.item?.name ? `${entry.item.name} — notes` : 'Inspector notes',
+          status: entry.item?.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
+        }
+      })
+    }
+
+    const updatedTask = await prisma.checklistTask.update({
+      where: { id: task.id },
       data: { photos: { push: publicUrl } },
       select: { id: true, photos: true }
     })
-    return NextResponse.json({ url: publicUrl, contribution: updated })
+
+    return NextResponse.json({ url: publicUrl, task: updatedTask })
   } catch (error) {
     console.error('Error uploading contribution photo:', error)
     return NextResponse.json({ error: 'Failed to upload photo' }, { status: 500 })

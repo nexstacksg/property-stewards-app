@@ -48,25 +48,33 @@ export async function POST(
 
     const publicUrl = `${PUBLIC_URL}/${key}`
 
-    const updated = await prisma.contractChecklistItem.update({
+    const item = await prisma.contractChecklistItem.findUnique({
       where: { id },
-      data: {
-        videos: { push: publicUrl }
-      },
+      include: { checklistTasks: { where: { entryId: null } } }
+    })
+
+    if (!item) {
+      return NextResponse.json({ error: 'Checklist item not found' }, { status: 404 })
+    }
+
+    let task = item.checklistTasks[0]
+    if (!task) {
+      task = await prisma.checklistTask.create({
+        data: {
+          itemId: item.id,
+          name: item.name || 'General inspection',
+          status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
+        }
+      })
+    }
+
+    const updatedTask = await prisma.checklistTask.update({
+      where: { id: task.id },
+      data: { videos: { push: publicUrl } },
       select: { id: true, videos: true }
     })
 
-    const entry = await prisma.itemEntry.create({
-      data: {
-        itemId: id,
-        inspectorId: null,
-        photos: [],
-        videos: [publicUrl]
-      },
-      select: { id: true }
-    })
-
-    return NextResponse.json({ url: publicUrl, item: updated, entry })
+    return NextResponse.json({ url: publicUrl, task: updatedTask })
   } catch (error) {
     console.error('Error uploading checklist item video:', error)
     return NextResponse.json({ error: 'Failed to upload video' }, { status: 500 })

@@ -72,6 +72,7 @@ model Inspector {
   checklistItems ContractChecklistItem[]
   workOrders     WorkOrder[]
   itemEntries    ItemEntry[]
+  checklistTasks ChecklistTask[]
 
   @@index([mobilePhone])
   @@index([status])
@@ -157,13 +158,13 @@ model ContractChecklistItem {
   enteredById         String?
   workOrderId         String?
   order               Int
-  tasks               Json?
   status              ChecklistItemStatus @default(PENDING)
   condition           Condition?
   contractChecklist   ContractChecklist @relation(fields: [contractChecklistId], references: [id], onDelete: Cascade)
   enteredBy           Inspector?        @relation(fields: [enteredById], references: [id])
   workOrder           WorkOrder?        @relation(fields: [workOrderId], references: [id])
   contributions       ItemEntry[]
+  checklistTasks      ChecklistTask[]
 
   @@unique([contractChecklistId, order])
   @@index([contractChecklistId])
@@ -176,17 +177,38 @@ model ItemEntry {
   itemId          String
   inspectorId     String?
   remarks         String?
-  photos          String[]
-  videos          String[]
   includeInReport Boolean @default(false)
   createdOn       DateTime @default(now())
   updatedOn       DateTime @updatedAt
 
   item            ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
+  tasks           ChecklistTask[]
 
   @@unique([itemId, inspectorId])
   @@index([itemId])
+  @@index([inspectorId])
+}
+
+model ChecklistTask {
+  id          String   @id @default(cuid())
+  itemId      String
+  entryId     String?
+  inspectorId String?
+  name        String
+  status      ChecklistTaskStatus @default(PENDING)
+  condition   Condition?
+  photos      String[] @default([])
+  videos      String[] @default([])
+  createdOn   DateTime @default(now())
+  updatedOn   DateTime @updatedAt
+
+  item       ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  entry      ItemEntry?            @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  inspector  Inspector?            @relation(fields: [inspectorId], references: [id], onDelete: SetNull)
+
+  @@index([itemId])
+  @@index([entryId])
   @@index([inspectorId])
 }
 
@@ -284,6 +306,11 @@ enum PropertySize {
 
 // Status for contract checklist items
 enum ChecklistItemStatus {
+  PENDING
+  COMPLETED
+}
+
+enum ChecklistTaskStatus {
   PENDING
   COMPLETED
 }
