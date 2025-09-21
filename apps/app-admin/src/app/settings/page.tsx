@@ -36,11 +36,7 @@ const quickLinks = [
 ]
 
 const systemSettings = [
-  {
-    title: "Security",
-    description: "Access policies, session lifetime, and audit trail exports.",
-    icon: Shield,
-  },
+
   {
     title: "Integrations",
     description: "Linked services such as calendar sync, WhatsApp, and email.",
