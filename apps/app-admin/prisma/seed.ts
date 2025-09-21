@@ -566,17 +566,31 @@ async function main() {
         }
       })
 
+      let linkedTaskId: string | undefined
       for (const task of entrySeed.tasks || []) {
-        await prisma.checklistTask.create({
+        const createdTask = await prisma.checklistTask.create({
           data: {
             itemId: item.id,
-            entryId: entry.id,
             inspectorId: entrySeed.inspectorId,
             name: task.name,
             status: task.status,
             photos: task.photos ?? [],
-            videos: task.videos ?? []
+            videos: task.videos ?? [],
+            entries: {
+              connect: { id: entry.id }
+            }
           }
+        })
+
+        if (!linkedTaskId) {
+          linkedTaskId = createdTask.id
+        }
+      }
+
+      if (linkedTaskId) {
+        await prisma.itemEntry.update({
+          where: { id: entry.id },
+          data: { taskId: linkedTaskId }
         })
       }
     }
