@@ -2,10 +2,43 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
+type SeedChecklistTask = {
+  name: string
+  status: 'COMPLETED' | 'PENDING'
+  photos?: string[]
+  videos?: string[]
+}
+
+type SeedInspectorEntry = {
+  inspectorId: string
+  remarks?: string
+  includeInReport?: boolean
+  tasks?: SeedChecklistTask[]
+}
+
+type SeedChecklistItem = {
+  contractChecklistId: string
+  name: string
+  remarks?: string
+  condition?: 'GOOD' | 'FAIR' | 'UNSATISFACTORY' | 'NOT_APPLICABLE' | 'UN_OBSERVABLE'
+  enteredOn?: Date
+  enteredById?: string
+  order: number
+  status: 'COMPLETED' | 'PENDING'
+  photos?: string[]
+  videos?: string[]
+  tasks?: SeedChecklistTask[]
+  inspectorEntries?: SeedInspectorEntry[]
+}
+
 async function main() {
   console.log('Starting seed...')
 
   // Clear existing data
+  await prisma.propertySizeOption.deleteMany()
+  await prisma.property.deleteMany()
+  await prisma.checklistTask.deleteMany()
+  await prisma.itemEntry.deleteMany()
   await prisma.contractChecklistItem.deleteMany()
   await prisma.contractChecklist.deleteMany()
   await prisma.workOrder.deleteMany()
@@ -99,6 +132,64 @@ async function main() {
   })
 
   console.log('Created customers:', { customer1, customer2, customer3 })
+
+  // Seed property catalogue (used for dropdowns and validation)
+  const propertyHdb = await prisma.property.create({
+    data: {
+      code: 'HDB',
+      name: 'HDB Flat',
+      sizes: {
+        create: [
+          { code: '1_ROOM', name: '1-Room Flat' },
+          { code: '2_ROOM', name: '2-Room Flat' },
+          { code: '3_ROOM', name: '3-Room Flat' },
+          { code: '4_ROOM', name: '4-Room Flat' },
+          { code: '5_ROOM', name: '5-Room Flat' },
+          { code: 'EXECUTIVE', name: 'Executive Flat' }
+        ]
+      }
+    },
+    include: { sizes: true }
+  })
+
+  const propertyCondo = await prisma.property.create({
+    data: {
+      code: 'CONDO',
+      name: 'Condominium',
+      sizes: {
+        create: [
+          { code: '1BR', name: '1 Bedroom' },
+          { code: '2BR', name: '2 Bedroom' },
+          { code: '3BR', name: '3 Bedroom' },
+          { code: '4BR', name: '4 Bedroom' },
+          { code: 'PENTHOUSE', name: 'Penthouse' }
+        ]
+      }
+    },
+    include: { sizes: true }
+  })
+
+  const propertyLanded = await prisma.property.create({
+    data: {
+      code: 'LANDED',
+      name: 'Landed Property',
+      sizes: {
+        create: [
+          { code: 'TERRACE', name: 'Terrace House' },
+          { code: 'SEMI_DETACHED', name: 'Semi-Detached House' },
+          { code: 'DETACHED', name: 'Detached House' },
+          { code: 'GCB', name: 'Good Class Bungalow' }
+        ]
+      }
+    },
+    include: { sizes: true }
+  })
+
+  console.log('Seeded property catalogue:', {
+    HDB: propertyHdb.sizes.length,
+    CONDO: propertyCondo.sizes.length,
+    LANDED: propertyLanded.sizes.length
+  })
 
   // Create Customer Addresses
   const address1 = await prisma.customerAddress.create({
@@ -284,48 +375,226 @@ async function main() {
     }
   })
 
-  // Create some Contract Checklist Items for completed contract
-  await prisma.contractChecklistItem.createMany({
-    data: [
-      {
-        contractChecklistId: contractChecklist1.id,
-        name: 'Living Room',
-        remarks: 'Minor crack on ceiling near corner, paint peeling near window',
-        photos: ['https://spaces.example.com/photo1.jpg', 'https://spaces.example.com/photo2.jpg'],
-        enteredOn: new Date('2024-08-25T10:30:00Z'),
-        enteredById: inspector1.id,
-        order: 1
-      },
-      {
-        contractChecklistId: contractChecklist1.id,
-        name: 'Master Bedroom',
-        remarks: 'Aircon servicing needed, slight water stain on ceiling',
-        photos: ['https://spaces.example.com/photo3.jpg'],
-        videos: ['https://spaces.example.com/video1.mp4'],
-        enteredOn: new Date('2024-08-25T10:45:00Z'),
-        enteredById: inspector1.id,
-        order: 2
-      },
-      {
-        contractChecklistId: contractChecklist1.id,
-        name: 'Kitchen',
-        remarks: 'All cabinets in good condition, sink tap slightly loose',
-        photos: ['https://spaces.example.com/photo4.jpg'],
-        enteredOn: new Date('2024-08-25T11:00:00Z'),
-        enteredById: inspector1.id,
-        order: 3
-      },
-      {
-        contractChecklistId: contractChecklist1.id,
-        name: 'Bathroom 1',
-        remarks: 'Excellent condition, no issues found',
-        photos: ['https://spaces.example.com/photo5.jpg'],
-        enteredOn: new Date('2024-08-25T11:15:00Z'),
-        enteredById: inspector1.id,
-        order: 4
+  const checklistItemSeeds: SeedChecklistItem[] = [
+    {
+      contractChecklistId: contractChecklist1.id,
+      name: 'Living Room',
+      remarks: 'Minor crack on ceiling near corner, paint peeling near window',
+      condition: 'FAIR' as const,
+      enteredOn: new Date('2024-08-25T10:30:00Z'),
+      enteredById: inspector1.id,
+      order: 1,
+      status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/living-room-overview.jpg'],
+      videos: [],
+      tasks: [
+        {
+          name: 'Inspect walls and ceiling',
+          status: 'COMPLETED',
+          photos: ['https://spaces.example.com/photo1.jpg'],
+          videos: []
+        },
+        {
+          name: 'Test electrical outlets',
+          status: 'COMPLETED',
+          photos: ['https://spaces.example.com/photo2.jpg'],
+          videos: []
+        }
+      ],
+      inspectorEntries: [
+        {
+          inspectorId: inspector1.id,
+          remarks: 'Recommend repainting within the month to prevent peeling.',
+          includeInReport: true,
+          tasks: [
+            {
+              name: 'Document ceiling crack',
+              status: 'COMPLETED',
+              photos: ['https://spaces.example.com/photo1-detail.jpg'],
+              videos: []
+            }
+          ]
+        },
+        {
+          inspectorId: inspector2.id,
+          remarks: 'Scheduled painting contractor follow-up for next week.',
+          includeInReport: false,
+          tasks: [
+            {
+              name: 'Capture paint condition for contractor',
+              status: 'PENDING',
+              photos: ['https://spaces.example.com/photo1-contractor.jpg'],
+              videos: []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      contractChecklistId: contractChecklist1.id,
+      name: 'Master Bedroom',
+      remarks: 'Aircon servicing needed, slight water stain on ceiling',
+      condition: 'FAIR' as const,
+      enteredOn: new Date('2024-08-25T10:45:00Z'),
+      enteredById: inspector1.id,
+      order: 2,
+      status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/master-bedroom-overview.jpg'],
+      videos: ['https://spaces.example.com/master-bedroom-walkthrough.mp4'],
+      tasks: [
+        {
+          name: 'Check air-conditioning performance',
+          status: 'COMPLETED',
+          photos: ['https://spaces.example.com/photo3.jpg'],
+          videos: []
+        },
+        {
+          name: 'Record ceiling water stain',
+          status: 'COMPLETED',
+          videos: ['https://spaces.example.com/video1.mp4']
+        }
+      ],
+      inspectorEntries: [
+        {
+          inspectorId: inspector1.id,
+          remarks: 'Advised tenant to schedule servicing within two weeks.',
+          includeInReport: true,
+          tasks: [
+            {
+              name: 'Capture aircon serial number',
+              status: 'COMPLETED',
+              photos: [],
+              videos: []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      contractChecklistId: contractChecklist1.id,
+      name: 'Kitchen',
+      remarks: 'All cabinets in good condition, sink tap slightly loose',
+      condition: 'GOOD' as const,
+      enteredOn: new Date('2024-08-25T11:00:00Z'),
+      enteredById: inspector1.id,
+      order: 3,
+      status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/kitchen-overview.jpg'],
+      videos: [],
+      tasks: [
+        {
+          name: 'Inspect cabinetry alignment',
+          status: 'COMPLETED',
+          photos: ['https://spaces.example.com/photo4.jpg'],
+          videos: []
+        }
+      ],
+      inspectorEntries: [
+        {
+          inspectorId: inspector1.id,
+          remarks: 'Loose tap needs tightening – noted for maintenance team.',
+          includeInReport: true,
+          tasks: [
+            {
+              name: 'Record loose tap condition',
+              status: 'COMPLETED',
+              photos: [],
+              videos: []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      contractChecklistId: contractChecklist1.id,
+      name: 'Bathroom 1',
+      remarks: 'Excellent condition, no issues found',
+      condition: 'GOOD' as const,
+      enteredOn: new Date('2024-08-25T11:15:00Z'),
+      enteredById: inspector1.id,
+      order: 4,
+      status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/bathroom1-overview.jpg'],
+      videos: [],
+      tasks: [
+        {
+          name: 'Confirm waterproofing and drainage',
+          status: 'COMPLETED',
+          photos: ['https://spaces.example.com/photo5.jpg'],
+          videos: []
+        }
+      ],
+      inspectorEntries: []
+    }
+  ]
+
+  for (const itemSeed of checklistItemSeeds) {
+    const item = await prisma.contractChecklistItem.create({
+      data: {
+        contractChecklistId: itemSeed.contractChecklistId,
+        name: itemSeed.name,
+        remarks: itemSeed.remarks,
+        condition: itemSeed.condition,
+        enteredOn: itemSeed.enteredOn,
+        enteredById: itemSeed.enteredById,
+        order: itemSeed.order,
+        status: itemSeed.status,
+        photos: itemSeed.photos ?? [],
+        videos: itemSeed.videos ?? []
       }
-    ]
-  })
+    })
+
+    for (const task of itemSeed.tasks || []) {
+      await prisma.checklistTask.create({
+        data: {
+          itemId: item.id,
+          name: task.name,
+          status: task.status,
+          photos: task.photos ?? [],
+          videos: task.videos ?? []
+        }
+      })
+    }
+
+    for (const entrySeed of itemSeed.inspectorEntries || []) {
+      const entry = await prisma.itemEntry.create({
+        data: {
+          itemId: item.id,
+          inspectorId: entrySeed.inspectorId,
+          remarks: entrySeed.remarks,
+          includeInReport: entrySeed.includeInReport ?? false
+        }
+      })
+
+      let linkedTaskId: string | undefined
+      for (const task of entrySeed.tasks || []) {
+        const createdTask = await prisma.checklistTask.create({
+          data: {
+            itemId: item.id,
+            inspectorId: entrySeed.inspectorId,
+            name: task.name,
+            status: task.status,
+            photos: task.photos ?? [],
+            videos: task.videos ?? [],
+            entries: {
+              connect: { id: entry.id }
+            }
+          }
+        })
+
+        if (!linkedTaskId) {
+          linkedTaskId = createdTask.id
+        }
+      }
+
+      if (linkedTaskId) {
+        await prisma.itemEntry.update({
+          where: { id: entry.id },
+          data: { taskId: linkedTaskId }
+        })
+      }
+    }
+  }
 
   // Create Work Orders
   const workOrder1 = await prisma.workOrder.create({
@@ -378,6 +647,9 @@ async function main() {
 
   console.log('Seed completed successfully!')
   console.log('Summary:')
+  console.log('- Property catalogue seeded (HDB, Condo, Landed) with',
+    propertyHdb.sizes.length + propertyCondo.sizes.length + propertyLanded.sizes.length,
+    'size options total')
   console.log('- 3 Inspectors created')
   console.log('- 3 Customers created')
   console.log('- 4 Customer addresses created')

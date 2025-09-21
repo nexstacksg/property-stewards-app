@@ -146,7 +146,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const inspectorId = (s as any).inspectorId as string
         const itemId = (s as any).currentItemId as string
         if (!inspectorId || !itemId) return JSON.stringify({ success: false, error: 'Missing inspector or item context' })
-        const entry = await (prisma as any).itemEntry.upsert({ where: { itemId_inspectorId: { itemId, inspectorId } }, update: { remarks: args.remarks }, create: { itemId, inspectorId, remarks: args.remarks, photos: [], videos: [] } })
+        const entry = await prisma.itemEntry.create({ data: { itemId, inspectorId, remarks: args.remarks } })
         const workOrderId = (s as any).workOrderId as string
         const locs3 = workOrderId ? (await getLocationsWithCompletionStatus(workOrderId)) as any[] : []
         const locationsFormatted = locs3.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
@@ -215,4 +215,3 @@ export async function executeTool(toolName: string, args: any, threadId?: string
     return JSON.stringify({ success: false, error: 'Tool execution failed' })
   }
 }
-

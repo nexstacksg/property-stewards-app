@@ -47,21 +47,54 @@ export async function handleMultipartUpload(file: File, mediaType: string, sessi
     if (targetItemId) {
       const inspectorId = (sessionState.inspectorId as string) || ''
       if (inspectorId) {
-        if (mediaType === 'photo') {
-          await (prisma as any).itemEntry.upsert({ where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } }, update: { photos: { push: publicUrl } }, create: { itemId: targetItemId, inspectorId, photos: [publicUrl], videos: [] } })
-        } else {
-          await (prisma as any).itemEntry.upsert({ where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } }, update: { videos: { push: publicUrl } }, create: { itemId: targetItemId, inspectorId, photos: [], videos: [publicUrl] } })
+        const entry = await prisma.itemEntry.upsert({
+          where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } },
+          update: {},
+          create: { itemId: targetItemId, inspectorId }
+        })
+
+        let task = await prisma.checklistTask.findFirst({ where: { itemId: targetItemId, entryId: entry.id } })
+        if (!task) {
+          task = await prisma.checklistTask.create({
+            data: {
+              itemId: targetItemId,
+              entryId: entry.id,
+              inspectorId,
+              name: 'Inspector notes',
+              status: 'PENDING'
+            }
+          })
         }
+
+        await prisma.checklistTask.update({
+          where: { id: task.id },
+          data: mediaType === 'photo' ? { photos: { push: publicUrl } } : { videos: { push: publicUrl } }
+        })
       } else {
-        if (mediaType === 'photo') {
-          const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { photos: true } })
-          const updatedPhotos = [ ...(existing?.photos || []), publicUrl ]
-          await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { photos: updatedPhotos } })
-        } else {
-          const existing = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { videos: true } })
-          const updatedVideos = [ ...(existing?.videos || []), publicUrl ]
-          await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { videos: updatedVideos } })
+        const item = await prisma.contractChecklistItem.findUnique({
+          where: { id: targetItemId },
+          include: { checklistTasks: { where: { entryId: null }, take: 1 } }
+        })
+
+        if (!item) {
+          throw new Error('Checklist item not found')
         }
+
+        let task = item.checklistTasks[0]
+        if (!task) {
+          task = await prisma.checklistTask.create({
+            data: {
+              itemId: targetItemId,
+              name: item.name || 'General inspection',
+              status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
+            }
+          })
+        }
+
+        await prisma.checklistTask.update({
+          where: { id: task.id },
+          data: mediaType === 'photo' ? { photos: { push: publicUrl } } : { videos: { push: publicUrl } }
+        })
       }
     }
   }

@@ -10,9 +10,10 @@ interface Props {
   workOrderId: string
   title?: string
   contributionId?: string // optional: upload to contribution
+  target?: 'item' | 'task'
 }
 
-export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload media', contributionId }: Props) {
+export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload media', contributionId, target = 'task' }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
   const [uploading, setUploading] = useState(false)
@@ -29,6 +30,7 @@ export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload med
       const form = new FormData()
       form.set('file', file)
       form.set('workOrderId', workOrderId)
+      form.set('target', target)
       let url = `/api/checklist-items/${itemId}/${endpoint}`
       if (contributionId) {
         url = `/api/checklist-items/contributions/${contributionId}/${endpoint}`
