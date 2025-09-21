@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { TextareaHTMLAttributes } from "react"
 import { Pencil, Save, Loader2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 
@@ -21,14 +20,12 @@ export default function EditChecklistItemDialog({
   initialName,
   initialRemarks,
   initialStatus = 'PENDING',
-  initialCondition,
   triggerVariant = "ghost"
 }: {
   itemId: string
   initialName?: string
   initialRemarks?: string
   initialStatus?: 'PENDING' | 'COMPLETED'
-  initialCondition?: 'GOOD' | 'FAIR' | 'UNSATISFACTORY' | 'NOT_APPLICABLE' | 'UN_OBSERVABLE' | undefined
   triggerVariant?: "ghost" | "outline" | "default"
 }) {
   const router = useRouter()
@@ -37,7 +34,6 @@ export default function EditChecklistItemDialog({
   const [remarks, setRemarks] = useState(initialRemarks || "")
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<'PENDING' | 'COMPLETED'>(initialStatus)
-  const [condition, setCondition] = useState<string | undefined>(initialCondition)
 
   const onSave = async () => {
     setSaving(true)
@@ -45,7 +41,7 @@ export default function EditChecklistItemDialog({
       await fetch(`/api/checklist-items/${itemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, remarks, status, condition })
+        body: JSON.stringify({ name, remarks, status })
       })
       setOpen(false)
       router.refresh()
@@ -66,20 +62,20 @@ export default function EditChecklistItemDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit Checklist Item</DialogTitle>
-          <DialogDescription>Update the item name, status, condition and remarks.</DialogDescription>
+          <DialogDescription>Update the item name, status and remarks.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="edit-item-name">Name</Label>
-            <Input
-              id="edit-item-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus:border-gray-300"
-            />
-          </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-1">
+              <Label htmlFor="edit-item-name">Name</Label>
+              <Input
+                id="edit-item-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none focus:border-gray-300"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-1">
               <Label>Status</Label>
               <select
                 className="w-full border rounded-md px-3 pr-8 py-2 focus:outline-none focus:ring-0 focus:border-gray-300"
@@ -88,21 +84,6 @@ export default function EditChecklistItemDialog({
               >
                 <option value="PENDING">Pending</option>
                 <option value="COMPLETED">Completed</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Condition</Label>
-              <select
-                className="w-full border rounded-md px-3 pr-8 py-2 focus:outline-none focus:ring-0 focus:border-gray-300"
-                value={condition || ''}
-                onChange={(e) => setCondition(e.target.value || undefined)}
-              >
-                <option value="">Select condition</option>
-                <option value="GOOD">Good</option>
-                <option value="FAIR">Fair</option>
-                <option value="UNSATISFACTORY">Unsatisfactory</option>
-                <option value="NOT_APPLICABLE">Not Applicable</option>
-                <option value="UN_OBSERVABLE">Un-Observable</option>
               </select>
             </div>
           </div>

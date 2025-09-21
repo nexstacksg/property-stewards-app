@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Prisma } from '@prisma/client'
+import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import prisma from '@/lib/prisma'
+import { s3Client, BUCKET_NAME, PUBLIC_URL } from '@/lib/s3-client'
+
+const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE', 'UN_OBSERVABLE']
 
 function normalizeCondition(value: unknown) {
   if (typeof value !== 'string') return undefined
@@ -9,82 +12,19 @@ function normalizeCondition(value: unknown) {
   return trimmed.toUpperCase().replace(/\s|-/g, '_')
 }
 
-type TaskLinkOptions = {
-  connectEntryId?: string
-  disconnect?: boolean
-  condition?: string | null | undefined
-}
-
-async function updateTaskLink(taskId: string, options: TaskLinkOptions) {
-  const data: any = {}
-  if (options.connectEntryId) {
-    data.entry = { connect: { id: options.connectEntryId } }
-  }
-  if (options.disconnect) {
-    data.entry = { disconnect: true }
-  }
-
-  if (Object.prototype.hasOwnProperty.call(options, 'condition')) {
-    data.condition = options.condition ?? null
-  }
-
-  try {
-    await prisma.checklistTask.update({ where: { id: taskId }, data })
-  } catch (error) {
-    const message = (error as Error).message || ''
-    const validationError = error instanceof Prisma.PrismaClientValidationError
-      && message.includes('Unknown argument `condition`')
-
-    if (validationError && Object.prototype.hasOwnProperty.call(data, 'condition')) {
-      const fallbackData = { ...data }
-      delete (fallbackData as any).condition
-      await prisma.checklistTask.update({ where: { id: taskId }, data: fallbackData })
-      return
-    }
-    throw error
-  }
-}
-
-async function fetchEntry(entryId: string, includeCondition: boolean) {
-  return prisma.itemEntry.findUnique({
-    where: { id: entryId },
-    include: {
-      tasks: {
-        select: includeCondition
-          ? {
-              id: true,
-              name: true,
-              status: true,
-              photos: true,
-              videos: true,
-              entryId: true,
-              condition: true,
-            }
-          : {
-              id: true,
-              name: true,
-              status: true,
-              photos: true,
-              videos: true,
-              entryId: true,
-            },
-      },
+const entryInclude = {
+  inspector: { select: { id: true, name: true } },
+  task: {
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      photos: true,
+      videos: true,
+      condition: true,
     },
-  })
-}
-
-async function fetchEntryWithFallback(entryId: string) {
-  try {
-    return await fetchEntry(entryId, true)
-  } catch (error) {
-    const message = (error as Error).message || ''
-    const validationError = error instanceof Prisma.PrismaClientValidationError
-      && message.includes('Unknown field `condition`')
-
-    if (!validationError) throw error
-    return fetchEntry(entryId, false)
-  }
-}
+  },
+} as const
 
 export async function PATCH(
   request: NextRequest,
@@ -94,37 +34,39 @@ export async function PATCH(
     const { entryId } = await params
     const body = await request.json()
     const remark = typeof body.remark === 'string' ? body.remark.trim() : undefined
-    const condition = normalizeCondition(body.condition)
+    const normalizedCondition = normalizeCondition(body.condition)
 
-    if (!remark && typeof condition === 'undefined') {
+    if (!remark && typeof normalizedCondition === 'undefined') {
       return NextResponse.json({ error: 'No updates provided' }, { status: 400 })
     }
 
-    const entry = await prisma.itemEntry.findUnique({
-      where: { id: entryId },
-      include: { tasks: { select: { id: true } } },
-    })
-
-    if (!entry) {
-      return NextResponse.json({ error: 'Remark not found' }, { status: 404 })
+    if (normalizedCondition && !ALLOWED_CONDITIONS.includes(normalizedCondition)) {
+      return NextResponse.json({ error: 'Invalid condition value' }, { status: 400 })
     }
 
     const updateData: any = {}
     if (typeof remark === 'string') {
       updateData.remarks = remark.length > 0 ? remark : null
     }
-
-    if (Object.keys(updateData).length > 0) {
-      await prisma.itemEntry.update({ where: { id: entryId }, data: updateData })
+    if (typeof normalizedCondition !== 'undefined') {
+      updateData.condition = normalizedCondition ?? null
     }
 
-    const taskId = entry.tasks[0]?.id
-    if (taskId && typeof condition !== 'undefined') {
-      await updateTaskLink(taskId, { condition })
+    const updatedEntry = await prisma.itemEntry.update({
+      where: { id: entryId },
+      data: updateData,
+      include: entryInclude,
+    })
+
+    if (typeof normalizedCondition !== 'undefined' && updatedEntry.task) {
+      await prisma.checklistTask.update({
+        where: { id: updatedEntry.task.id },
+        data: { condition: normalizedCondition ?? null }
+      })
+      updatedEntry.task.condition = normalizedCondition ?? null
     }
 
-    const responseEntry = await fetchEntryWithFallback(entryId)
-    return NextResponse.json(responseEntry)
+    return NextResponse.json(updatedEntry)
   } catch (error) {
     console.error('Error updating remark:', error)
     return NextResponse.json({ error: 'Failed to update remark' }, { status: 500 })
@@ -139,16 +81,47 @@ export async function DELETE(
     const { entryId } = await params
     const entry = await prisma.itemEntry.findUnique({
       where: { id: entryId },
-      include: { tasks: { select: { id: true } } },
+      include: {
+        task: {
+          select: {
+            id: true,
+            photos: true,
+            videos: true,
+          }
+        }
+      }
     })
 
     if (!entry) {
       return NextResponse.json({ error: 'Remark not found' }, { status: 404 })
     }
 
-    const taskId = entry.tasks[0]?.id
-    if (taskId) {
-      await updateTaskLink(taskId, { disconnect: true, condition: null })
+    const photosToRemove = (entry.task?.photos || []).filter((url) => url.includes(`/entries/${entryId}/`))
+    const videosToRemove = (entry.task?.videos || []).filter((url) => url.includes(`/entries/${entryId}/`))
+
+    if (entry.task && (photosToRemove.length > 0 || videosToRemove.length > 0)) {
+      const remainingPhotos = entry.task.photos.filter((url) => !url.includes(`/entries/${entryId}/`))
+      const remainingVideos = entry.task.videos.filter((url) => !url.includes(`/entries/${entryId}/`))
+
+      await prisma.checklistTask.update({
+        where: { id: entry.task.id },
+        data: {
+          photos: remainingPhotos,
+          videos: remainingVideos,
+        }
+      })
+
+      const urlsToRemove = [...photosToRemove, ...videosToRemove]
+      const prefix = `${PUBLIC_URL}/`
+      await Promise.all(urlsToRemove.map(async (url) => {
+        if (!url.startsWith(prefix)) return
+        const key = url.slice(prefix.length)
+        try {
+          await s3Client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key } as any))
+        } catch (err) {
+          console.error('Failed to delete media from storage:', err)
+        }
+      }))
     }
 
     await prisma.itemEntry.delete({ where: { id: entryId } })

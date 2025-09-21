@@ -43,33 +43,74 @@ export async function POST(
 
     const entry = await prisma.itemEntry.findUnique({
       where: { id },
-      include: { tasks: true, item: { select: { name: true, status: true } }, inspector: { select: { id: true } } }
+      include: {
+        task: {
+          select: {
+            id: true,
+            photos: true,
+            videos: true,
+            name: true,
+            status: true,
+            condition: true,
+          }
+        },
+        item: { select: { name: true, status: true, id: true } },
+        inspector: { select: { id: true } }
+      }
     })
 
     if (!entry) {
       return NextResponse.json({ error: 'Contribution not found' }, { status: 404 })
     }
 
-    let task = entry.tasks[0]
+    let task = entry.task
     if (!task) {
       task = await prisma.checklistTask.create({
         data: {
           itemId: entry.itemId,
-          entryId: entry.id,
           inspectorId: entry.inspectorId ?? entry.inspector?.id ?? null,
           name: entry.item?.name ? `${entry.item.name} — notes` : 'Inspector notes',
           status: entry.item?.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
         }
+      })
+
+      await prisma.itemEntry.update({
+        where: { id: entry.id },
+        data: { taskId: task.id }
       })
     }
 
     const updatedTask = await prisma.checklistTask.update({
       where: { id: task.id },
       data: { videos: { push: publicUrl } },
-      select: { id: true, videos: true }
+      select: {
+        id: true,
+        photos: true,
+        videos: true,
+        condition: true,
+        name: true,
+        status: true
+      }
     })
 
-    return NextResponse.json({ url: publicUrl, task: updatedTask })
+    const refreshedEntry = await prisma.itemEntry.findUnique({
+      where: { id: entry.id },
+      include: {
+        inspector: { select: { id: true, name: true } },
+        task: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            photos: true,
+            videos: true,
+            condition: true,
+          }
+        }
+      }
+    })
+
+    return NextResponse.json({ url: publicUrl, task: updatedTask, entry: refreshedEntry })
   } catch (error) {
     console.error('Error uploading contribution video:', error)
     return NextResponse.json({ error: 'Failed to upload video' }, { status: 500 })

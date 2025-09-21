@@ -12,9 +12,20 @@ interface Props {
   videos?: string[]
   itemName?: string
   contributionId?: string
+  enableUpload?: boolean
+  uploadTarget?: 'item' | 'task'
 }
 
-export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], videos = [], itemName, contributionId }: Props) {
+export default function WorkOrderItemMedia({
+  itemId,
+  workOrderId,
+  photos = [],
+  videos = [],
+  itemName,
+  contributionId,
+  enableUpload,
+  uploadTarget = 'task'
+}: Props) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'photos' | 'videos'>('photos')
 
@@ -40,7 +51,15 @@ export default function WorkOrderItemMedia({ itemId, workOrderId, photos = [], v
       ) : (
         <span className="text-sm text-muted-foreground">0 video(s)</span>
       )}
-      <UploadAnyIcon itemId={itemId} workOrderId={workOrderId} title="Upload photo or video" contributionId={contributionId} />
+      {enableUpload && (
+        <UploadAnyIcon
+          itemId={itemId}
+          workOrderId={workOrderId}
+          title="Upload photo or video"
+          contributionId={contributionId}
+          target={uploadTarget}
+        />
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-2xl h-[60vh] overflow-auto">

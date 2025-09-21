@@ -25,6 +25,8 @@ type SeedChecklistItem = {
   enteredById?: string
   order: number
   status: 'COMPLETED' | 'PENDING'
+  photos?: string[]
+  videos?: string[]
   tasks?: SeedChecklistTask[]
   inspectorEntries?: SeedInspectorEntry[]
 }
@@ -383,6 +385,8 @@ async function main() {
       enteredById: inspector1.id,
       order: 1,
       status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/living-room-overview.jpg'],
+      videos: [],
       tasks: [
         {
           name: 'Inspect walls and ceiling',
@@ -435,6 +439,8 @@ async function main() {
       enteredById: inspector1.id,
       order: 2,
       status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/master-bedroom-overview.jpg'],
+      videos: ['https://spaces.example.com/master-bedroom-walkthrough.mp4'],
       tasks: [
         {
           name: 'Check air-conditioning performance',
@@ -473,6 +479,8 @@ async function main() {
       enteredById: inspector1.id,
       order: 3,
       status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/kitchen-overview.jpg'],
+      videos: [],
       tasks: [
         {
           name: 'Inspect cabinetry alignment',
@@ -506,6 +514,8 @@ async function main() {
       enteredById: inspector1.id,
       order: 4,
       status: 'COMPLETED' as const,
+      photos: ['https://spaces.example.com/bathroom1-overview.jpg'],
+      videos: [],
       tasks: [
         {
           name: 'Confirm waterproofing and drainage',
@@ -528,7 +538,9 @@ async function main() {
         enteredOn: itemSeed.enteredOn,
         enteredById: itemSeed.enteredById,
         order: itemSeed.order,
-        status: itemSeed.status
+        status: itemSeed.status,
+        photos: itemSeed.photos ?? [],
+        videos: itemSeed.videos ?? []
       }
     })
 

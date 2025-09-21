@@ -39,7 +39,18 @@ export async function PATCH(
       })
 
       if (Array.isArray(tasks)) {
-        await tx.checklistTask.deleteMany({ where: { itemId: id, entryId: null } })
+        const existingTasks = await tx.checklistTask.findMany({
+          where: { itemId: id },
+          select: { id: true, entries: { select: { id: true } } }
+        } as any)
+
+        const taskIdsToDelete = existingTasks
+          .filter((task: any) => !Array.isArray(task.entries) || task.entries.length === 0)
+          .map((task: any) => task.id)
+
+        if (taskIdsToDelete.length > 0) {
+          await tx.checklistTask.deleteMany({ where: { id: { in: taskIdsToDelete } } })
+        }
         const parsedTasks = tasks.map((task: any, index: number) => {
           if (typeof task === 'string') {
             return {

@@ -178,22 +178,23 @@ model ItemEntry {
   inspectorId     String?
   remarks         String?
   includeInReport Boolean @default(false)
+  condition       Condition?
+  taskId          String?
   createdOn       DateTime @default(now())
   updatedOn       DateTime @updatedAt
 
   item            ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
-  tasks           ChecklistTask[]
+  task            ChecklistTask?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
-  @@unique([itemId, inspectorId])
   @@index([itemId])
   @@index([inspectorId])
+  @@index([taskId])
 }
 
 model ChecklistTask {
   id          String   @id @default(cuid())
   itemId      String
-  entryId     String?
   inspectorId String?
   name        String
   status      ChecklistTaskStatus @default(PENDING)
@@ -204,11 +205,10 @@ model ChecklistTask {
   updatedOn   DateTime @updatedAt
 
   item       ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  entry      ItemEntry?            @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  entries    ItemEntry[]
   inspector  Inspector?            @relation(fields: [inspectorId], references: [id], onDelete: SetNull)
 
   @@index([itemId])
-  @@index([entryId])
   @@index([inspectorId])
 }
 

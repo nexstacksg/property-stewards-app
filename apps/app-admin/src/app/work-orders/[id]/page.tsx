@@ -37,7 +37,16 @@ async function getWorkOrder(id: string) {
               items: {
                 include: {
                   contributions: {
-                    include: { inspector: true }
+                    include: {
+                      inspector: true
+                    }
+                  },
+                  checklistTasks: {
+                    include: {
+                      entries: {
+                        select: { id: true }
+                      }
+                    }
                   }
                 },
                 orderBy: { order: 'asc' }
@@ -108,21 +117,19 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
   const totalItems = checklistItems.length
   const progressRate = totalItems > 0 ? (completedItems / totalItems) * 100 : 0
   
-  // Calculate sub-items from tasks array
+  // Calculate sub-items from checklist tasks if available, otherwise fallback to remarks parsing
   let totalSubItems = 0
   checklistItems.forEach((item: any) => {
-    // Use tasks array if available, otherwise fall back to parsing remarks
-    if (item.tasks && Array.isArray(item.tasks)) {
-      // Count pending tasks only
-      const pendingTasks = item.tasks.filter((task: any) => task.status === 'pending')
-      totalSubItems += pendingTasks.length
-    } else {
-      // Fallback to old behavior for legacy data
-      const description = item.description || item.remarks || ''
-      const subItems = description.split(/[,;]|\sand\s|\n/).filter((s: string) => s.trim().length > 0)
-      const subItemCount = subItems.length > 0 ? subItems.length : 1
-      totalSubItems += subItemCount
+    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+    if (tasks.length > 0) {
+      totalSubItems += tasks.length
+      return
     }
+
+    const description = item.description || item.remarks || ''
+    const subItems = description.split(/[,;]|\sand\s|\n/).filter((s: string) => s.trim().length > 0)
+    const subItemCount = subItems.length > 0 ? subItems.length : 1
+    totalSubItems += subItemCount
   })
 
   return (
@@ -375,110 +382,129 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                       <TableHead>#</TableHead>
                       <TableHead>Item</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Condition</TableHead>
                       <TableHead>Media</TableHead>
+                                            <TableHead>Remarks</TableHead>
+
                       <TableHead>Edit</TableHead>
 
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {checklistItems.map((item: any, index: number) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="text-muted-foreground">
-                          {index + 1}
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{item.name || item.item}</p>
-                            {(() => {
-                              // Don't show count if item is completed
-                              if (item.status === 'COMPLETED') {
-                                return null
-                              }
-                              
-                              // Use tasks array if available
-                              if (item.tasks && Array.isArray(item.tasks)) {
-                                const pendingTasks = item.tasks.filter((task: any) => task.status === 'pending')
-                                const taskCount = pendingTasks.length
-                                return taskCount > 0 && (
-                                  <Badge variant="secondary" className="text-xs mt-1 mr-2">
-                                    {taskCount} checks
-                                  </Badge>
-                                )
-                              }
-                              
-                              // Fallback to old behavior for legacy data
-                              const description = item.description || item.remarks || ''
-                              const subItems = description.split(/[,;]|\sand\s|\n/).filter((s: string) => s.trim().length > 0)
-                              const subItemCount = subItems.length > 0 ? subItems.length : 1
-                              // return subItemCount > 1 && (
-                              //   <Badge variant="secondary" className="text-xs mt-1 mr-2">
-                              //     {subItemCount} checks
-                              //   </Badge>
-                              // )
-                            })()}
-                            {item.category && (
-                              <Badge variant="outline" className="text-xs mt-1">
-                                {item.category}
+                    {checklistItems.map((item: any, index: number) => {
+                      const primaryTasks = Array.isArray(item.checklistTasks)
+                        ? item.checklistTasks
+                        : []
+                      const taskNames = primaryTasks
+                        .map((task: any) => task?.name)
+                        .filter((name: string | null | undefined) => Boolean(name))
+                      const hasTasks = taskNames.length > 0
+                      const taskLine = hasTasks ? taskNames.map((name: string) => `• ${name}`).join('  ') : ''
+                      const description = typeof item.description === 'string' ? item.description.trim() : ''
+                      const checklistRemarks = typeof item.remarks === 'string' ? item.remarks.trim() : ''
+
+                      const uploadTarget = item?.contractChecklistId ? 'item' : 'task'
+
+                      const itemPhotos = Array.isArray(item.photos) ? item.photos : []
+                      const taskPhotos = Array.isArray(item.checklistTasks)
+                        ? item.checklistTasks.flatMap((task: any) => task.photos || [])
+                        : []
+                      const contributionPhotos = (item.contributions || []).flatMap((entry: any) => entry.photos || [])
+                      const combinedPhotos = Array.from(new Set([...itemPhotos, ...taskPhotos, ...contributionPhotos]))
+
+                      const itemVideos = Array.isArray(item.videos) ? item.videos : []
+                      const taskVideos = Array.isArray(item.checklistTasks)
+                        ? item.checklistTasks.flatMap((task: any) => task.videos || [])
+                        : []
+                      const contributionVideos = (item.contributions || []).flatMap((entry: any) => entry.videos || [])
+                      const combinedVideos = Array.from(new Set([...itemVideos, ...taskVideos, ...contributionVideos]))
+
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell className="text-muted-foreground">
+                            {index + 1}
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{item.name || item.item}</p>
+                              {item.category && (
+                                <Badge variant="outline" className="text-xs mt-1">
+                                  {item.category}
+                                </Badge>
+                              )}
+                              {hasTasks ? (
+                                <>
+                                  <p className="text-sm text-muted-foreground mt-1">
+                                    {taskLine}
+                                  </p>
+                                  {checklistRemarks && (
+                                    <p className="text-sm text-muted-foreground/80 italic mt-1">
+                                      {checklistRemarks}
+                                    </p>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  {description && (
+                                    <p className="text-sm text-muted-foreground mt-1">
+                                      {description}
+                                    </p>
+                                  )}
+                                  {checklistRemarks && (
+                                    <p className="text-sm text-muted-foreground/80 italic mt-1">
+                                      {checklistRemarks}
+                                    </p>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {item.status === 'COMPLETED' ? (
+                              <Badge variant="success">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Completed
                               </Badge>
+                            ) : (
+                              <Badge variant="secondary">Pending</Badge>
                             )}
-                            {item.remarks || item.description && (
-                              <p className="text-sm text-muted-foreground mt-1">
-                                {item.remarks || item.description}
-                              </p>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {item.status === 'COMPLETED' ? (
-                            <Badge variant="success">
-                              <CheckCircle className="h-3 w-3 mr-1" />
-                              Completed
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary">Pending</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {item.condition ? (
-                            <Badge variant="outline" className="text-xs">
-                              {item.condition.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m: string) => m.toUpperCase())}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground text-sm">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 relative z-10">
-                            <WorkOrderItemMedia 
-                              itemId={item.id}
-                              workOrderId={workOrder.id}
-                              photos={(item.contributions || []).flatMap((entry: any) => entry.photos || [])}
-                              videos={(item.contributions || []).flatMap((entry: any) => entry.videos || [])}
-                              itemName={item.name || item.item}
-                            />
-                            <ItemEntriesDialog
-                              itemId={item.id}
-                              workOrderId={workOrder.id}
-                              entries={item.contributions || []}
-                              itemName={item.name || item.item}
-                            />
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="relative z-10 inline-flex">
-                          <EditChecklistItemDialog
-                            itemId={item.id}
-                            initialName={item.name || item.item}
-                            initialRemarks={item.remarks || item.description}
-                            initialStatus={item.status || (item.enteredOn ? 'COMPLETED' : 'PENDING')}
-                            initialCondition={item.condition}
-                          />
-                          </div>
-                        </TableCell>
-                        
-                      </TableRow>
-                    ))}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2 relative z-10">
+                              <WorkOrderItemMedia
+                                itemId={item.id}
+                                workOrderId={workOrder.id}
+                                photos={combinedPhotos}
+                                videos={combinedVideos}
+                                itemName={item.name || item.item}
+                                enableUpload
+                                uploadTarget={uploadTarget}
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2 relative z-10">
+                              <ItemEntriesDialog
+                                itemId={item.id}
+                                workOrderId={workOrder.id}
+                                entries={item.contributions || []}
+                                tasks={item.checklistTasks || []}
+                                itemName={item.name || item.item}
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="relative z-10 inline-flex">
+                              <EditChecklistItemDialog
+                                itemId={item.id}
+                                initialName={item.name || item.item}
+                                initialRemarks={item.remarks || item.description}
+                                initialStatus={item.status || (item.enteredOn ? 'COMPLETED' : 'PENDING')}
+                              />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               )}
