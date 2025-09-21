@@ -5,8 +5,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { 
-  ArrowLeft, 
-  Edit, 
+  ArrowLeft,
+  Edit,
+  Eye,
   User,
   MapPin,
   Calendar,
@@ -383,8 +384,8 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                       <TableHead>Item</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Media</TableHead>
-                                            <TableHead>Remarks</TableHead>
-
+                      <TableHead>Remarks</TableHead>
+                      <TableHead>Details</TableHead>
                       <TableHead>Edit</TableHead>
 
                     </TableRow>
@@ -491,6 +492,13 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 itemName={item.name || item.item}
                               />
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            <Link href={`/checklist-items/${item.id}`}>
+                              <Button variant="ghost" size="icon" aria-label="View checklist item details">
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </Link>
                           </TableCell>
                           <TableCell>
                             <div className="relative z-10 inline-flex">
