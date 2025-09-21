@@ -13,6 +13,7 @@ export async function POST(
     const form = await request.formData()
     const file = form.get('file') as File | null
     const workOrderId = (form.get('workOrderId') as string | null) || 'unknown'
+    const target = (form.get('target') as string | null) || 'task'
 
     if (!file) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
@@ -51,26 +52,52 @@ export async function POST(
 
     const publicUrl = `${PUBLIC_URL}/${key}`
 
-    // Update DB: push to photos array
-    const updated = await prisma.contractChecklistItem.update({
+    const item = await prisma.contractChecklistItem.findUnique({
       where: { id },
-      data: {
-        photos: { push: publicUrl }
-      },
+      include: {
+        checklistTasks: {
+          include: { entries: { select: { id: true } } },
+          orderBy: { createdOn: 'asc' }
+        },
+        contractChecklist: { select: { contract: { select: { id: true } } } }
+      }
+    } as any)
+
+    if (!item) {
+      return NextResponse.json({ error: 'Checklist item not found' }, { status: 404 })
+    }
+
+    if (target === 'item') {
+      const updatedItem = await prisma.contractChecklistItem.update({
+        where: { id: item.id },
+        data: { photos: { push: publicUrl } },
+        select: { id: true, photos: true }
+      })
+
+      return NextResponse.json({ url: publicUrl, item: updatedItem })
+    }
+
+    let task = item.checklistTasks.find((task: any) => !Array.isArray(task.entries) || task.entries.length === 0)
+    if (!task) {
+      task = item.checklistTasks[0]
+    }
+    if (!task) {
+      task = await prisma.checklistTask.create({
+        data: {
+          itemId: item.id,
+          name: item.name || 'General inspection',
+          status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
+        }
+      })
+    }
+
+    const updatedTask = await prisma.checklistTask.update({
+      where: { id: task.id },
+      data: { photos: { push: publicUrl } },
       select: { id: true, photos: true }
     })
 
-    const entry = await prisma.itemEntry.create({
-      data: {
-        itemId: id,
-        inspectorId: null,
-        photos: [publicUrl],
-        videos: []
-      },
-      select: { id: true }
-    })
-
-    return NextResponse.json({ url: publicUrl, item: updated, entry })
+    return NextResponse.json({ url: publicUrl, task: updatedTask })
   } catch (error) {
     console.error('Error uploading checklist item photo:', error)
     return NextResponse.json({ error: 'Failed to upload photo' }, { status: 500 })

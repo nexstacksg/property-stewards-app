@@ -56,11 +56,11 @@ const navigationItems = [
     label: "Checklists",
     icon: ClipboardCheck
   },
-  // {
-  //   href: "/settings",
-  //   label: "Settings",
-  //   icon: Settings
-  // }
+  {
+    href: "/settings",
+    label: "Settings",
+    icon: Settings
+  }
 ]
 
 export function Navigation() {

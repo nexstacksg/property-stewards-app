@@ -1,6 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { parseActionIntoTasks } from '@/lib/utils/taskParser'
+import type { Task as ParsedTask } from '@/lib/utils/taskParser'
+
+type TaskSeed = {
+  itemId: string
+  name: string
+  tasks?: ParsedTask[]
+}
+
+async function ensureTasksForItem(itemId: string, name: string, tasks?: ParsedTask[]) {
+  const taskDelegate = (prisma as any).checklistTask
+  if (!taskDelegate) {
+    throw new Error('ChecklistTask model not available. Run `pnpm prisma generate` after updating the schema.')
+  }
+
+  const existingTasks = await taskDelegate.count({ where: { itemId } })
+  if (existingTasks > 0) {
+    return
+  }
+
+  const parsed = Array.isArray(tasks) && tasks.length > 0
+    ? tasks
+    : [{ task: name || 'Inspect area', status: 'pending' as const }]
+
+  await Promise.all(parsed.map((task) => taskDelegate.create({
+    data: {
+      itemId,
+      name: task.task,
+      status: task.status === 'done' ? 'COMPLETED' : 'PENDING'
+    }
+  })))
+}
 
 // GET /api/work-orders - Get all work orders
 export async function GET(request: NextRequest) {
@@ -186,32 +217,39 @@ export async function POST(request: NextRequest) {
           name: item.name,
           order: item.order,
           remarks: item.action,
-          tasks: parseActionIntoTasks(item.action) as any
+          tasks: parseActionIntoTasks(item.action)
         }))
       : []
 
+    const taskSeedQueue: TaskSeed[] = []
+
     // Create work order in a transaction (with extended timeout)
-    const workOrder = await prisma.$transaction(async (tx) => {
+    const transactionResult = await prisma.$transaction(async (tx) => {
       // First, ensure contract checklist exists
       let contractChecklist = contract.contractChecklist
       
       if (!contractChecklist && contract.basedOnChecklist) {
-        // Create contract checklist from template
         contractChecklist = await tx.contractChecklist.create({
           data: {
             contractId
           }
         })
-        
-        // Create checklist items from template
+
         if (itemsFromTemplate.length > 0 && contractChecklist) {
-          const checklistId = contractChecklist.id
-          await tx.contractChecklistItem.createMany({
-            data: itemsFromTemplate.map(d => ({ ...d, contractChecklistId: checklistId }))
-          })
+          for (const templateItem of itemsFromTemplate) {
+            const createdItem = await tx.contractChecklistItem.create({
+              data: {
+                contractChecklistId: contractChecklist.id,
+                name: templateItem.name,
+                remarks: templateItem.remarks,
+                order: templateItem.order,
+              }
+            })
+            taskSeedQueue.push({ itemId: createdItem.id, name: templateItem.name, tasks: templateItem.tasks })
+          }
         }
       }
-      
+
       // Create the work order
       const newWorkOrder = await tx.workOrder.create({
         data: {
@@ -242,12 +280,44 @@ export async function POST(request: NextRequest) {
         }
       })
       
-      return newWorkOrder
+      return { workOrder: newWorkOrder, contractChecklistId: contractChecklist?.id }
     }, { timeout: 20000, maxWait: 10000 })
 
-    return NextResponse.json(workOrder, { status: 201 })
+    if (transactionResult?.contractChecklistId) {
+      const checklistItems = await prisma.contractChecklistItem.findMany({
+        where: { contractChecklistId: transactionResult.contractChecklistId },
+        select: { id: true, name: true }
+      })
+
+      const templateLookup = new Map((contract.basedOnChecklist?.items || []).map((item) => [item.name, item]))
+
+      const dedupe = new Map<string, TaskSeed>()
+      for (const seed of taskSeedQueue) {
+        dedupe.set(seed.itemId, seed)
+      }
+
+      for (const item of checklistItems) {
+        if (!dedupe.has(item.id)) {
+          const templateMatch = templateLookup.get(item.name)
+          const tasks = templateMatch ? parseActionIntoTasks(templateMatch.action || '') : []
+          dedupe.set(item.id, { itemId: item.id, name: item.name, tasks })
+        }
+      }
+
+      for (const seed of dedupe.values()) {
+        await ensureTasksForItem(seed.itemId, seed.name, seed.tasks)
+      }
+    }
+
+    return NextResponse.json(transactionResult.workOrder, { status: 201 })
   } catch (error) {
     console.error('Error creating work order:', error)
+    if (error instanceof Error && error.message.includes('ChecklistTask model not available')) {
+      return NextResponse.json(
+        { error: error.message, hint: 'Run `pnpm prisma generate` and push/migrate the updated schema so the ChecklistTask delegate exists.' },
+        { status: 500 }
+      )
+    }
     return NextResponse.json(
       { error: 'Failed to create work order' },
       { status: 500 }

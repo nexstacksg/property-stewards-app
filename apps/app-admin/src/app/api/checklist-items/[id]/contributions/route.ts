@@ -10,7 +10,7 @@ export async function GET(
     const { id } = await params
     const contributions = await prisma.itemEntry.findMany({
       where: { itemId: id },
-      include: { inspector: true },
+      include: { inspector: true, tasks: true },
       orderBy: { createdOn: 'asc' }
     })
     return NextResponse.json({ contributions })
@@ -42,7 +42,7 @@ export async function POST(
     const contribution = await prisma.itemEntry.upsert({
       where: { itemId_inspectorId: { itemId: id, inspectorId } },
       update: { remarks },
-      create: { itemId: id, inspectorId, remarks, photos: [], videos: [] }
+      create: { itemId: id, inspectorId, remarks }
     })
     return NextResponse.json(contribution)
   } catch (error) {
