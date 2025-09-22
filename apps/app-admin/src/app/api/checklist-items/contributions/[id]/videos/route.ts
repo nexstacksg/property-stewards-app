@@ -47,8 +47,6 @@ export async function POST(
         task: {
           select: {
             id: true,
-            photos: true,
-            videos: true,
             name: true,
             status: true,
             condition: true,
@@ -63,38 +61,9 @@ export async function POST(
       return NextResponse.json({ error: 'Contribution not found' }, { status: 404 })
     }
 
-    let task = entry.task
-    if (!task) {
-      task = await prisma.checklistTask.create({
-        data: {
-          itemId: entry.itemId,
-          inspectorId: entry.inspectorId ?? entry.inspector?.id ?? null,
-          name: entry.item?.name ? `${entry.item.name} — notes` : 'Inspector notes',
-          status: entry.item?.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
-        }
-      })
-
-      await prisma.itemEntry.update({
-        where: { id: entry.id },
-        data: { taskId: task.id }
-      })
-    }
-
-    const updatedTask = await prisma.checklistTask.update({
-      where: { id: task.id },
-      data: { videos: { push: publicUrl } },
-      select: {
-        id: true,
-        photos: true,
-        videos: true,
-        condition: true,
-        name: true,
-        status: true
-      }
-    })
-
-    const refreshedEntry = await prisma.itemEntry.findUnique({
+    const updatedEntry = await prisma.itemEntry.update({
       where: { id: entry.id },
+      data: { videos: { push: publicUrl } },
       include: {
         inspector: { select: { id: true, name: true } },
         task: {
@@ -102,15 +71,13 @@ export async function POST(
             id: true,
             name: true,
             status: true,
-            photos: true,
-            videos: true,
             condition: true,
           }
-        }
-      }
+        },
+      },
     })
 
-    return NextResponse.json({ url: publicUrl, task: updatedTask, entry: refreshedEntry })
+    return NextResponse.json({ url: publicUrl, entry: updatedEntry })
   } catch (error) {
     console.error('Error uploading contribution video:', error)
     return NextResponse.json({ error: 'Failed to upload video' }, { status: 500 })

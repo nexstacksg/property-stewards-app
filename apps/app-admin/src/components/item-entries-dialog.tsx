@@ -41,6 +41,8 @@ type Entry = {
   inspector?: { id: string; name: string } | null
   condition?: string | null
   task?: Task | null
+  photos?: string[] | null
+  videos?: string[] | null
 }
 
 type DisplayEntry = Entry & {
@@ -209,8 +211,6 @@ export default function ItemEntriesDialog({
           task.id === selectedTaskId
             ? {
                 ...task,
-                photos: created.task?.photos ?? task.photos,
-                videos: created.task?.videos ?? task.videos,
                 condition: created.task?.condition ?? task.condition,
                 entries: Array.isArray(task.entries)
                   ? [...task.entries, { id: created.id }]
@@ -255,18 +255,10 @@ export default function ItemEntriesDialog({
           if (!task.entries.some((linked) => linked.id === entryId)) return task
 
           const filteredEntries = task.entries.filter((linked) => linked.id !== entryId)
-          const filteredPhotos = Array.isArray(task.photos)
-            ? task.photos.filter((url) => !url.includes(`/entries/${entryId}/`))
-            : []
-          const filteredVideos = Array.isArray(task.videos)
-            ? task.videos.filter((url) => !url.includes(`/entries/${entryId}/`))
-            : []
 
           return {
             ...task,
             entries: filteredEntries,
-            photos: filteredPhotos,
-            videos: filteredVideos,
           }
         })
       )
@@ -281,12 +273,16 @@ export default function ItemEntriesDialog({
   const displayEntries: DisplayEntry[] = useMemo(() => {
     return localEntries.map((entry) => {
       const task = localTasks.find((task) => (task.entries || []).some((linked) => linked.id === entry.id))
+      const entryPhotos: string[] = Array.isArray(entry.photos) ? entry.photos : []
+      const taskPhotos: string[] = task && Array.isArray(task.photos) ? task.photos : []
+      const entryVideos: string[] = Array.isArray(entry.videos) ? entry.videos : []
+      const taskVideos: string[] = task && Array.isArray(task.videos) ? task.videos : []
 
       return {
         ...entry,
         task,
-        photos: task?.photos || [],
-        videos: task?.videos || [],
+        photos: Array.from(new Set([...entryPhotos, ...taskPhotos])),
+        videos: Array.from(new Set([...entryVideos, ...taskVideos])),
       }
     })
   }, [localEntries, localTasks])

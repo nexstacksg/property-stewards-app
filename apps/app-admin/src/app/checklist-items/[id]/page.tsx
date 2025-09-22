@@ -87,16 +87,29 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
       0
     ) + standaloneEntries.length
 
-  const totalMedia =
-    itemPhotos.length +
-    itemVideos.length +
-    tasks.reduce(
-      (acc: number, task: any) =>
-        acc +
-        (Array.isArray(task.photos) ? task.photos.length : 0) +
-        (Array.isArray(task.videos) ? task.videos.length : 0),
-      0
-    )
+  const taskPhotoUrls = tasks.flatMap((task: any) => (Array.isArray(task.photos) ? task.photos : []))
+  const taskVideoUrls = tasks.flatMap((task: any) => (Array.isArray(task.videos) ? task.videos : []))
+  const entryPhotoUrls = tasks.flatMap((task: any) =>
+    Array.isArray(task.entries)
+      ? task.entries.flatMap((entry: any) => (Array.isArray(entry.photos) ? entry.photos : []))
+      : []
+  )
+  const entryVideoUrls = tasks.flatMap((task: any) =>
+    Array.isArray(task.entries)
+      ? task.entries.flatMap((entry: any) => (Array.isArray(entry.videos) ? entry.videos : []))
+      : []
+  )
+  const standaloneEntryPhotoUrls = standaloneEntries.flatMap((entry: any) =>
+    Array.isArray(entry.photos) ? entry.photos : []
+  )
+  const standaloneEntryVideoUrls = standaloneEntries.flatMap((entry: any) =>
+    Array.isArray(entry.videos) ? entry.videos : []
+  )
+
+  const photoUrls = new Set<string>([...itemPhotos, ...taskPhotoUrls, ...entryPhotoUrls, ...standaloneEntryPhotoUrls])
+  const videoUrls = new Set<string>([...itemVideos, ...taskVideoUrls, ...entryVideoUrls, ...standaloneEntryVideoUrls])
+
+  const totalMedia = photoUrls.size + videoUrls.size
 
   return (
     <div className="space-y-6 bg-slate-50/60 p-6">
@@ -257,8 +270,12 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
           <div className="space-y-4">
             {tasks.map((task: any) => {
               const entries = Array.isArray(task.entries) ? task.entries : []
-              const photos = Array.isArray(task.photos) ? task.photos : []
-              const videos = Array.isArray(task.videos) ? task.videos : []
+              const taskPhotos = Array.isArray(task.photos) ? task.photos : []
+              const taskVideos = Array.isArray(task.videos) ? task.videos : []
+              const entryPhotos = entries.flatMap((entry: any) => (Array.isArray(entry.photos) ? entry.photos : []))
+              const entryVideos = entries.flatMap((entry: any) => (Array.isArray(entry.videos) ? entry.videos : []))
+              const photos = Array.from(new Set<string>([...taskPhotos, ...entryPhotos]))
+              const videos = Array.from(new Set<string>([...taskVideos, ...entryVideos]))
 
               return (
                 <Card key={task.id} className="border border-slate-200/80 bg-white shadow-sm">
@@ -315,6 +332,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                       <div className="space-y-3">
                         {entries.map((entry: any) => {
                           const reporter = entry.inspector?.name || 'Admin'
+                          const remarkPhotos = Array.isArray(entry.photos) ? entry.photos : []
+                          const remarkVideos = Array.isArray(entry.videos) ? entry.videos : []
                           return (
                             <div key={entry.id} className="rounded-lg border bg-white/80 p-4 shadow-sm">
                               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -331,6 +350,42 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                                 <p className="mt-2 text-sm text-muted-foreground">{entry.remarks}</p>
                               ) : (
                                 <p className="mt-2 text-sm text-muted-foreground">No written remarks.</p>
+                              )}
+                              {(remarkPhotos.length > 0 || remarkVideos.length > 0) && (
+                                <div className="mt-3 space-y-2">
+                                  {remarkPhotos.length > 0 && (
+                                    <div>
+                                      <p className="text-xs uppercase text-muted-foreground">Photos</p>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {remarkPhotos.map((url: string, index: number) => (
+                                          <a
+                                            key={url + index}
+                                            href={url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="group block overflow-hidden rounded-md border bg-background"
+                                          >
+                                            <img
+                                              src={url}
+                                              alt={`Remark photo ${index + 1}`}
+                                              className="h-28 w-36 object-cover transition duration-200 group-hover:scale-105"
+                                            />
+                                          </a>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {remarkVideos.length > 0 && (
+                                    <div>
+                                      <p className="text-xs uppercase text-muted-foreground">Videos</p>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {remarkVideos.map((url: string, index: number) => (
+                                          <video key={url + index} src={url} controls className="h-32 w-48 rounded-md border bg-black/70" />
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </div>
                           )
@@ -355,6 +410,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             <CardContent className="space-y-3">
               {standaloneEntries.map((entry: any) => {
                 const reporter = entry.inspector?.name || 'Admin'
+                const remarkPhotos = Array.isArray(entry.photos) ? entry.photos : []
+                const remarkVideos = Array.isArray(entry.videos) ? entry.videos : []
                 return (
                   <div key={entry.id} className="rounded-lg border bg-white/80 p-4 shadow-sm">
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -371,6 +428,42 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                       <p className="mt-2 text-sm text-muted-foreground">{entry.remarks}</p>
                     ) : (
                       <p className="mt-2 text-sm text-muted-foreground">No remarks provided.</p>
+                    )}
+                    {(remarkPhotos.length > 0 || remarkVideos.length > 0) && (
+                      <div className="mt-3 space-y-2">
+                        {remarkPhotos.length > 0 && (
+                          <div>
+                            <p className="text-xs uppercase text-muted-foreground">Photos</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {remarkPhotos.map((url: string, index: number) => (
+                                <a
+                                  key={url + index}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="group block overflow-hidden rounded-md border bg-background"
+                                >
+                                  <img
+                                    src={url}
+                                    alt={`Remark photo ${index + 1}`}
+                                    className="h-28 w-36 object-cover transition duration-200 group-hover:scale-105"
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {remarkVideos.length > 0 && (
+                          <div>
+                            <p className="text-xs uppercase text-muted-foreground">Videos</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {remarkVideos.map((url: string, index: number) => (
+                                <video key={url + index} src={url} controls className="h-32 w-48 rounded-md border bg-black/70" />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )

@@ -139,21 +139,20 @@ export async function POST(
     const photoUrls = await Promise.all(photoFiles.map((file) => uploadFile(file, workOrderId, entry.id, 'photos')))
     const videoUrls = await Promise.all(videoFiles.map((file) => uploadFile(file, workOrderId, entry.id, 'videos')))
 
-    const taskUpdateData: any = {}
-    if (photoUrls.length > 0) {
-      taskUpdateData.photos = { push: photoUrls }
-    }
-    if (videoUrls.length > 0) {
-      taskUpdateData.videos = { push: videoUrls }
-    }
-    if (typeof normalizedCondition !== 'undefined') {
-      taskUpdateData.condition = normalizedCondition ?? null
+    if (photoUrls.length > 0 || videoUrls.length > 0) {
+      await prisma.itemEntry.update({
+        where: { id: entry.id },
+        data: {
+          ...(photoUrls.length > 0 ? { photos: { push: photoUrls } } : {}),
+          ...(videoUrls.length > 0 ? { videos: { push: videoUrls } } : {}),
+        },
+      })
     }
 
-    if (Object.keys(taskUpdateData).length > 0) {
+    if (typeof normalizedCondition !== 'undefined') {
       await prisma.checklistTask.update({
         where: { id: targetTask.id },
-        data: taskUpdateData,
+        data: { condition: normalizedCondition ?? null },
       })
     }
 
@@ -170,7 +169,7 @@ export async function POST(
             videos: true,
             condition: true,
           },
-        }
+        },
       },
     })
 
