@@ -562,7 +562,9 @@ async function main() {
           itemId: item.id,
           inspectorId: entrySeed.inspectorId,
           remarks: entrySeed.remarks,
-          includeInReport: entrySeed.includeInReport ?? false
+          includeInReport: entrySeed.includeInReport ?? false,
+          photos: entrySeed.photos ?? [],
+          videos: entrySeed.videos ?? []
         }
       })
 

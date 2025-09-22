@@ -180,6 +180,8 @@ model ItemEntry {
   includeInReport Boolean @default(false)
   condition       Condition?
   taskId          String?
+  photos          String[] @default([])
+  videos          String[] @default([])
   createdOn       DateTime @default(now())
   updatedOn       DateTime @updatedAt
 
