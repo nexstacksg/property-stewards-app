@@ -39,7 +39,17 @@ async function getWorkOrder(id: string) {
                 include: {
                   contributions: {
                     include: {
-                      inspector: true
+                      inspector: true,
+                      task: {
+                        select: {
+                          id: true,
+                          photos: true,
+                          videos: true,
+                          condition: true,
+                          name: true,
+                          status: true
+                        }
+                      }
                     }
                   },
                   checklistTasks: {
@@ -409,14 +419,22 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                       const taskPhotos = Array.isArray(item.checklistTasks)
                         ? item.checklistTasks.flatMap((task: any) => task.photos || [])
                         : []
-                      const contributionPhotos = (item.contributions || []).flatMap((entry: any) => entry.photos || [])
+                      const contributionPhotos = (item.contributions || []).flatMap((entry: any) => {
+                        const entryPhotos = Array.isArray(entry.photos) ? entry.photos : []
+                        const taskPhotosFromEntry = entry.task && Array.isArray(entry.task.photos) ? entry.task.photos : []
+                        return [...entryPhotos, ...taskPhotosFromEntry]
+                      })
                       const combinedPhotos = Array.from(new Set([...itemPhotos, ...taskPhotos, ...contributionPhotos]))
 
                       const itemVideos = Array.isArray(item.videos) ? item.videos : []
                       const taskVideos = Array.isArray(item.checklistTasks)
                         ? item.checklistTasks.flatMap((task: any) => task.videos || [])
                         : []
-                      const contributionVideos = (item.contributions || []).flatMap((entry: any) => entry.videos || [])
+                      const contributionVideos = (item.contributions || []).flatMap((entry: any) => {
+                        const entryVideos = Array.isArray(entry.videos) ? entry.videos : []
+                        const taskVideosFromEntry = entry.task && Array.isArray(entry.task.videos) ? entry.task.videos : []
+                        return [...entryVideos, ...taskVideosFromEntry]
+                      })
                       const combinedVideos = Array.from(new Set([...itemVideos, ...taskVideos, ...contributionVideos]))
 
                       return (
