@@ -13,6 +13,8 @@ type SeedInspectorEntry = {
   inspectorId: string
   remarks?: string
   includeInReport?: boolean
+  photos?: string[]
+  videos?: string[]
   tasks?: SeedChecklistTask[]
 }
 

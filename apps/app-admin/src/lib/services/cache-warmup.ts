@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheSetJSON, cacheSetLargeArray, getMemcacheClient } from '@/lib/memcache'
+import { cacheGetJSON, cacheSetJSON, cacheSetLargeArray, getMemcacheClient } from '@/lib/memcache'
 
 type WarmupResult = {
   ok: boolean
@@ -27,6 +27,38 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   const ttl = Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
 
   const results: Record<string, WarmupResult> = {}
+
+  const purgeKeyFamily = async (base: string) => {
+    const client = getMemcacheClient()
+    if (!client) return
+    const seen = new Set<string>()
+
+    const tryDelete = async (key: string) => {
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      try {
+        await client.delete(key)
+      } catch {}
+    }
+
+    await tryDelete(base)
+
+    const indexKey = `${base}:index`
+    let index: { keys?: string[] } | null = null
+    try {
+      index = await cacheGetJSON<{ keys?: string[] }>(indexKey)
+    } catch (err) {
+      console.error('[cache-warmup] failed to read index for', base, err)
+    }
+
+    if (index?.keys) {
+      for (const key of index.keys) {
+        await tryDelete(key)
+      }
+    }
+
+    await tryDelete(indexKey)
+  }
 
   // Fetch all datasets in parallel
   // Fetch enriched datasets for cache-only reads at runtime
@@ -63,7 +95,42 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
         status: true,
         condition:true,
         order: true,
-        tasks: true,
+        checklistTasks: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            condition: true,
+            photos: true,
+            videos: true,
+            entries: { select: { id: true } }
+          }
+        },
+        contributions: {
+          select: {
+            id: true,
+            inspectorId: true,
+            remarks: true,
+            includeInReport: true,
+            condition: true,
+            photos: true,
+            videos: true,
+            taskId: true,
+            createdOn: true,
+            updatedOn: true,
+            inspector: { select: { id: true, name: true, mobilePhone: true } },
+            task: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                condition: true,
+                photos: true,
+                videos: true
+              }
+            }
+          }
+        },
         contractChecklist: {
           select: {
             contract: {
@@ -82,6 +149,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   const workOrders = workOrdersRaw.map(wo => ({
     id: wo.id,
     inspectorId: Array.isArray(wo.inspectors) && wo.inspectors.length > 0 ? wo.inspectors[0].id : null,
+    inspectorIds: Array.isArray(wo.inspectors) ? wo.inspectors.map((ins) => ins.id) : [],
     contractId: wo.contractId,
     status: wo.status,
     scheduledStartDateTime: wo.scheduledStartDateTime,
@@ -106,7 +174,32 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     enteredOn: it.enteredOn,
     enteredById: it.enteredById,
     order: it.order,
-    tasks: it.tasks,
+    tasks: undefined,
+    checklistTasks: (it.checklistTasks || []).map(task => ({
+      id: task.id,
+      name: task.name,
+      status: task.status,
+      condition: task.condition,
+      photos: task.photos,
+      videos: task.videos,
+      entryIds: (task.entries || []).map(entry => entry.id)
+    })),
+    status: it.status,
+    condition: it.condition,
+    contributions: (it.contributions || []).map(entry => ({
+      id: entry.id,
+      inspectorId: entry.inspectorId,
+      inspector: entry.inspector,
+      remarks: entry.remarks,
+      includeInReport: entry.includeInReport,
+      condition: entry.condition,
+      photos: entry.photos,
+      videos: entry.videos,
+      taskId: entry.taskId,
+      task: entry.task,
+      createdOn: entry.createdOn,
+      updatedOn: entry.updatedOn
+    })),
     workOrderIds: it.contractChecklist.contract.workOrders.map(w => w.id)
   }))
 
@@ -120,10 +213,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   } catch {}
 
   // Helper to delete base and index keys so warmup always refreshes sets
-  const delKeys = async (base: string) => {
-    try { await client.delete(base) } catch {}
-    try { await client.delete(`${base}:index`) } catch {}
-  }
+  const delKeys = purgeKeyFamily
 
   // Inspectors
   try {
@@ -178,6 +268,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
 
   // Write a manifest with counts and updatedAt
   try {
+    await delKeys('mc:manifest:all')
     const manifest = {
       updatedAt: new Date().toISOString(),
       counts: {
