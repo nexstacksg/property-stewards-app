@@ -21,6 +21,14 @@ export type ChatSessionState = {
   currentLocation?: string
   currentItemId?: string
 
+  // task flow context
+  currentTaskId?: string
+  currentTaskName?: string
+  currentTaskItemId?: string
+  currentTaskEntryId?: string
+  currentTaskCondition?: string
+  taskFlowStage?: 'condition' | 'media' | 'remarks'
+
   // assistant/thread context
   threadId?: string
 
