@@ -87,8 +87,6 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
       0
     ) + standaloneEntries.length
 
-  const taskPhotoUrls = tasks.flatMap((task: any) => (Array.isArray(task.photos) ? task.photos : []))
-  const taskVideoUrls = tasks.flatMap((task: any) => (Array.isArray(task.videos) ? task.videos : []))
   const entryPhotoUrls = tasks.flatMap((task: any) =>
     Array.isArray(task.entries)
       ? task.entries.flatMap((entry: any) => (Array.isArray(entry.photos) ? entry.photos : []))
@@ -106,8 +104,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
     Array.isArray(entry.videos) ? entry.videos : []
   )
 
-  const photoUrls = new Set<string>([...itemPhotos, ...taskPhotoUrls, ...entryPhotoUrls, ...standaloneEntryPhotoUrls])
-  const videoUrls = new Set<string>([...itemVideos, ...taskVideoUrls, ...entryVideoUrls, ...standaloneEntryVideoUrls])
+  const photoUrls = new Set<string>([...itemPhotos, ...entryPhotoUrls, ...standaloneEntryPhotoUrls])
+  const videoUrls = new Set<string>([...itemVideos, ...entryVideoUrls, ...standaloneEntryVideoUrls])
 
   const totalMedia = photoUrls.size + videoUrls.size
 
@@ -270,12 +268,6 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
           <div className="space-y-4">
             {tasks.map((task: any) => {
               const entries = Array.isArray(task.entries) ? task.entries : []
-              const taskPhotos = Array.isArray(task.photos) ? task.photos : []
-              const taskVideos = Array.isArray(task.videos) ? task.videos : []
-              const entryPhotos = entries.flatMap((entry: any) => (Array.isArray(entry.photos) ? entry.photos : []))
-              const entryVideos = entries.flatMap((entry: any) => (Array.isArray(entry.videos) ? entry.videos : []))
-              const photos = Array.from(new Set<string>([...taskPhotos, ...entryPhotos]))
-              const videos = Array.from(new Set<string>([...taskVideos, ...entryVideos]))
 
               return (
                 <Card key={task.id} className="border border-slate-200/80 bg-white shadow-sm">
@@ -297,33 +289,6 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {(photos.length > 0 || videos.length > 0) && (
-                      <div className="space-y-3">
-                        {photos.length > 0 && (
-                          <div>
-                            <h4 className="text-xs uppercase text-muted-foreground">Photos</h4>
-                            <div className="mt-2 flex flex-wrap gap-3">
-                              {photos.map((url: string, index: number) => (
-                                <a key={url + index} href={url} target="_blank" rel="noopener noreferrer" className="group block overflow-hidden rounded-md border bg-background shadow-sm">
-                                  <img src={url} alt={`Task photo ${index + 1}`} className="h-32 w-48 object-cover transition duration-200 group-hover:scale-105" />
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {videos.length > 0 && (
-                          <div>
-                            <h4 className="text-xs uppercase text-muted-foreground">Videos</h4>
-                            <div className="mt-2 flex flex-wrap gap-3">
-                              {videos.map((url: string, index: number) => (
-                                <video key={url + index} src={url} controls className="h-36 w-56 rounded-md border bg-black/80" />
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     {entries.length === 0 ? (
                       <div className="rounded-md border border-dashed bg-muted/40 py-4 text-center text-sm text-muted-foreground">
                         No remarks recorded for this subtask yet.
