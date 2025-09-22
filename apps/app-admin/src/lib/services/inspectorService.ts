@@ -276,28 +276,54 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
           contract: { workOrders: { some: { id: workOrderId } } }
         }
       },
-      select: { id: true, name: true, order: true, status: true }
+      select: {
+        id: true,
+        name: true,
+        order: true,
+        status: true,
+        checklistTasks: {
+          select: {
+            id: true,
+            status: true
+          }
+        }
+      }
     })
 
     const sorted = items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
-    const locationMap = new Map<string, { total: number; completed: number; anyId: string }>()
+    const locationMap = new Map<string, { totalItems: number; completedItems: number; totalTasks: number; completedTasks: number; anyId: string }>()
     for (const item of sorted) {
       const loc = item.name
-      if (!locationMap.has(loc)) locationMap.set(loc, { total: 0, completed: 0, anyId: item.id })
+      if (!locationMap.has(loc)) {
+        locationMap.set(loc, {
+          totalItems: 0,
+          completedItems: 0,
+          totalTasks: 0,
+          completedTasks: 0,
+          anyId: item.id
+        })
+      }
       const ref = locationMap.get(loc)!
-      ref.total += 1
-      if (item.status === 'COMPLETED') ref.completed += 1
+      ref.totalItems += 1
+      if (item.status === 'COMPLETED') ref.completedItems += 1
+      const tasks = item.checklistTasks || []
+      ref.totalTasks += tasks.length
+      ref.completedTasks += tasks.filter((task: any) => task.status === 'COMPLETED').length
+      if (!ref.anyId) ref.anyId = item.id
     }
 
     const result = Array.from(locationMap.entries()).map(([name, data]) => {
-      const isCompleted = data.total > 0 && data.completed === data.total
+      const hasTasks = data.totalTasks > 0
+      const isCompleted = hasTasks
+        ? data.completedTasks === data.totalTasks
+        : data.totalItems > 0 && data.completedItems === data.totalItems
       return {
         name,
         displayName: isCompleted ? `${name} (Done)` : name,
         isCompleted,
-        totalTasks: data.total,
-        completedTasks: data.completed,
+        totalTasks: hasTasks ? data.totalTasks : data.totalItems,
+        completedTasks: hasTasks ? data.completedTasks : data.completedItems,
         contractChecklistItemId: data.anyId
       }
     })
@@ -330,34 +356,35 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
         remarks: true,
         photos: true,
         videos: true,
-        tasks: true,
         status: true,
         enteredOn: true,
-        enteredById: true
+        enteredById: true,
+        checklistTasks: {
+          orderBy: { createdOn: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            inspectorId: true,
+            photos: true,
+            videos: true,
+            updatedOn: true,
+            entries: {
+              select: {
+                id: true,
+                remarks: true
+              }
+            }
+          }
+        }
       }
     }) as any
 
     if (!item) return []
 
-    let result
-    if (item.tasks && typeof item.tasks === 'object') {
-      const tasks = Array.isArray(item.tasks) ? item.tasks : []
-      result = tasks.map((task: any, index: number) => ({
-        id: `${item.id}_task_${index}`,
-        location: item.name,
-        action: typeof task === 'string' ? task : (task.task || task.action || 'Inspect area'),
-        status: typeof task === 'object' && task.status === 'done' ? 'completed' : 'pending',
-        notes: item.remarks,
-        photos: item.photos,
-        videos: item.videos,
-        completed_at: item.enteredOn,
-        completed_by: item.enteredById,
-        isSubTask: true,
-        taskIndex: index,
-        locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
-      }))
-    } else {
-      result = [{
+    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+    if (tasks.length === 0) {
+      return [{
         id: item.id,
         location: item.name,
         action: item.remarks || 'Inspect area',
@@ -367,11 +394,25 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
         videos: item.videos,
         completed_at: item.enteredOn,
         completed_by: item.enteredById,
-        isSubTask: false
+        isSubTask: false,
+        locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
       }]
     }
 
-    return result
+    return tasks.map((task: any, index: number) => ({
+      id: task.id,
+      location: item.name,
+      action: task.name || `Task ${index + 1}`,
+      status: task.status === 'COMPLETED' ? 'completed' : 'pending',
+      notes: (task.entries?.[0]?.remarks as string | undefined) || item.remarks || null,
+      photos: task.photos ?? [],
+      videos: task.videos ?? [],
+      completed_at: task.updatedOn,
+      completed_by: task.inspectorId,
+      isSubTask: true,
+      taskIndex: index,
+      locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
+    }))
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
     return []
@@ -380,64 +421,64 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
 
 export async function updateTaskStatus(taskId: string, status: 'completed' | 'pending', notes?: string) {
   try {
-    // Handle subtask updates
-    if (taskId.includes('_task_')) {
-      const [checklistItemId, , taskIndexStr] = taskId.split('_')
-      const taskIndex = parseInt(taskIndexStr)
-      
-      const item = await prisma.contractChecklistItem.findUnique({
-        where: { id: checklistItemId },
-        select: { tasks: true }
-      }) as any
-      
-      if (!item) return false
-      
-      let tasks = item.tasks || []
-      if (Array.isArray(tasks) && tasks[taskIndex]) {
-        tasks[taskIndex] = {
-          ...tasks[taskIndex],
-          status: status === 'completed' ? 'done' : 'pending'
-        }
-        
-        const updateData: any = { tasks }
-        if (notes) {
-          updateData.remarks = notes
-        }
-        
-        await prisma.contractChecklistItem.update({
-          where: { id: checklistItemId },
-          data: updateData
-        })
-        
-        // Invalidate cache
-        locationCache.invalidate(checklistItemId)
-        try { await cacheDel('mc:contract-checklist-items:all') } catch {}
-        return true
+    const existingTask = await prisma.checklistTask.findUnique({
+      where: { id: taskId },
+      select: { id: true, itemId: true }
+    })
+
+    if (!existingTask) {
+      const updateData: Prisma.ContractChecklistItemUpdateInput = {
+        status: status === 'completed' ? 'COMPLETED' : 'PENDING',
+        enteredOn: status === 'completed' ? new Date() : null
       }
-      return false
-    }
-    
-    // Update entire location
-    const updateData: Prisma.ContractChecklistItemUpdateInput = {}
-    
-    if (status === 'completed') {
-      updateData.enteredOn = new Date()
-      ;(updateData as any).status = 'COMPLETED'
-      if (notes) {
-        updateData.remarks = notes
-      }
-    } else {
-      updateData.enteredOn = null
-      ;(updateData as any).status = 'PENDING'
+      if (notes) updateData.remarks = notes
+
+      await prisma.contractChecklistItem.update({
+        where: { id: taskId },
+        data: updateData
+      })
+
+      locationCache.invalidate(taskId)
+      try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+      return true
     }
 
-    await prisma.contractChecklistItem.update({
+    const task = await prisma.checklistTask.update({
       where: { id: taskId },
-      data: updateData
+      data: {
+        status: status === 'completed' ? 'COMPLETED' : 'PENDING',
+        updatedOn: new Date()
+      },
+      select: {
+        id: true,
+        itemId: true
+      }
+    })
+
+    if (notes) {
+      await prisma.contractChecklistItem.update({
+        where: { id: task.itemId },
+        data: { remarks: notes }
+      })
+    }
+
+    const remaining = await prisma.checklistTask.count({
+      where: {
+        itemId: task.itemId,
+        status: { not: 'COMPLETED' }
+      }
+    })
+
+    await prisma.contractChecklistItem.update({
+      where: { id: task.itemId },
+      data: {
+        status: remaining === 0 ? 'COMPLETED' : 'PENDING',
+        enteredOn: remaining === 0 ? new Date() : null
+      }
     })
 
     // Invalidate cache
-    locationCache.invalidate(taskId)
+    locationCache.invalidate(task.itemId)
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
@@ -462,7 +503,9 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
       },
       select: {
         id: true,
-        tasks: true,
+        checklistTasks: {
+          select: { id: true }
+        },
         enteredById: true
       },
       take: 1
@@ -473,26 +516,27 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
       return false
     }
 
-    let tasks = checklistItem.tasks || []
-    if (Array.isArray(tasks)) {
-      tasks = tasks.map((task: any) => ({
-        ...task,
-        status: 'done'
-      }))
-    }
-
-    await prisma.contractChecklistItem.update({
-      where: { id: checklistItem.id },
-      data: {
-        tasks: tasks,
-        enteredOn: new Date(),
-        enteredById: inspectorId || checklistItem.enteredById,
-        status: 'COMPLETED'
-      }
-    })
+    await prisma.$transaction([
+      prisma.checklistTask.updateMany({
+        where: { itemId: checklistItem.id },
+        data: {
+          status: 'COMPLETED',
+          updatedOn: new Date()
+        }
+      }),
+      prisma.contractChecklistItem.update({
+        where: { id: checklistItem.id },
+        data: {
+          enteredOn: new Date(),
+          enteredById: inspectorId || checklistItem.enteredById,
+          status: 'COMPLETED'
+        }
+      })
+    ])
 
     // Invalidate cache
     locationCache.invalidate(workOrderId)
+    locationCache.invalidate(checklistItem.id)
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
@@ -503,16 +547,33 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
 
 export async function addTaskPhoto(taskId: string, photoUrl: string) {
   try {
-    await prisma.contractChecklistItem.update({
+    const task = await prisma.checklistTask.findUnique({
       where: { id: taskId },
-      data: {
-        photos: {
-          push: photoUrl
-        }
-      }
+      select: { id: true, itemId: true, photos: true }
     })
 
-    locationCache.invalidate(taskId)
+    if (task) {
+      await prisma.checklistTask.update({
+        where: { id: taskId },
+        data: {
+          photos: {
+            push: photoUrl
+          }
+        }
+      })
+      locationCache.invalidate(task.itemId)
+    } else {
+      await prisma.contractChecklistItem.update({
+        where: { id: taskId },
+        data: {
+          photos: {
+            push: photoUrl
+          }
+        }
+      })
+      locationCache.invalidate(taskId)
+    }
+
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
@@ -523,16 +584,33 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
 
 export async function addTaskVideo(taskId: string, videoUrl: string) {
   try {
-    await prisma.contractChecklistItem.update({
+    const task = await prisma.checklistTask.findUnique({
       where: { id: taskId },
-      data: {
-        videos: {
-          push: videoUrl
-        }
-      }
+      select: { id: true, itemId: true, videos: true }
     })
 
-    locationCache.invalidate(taskId)
+    if (task) {
+      await prisma.checklistTask.update({
+        where: { id: taskId },
+        data: {
+          videos: {
+            push: videoUrl
+          }
+        }
+      })
+      locationCache.invalidate(task.itemId)
+    } else {
+      await prisma.contractChecklistItem.update({
+        where: { id: taskId },
+        data: {
+          videos: {
+            push: videoUrl
+          }
+        }
+      })
+      locationCache.invalidate(taskId)
+    }
+
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     return true
   } catch (error) {
@@ -574,29 +652,70 @@ export async function getTaskMedia(taskId: string) {
     const cached = locationCache.get(cacheKey)
     if (cached) return cached
 
-    let actualTaskId = taskId
-    if (taskId.includes('_task_')) actualTaskId = taskId.split('_task_')[0]
-
     // Try cache first
     const itemsCache = await getCachedChecklistItems()
     let item: any = null
+    let task: any = null
+
     if (itemsCache) {
-      item = itemsCache.find((it: any) => it.id === actualTaskId)
-      debugLog('getTaskMedia: lookup id =', actualTaskId, 'found =', Boolean(item))
+      for (const it of itemsCache) {
+        if (it.id === taskId) {
+          item = it
+          break
+        }
+        if (Array.isArray(it.checklistTasks)) {
+          const match = it.checklistTasks.find((t: any) => t.id === taskId)
+          if (match) {
+            item = it
+            task = match
+            break
+          }
+        }
+      }
+    }
+
+    if (!item) {
+      const dbTask = await prisma.checklistTask.findUnique({
+        where: { id: taskId },
+        include: {
+          item: true,
+          entries: {
+            select: { id: true, remarks: true }
+          }
+        }
+      }) as any
+      if (dbTask) {
+        task = dbTask
+        item = dbTask.item
+      }
+    }
+
+    if (!item) {
+      item = await prisma.contractChecklistItem.findUnique({
+        where: { id: taskId },
+        include: {
+          checklistTasks: true
+        }
+      }) as any
     }
 
     if (!item) {
       return null
     }
 
+    const photos = task ? task.photos || [] : item.photos || []
+    const videos = task ? task.videos || [] : item.videos || []
+    const name = task ? task.name : item.name
+    const remarks = (task?.entries && task.entries[0]?.remarks) || item.remarks
+
     const result = {
-      taskId: taskId,
-      name: item.name,
-      remarks: item.remarks,
-      photos: item.photos || [],
-      videos: item.videos || [],
-      photoCount: item.photos?.length || 0,
-      videoCount: item.videos?.length || 0
+      taskId,
+      name,
+      remarks,
+      photos,
+      videos,
+      photoCount: photos.length,
+      videoCount: videos.length
     }
 
     locationCache.set(cacheKey, result)
