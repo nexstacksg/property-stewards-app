@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma'
 import { randomUUID } from 'crypto'
 import { getSessionState } from '@/lib/chat-session'
 import { getContractChecklistItemIdByLocation } from '@/lib/services/inspectorService'
+import { saveMediaForItem } from '../whatsapp/webhook/utils'
 
 export async function handleMultipartUpload(file: File, mediaType: string, sessionId: string) {
   if (!file || !mediaType || !sessionId) {
@@ -45,57 +46,8 @@ export async function handleMultipartUpload(file: File, mediaType: string, sessi
       if (byName) targetItemId = byName.id
     }
     if (targetItemId) {
-      const inspectorId = (sessionState.inspectorId as string) || ''
-      if (inspectorId) {
-        const entry = await prisma.itemEntry.upsert({
-          where: { itemId_inspectorId: { itemId: targetItemId, inspectorId } },
-          update: {},
-          create: { itemId: targetItemId, inspectorId }
-        })
-
-        let task = await prisma.checklistTask.findFirst({ where: { itemId: targetItemId, entryId: entry.id } })
-        if (!task) {
-          task = await prisma.checklistTask.create({
-            data: {
-              itemId: targetItemId,
-              entryId: entry.id,
-              inspectorId,
-              name: 'Inspector notes',
-              status: 'PENDING'
-            }
-          })
-        }
-
-        await prisma.checklistTask.update({
-          where: { id: task.id },
-          data: mediaType === 'photo' ? { photos: { push: publicUrl } } : { videos: { push: publicUrl } }
-        })
-      } else {
-        const item = await prisma.contractChecklistItem.findUnique({
-          where: { id: targetItemId },
-          include: { checklistTasks: { where: { entryId: null }, take: 1 } }
-        })
-
-        if (!item) {
-          throw new Error('Checklist item not found')
-        }
-
-        let task = item.checklistTasks[0]
-        if (!task) {
-          task = await prisma.checklistTask.create({
-            data: {
-              itemId: targetItemId,
-              name: item.name || 'General inspection',
-              status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
-            }
-          })
-        }
-
-        await prisma.checklistTask.update({
-          where: { id: task.id },
-          data: mediaType === 'photo' ? { photos: { push: publicUrl } } : { videos: { push: publicUrl } }
-        })
-      }
+      const inspectorId = (sessionState.inspectorId as string) || null
+      await saveMediaForItem(targetItemId, inspectorId, publicUrl, mediaType === 'photo' ? 'photo' : 'video')
     }
   }
 

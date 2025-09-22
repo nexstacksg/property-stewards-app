@@ -521,6 +521,7 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
         where: { itemId: checklistItem.id },
         data: {
           status: 'COMPLETED',
+          condition: 'GOOD',
           updatedOn: new Date()
         }
       }),
@@ -529,7 +530,8 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
         data: {
           enteredOn: new Date(),
           enteredById: inspectorId || checklistItem.enteredById,
-          status: 'COMPLETED'
+          status: 'COMPLETED',
+          condition: 'GOOD'
         }
       })
     ])

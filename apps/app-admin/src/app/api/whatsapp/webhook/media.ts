@@ -3,7 +3,7 @@ import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-cli
 import { randomUUID } from 'crypto'
 import prisma from '@/lib/prisma'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
-import { buildLocationsFormatted, resolveChecklistItemIdForLocation, resolveInspectorIdForSession, saveMediaForItem } from './utils'
+import { buildLocationsFormatted, resolveChecklistItemIdForLocation, resolveInspectorIdForSession, saveMediaForItem, saveMediaToItemEntry } from './utils'
 
 export async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
@@ -15,6 +15,12 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
 
     const workOrderId = metadata.workOrderId
     let currentLocation = metadata.currentLocation
+    const taskFlowStage = metadata.taskFlowStage
+    const isTaskFlowMedia = taskFlowStage === 'media' || taskFlowStage === 'remarks'
+    const activeTaskName = metadata.currentTaskName
+    const activeTaskId = metadata.currentTaskId
+    const activeTaskItemId = metadata.currentTaskItemId
+    let activeTaskEntryId = metadata.currentTaskEntryId
     console.log('🔍 Media upload context check:', { workOrderId, currentLocation, hasWorkOrder: !!workOrderId, hasLocation: !!currentLocation })
 
     if (!workOrderId) {
@@ -92,25 +98,48 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     console.log('✅ Uploaded to DigitalOcean Spaces:', publicUrl)
 
     // Save to DB
-    if (workOrderId && currentLocation) {
-      console.log('💾 Saving media to database for location:', currentLocation)
-      const targetItemId = await resolveChecklistItemIdForLocation(workOrderId, currentLocation)
-      if (targetItemId) {
-        try { await updateSessionState(phoneNumber, { currentItemId: targetItemId }) } catch {}
-        const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
-        await saveMediaForItem(targetItemId, resolvedInspectorId, publicUrl, mediaType)
-      } else {
-        console.log('❌ Could not resolve a ContractChecklistItem ID for location:', currentLocation)
+    let handledByTaskFlow = false
+    const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
+
+    if (isTaskFlowMedia && activeTaskId) {
+      try {
+        if (!activeTaskEntryId && activeTaskItemId) {
+          const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined } })
+          activeTaskEntryId = created.id
+          await updateSessionState(phoneNumber, { currentTaskEntryId: activeTaskEntryId })
+        }
+        if (activeTaskEntryId) {
+          await saveMediaToItemEntry(activeTaskEntryId, publicUrl, mediaType)
+          handledByTaskFlow = true
+          await updateSessionState(phoneNumber, { taskFlowStage: 'remarks', currentTaskEntryId: activeTaskEntryId })
+          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nPlease share any remarks for this task, or reply "skip" if there are none.`
+        }
+      } catch (error) {
+        console.error('❌ Failed to save media to task entry, falling back to item storage', error)
       }
-    } else {
-      console.log('⚠️ Skipping database save - missing workOrderId or currentLocation')
     }
 
-    const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
-    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nYou can continue with your inspection or upload more media.`
+    if (!handledByTaskFlow) {
+      if (workOrderId && currentLocation) {
+        console.log('💾 Saving media to database for location:', currentLocation)
+        const targetItemId = await resolveChecklistItemIdForLocation(workOrderId, currentLocation)
+        if (targetItemId) {
+          try { await updateSessionState(phoneNumber, { currentItemId: targetItemId }) } catch {}
+          await saveMediaForItem(targetItemId, resolvedInspectorId, publicUrl, mediaType)
+        } else {
+          console.log('❌ Could not resolve a ContractChecklistItem ID for location:', currentLocation)
+        }
+      } else {
+        console.log('⚠️ Skipping database save - missing workOrderId or currentLocation')
+      }
+
+      const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
+      return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nYou can continue with your inspection or upload more media.`
+    }
+
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.`
   } catch (error) {
     console.error('❌ Error handling WhatsApp media:', error)
     return 'Failed to upload media. Please try again.'
   }
 }
-
