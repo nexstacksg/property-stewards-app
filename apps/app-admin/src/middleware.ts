@@ -15,7 +15,8 @@ export async function middleware(req: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
   const isNextAsset = pathname.startsWith('/_next') || pathname.startsWith('/favicon.ico') || pathname.startsWith('/public')
   const isAuthApi = pathname.startsWith('/api/auth')
-  if (isPublic || isNextAsset || isAuthApi) {
+  const isApiRoute = pathname.startsWith('/api')
+  if (isPublic || isNextAsset || isAuthApi || isApiRoute) {
     return NextResponse.next()
   }
 
