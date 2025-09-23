@@ -80,10 +80,31 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (!workOrder) return JSON.stringify({ success: false, error: 'Job not found' })
         if (sessionId) {
           const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/)
-          const updatedMetadata: Partial<ChatSessionState> = { workOrderId: args.jobId, customerName: workOrder.customer_name, propertyAddress: workOrder.property_address, postalCode: postalCodeMatch ? (postalCodeMatch[1] as string) : 'unknown', jobStatus: 'confirming' }
+          const updatedMetadata: Partial<ChatSessionState> = {
+            workOrderId: args.jobId,
+            customerName: workOrder.customer_name,
+            propertyAddress: workOrder.property_address,
+            postalCode: postalCodeMatch ? (postalCodeMatch[1] as string) : 'unknown',
+            jobStatus: 'confirming'
+          }
           await updateSessionState(sessionId, updatedMetadata)
         }
-        return JSON.stringify({ success: true, jobDetails: { id: args.jobId, property: workOrder.property_address, customer: workOrder.customer_name, time: workOrder.scheduled_start.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }), status: workOrder.status } })
+        return JSON.stringify({
+          success: true,
+          confirmationRequired: true,
+          prompt: 'Please confirm the destination details before starting the inspection.',
+          options: [
+            { value: 'confirm_yes', label: '[1] Yes' },
+            { value: 'confirm_no', label: '[2] No' }
+          ],
+          jobDetails: {
+            id: args.jobId,
+            property: workOrder.property_address,
+            customer: workOrder.customer_name,
+            time: workOrder.scheduled_start.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }),
+            status: workOrder.status
+          }
+        })
       }
       case 'startJob': {
         await updateWorkOrderStatus(args.jobId, 'in_progress')
