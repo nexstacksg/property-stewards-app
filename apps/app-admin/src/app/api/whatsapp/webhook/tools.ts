@@ -53,10 +53,32 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'getLocationMedia', description: 'Get photos and videos for a specific location by selection number or name', parameters: { type: 'object', properties: { locationNumber: { type: 'number' }, locationName: { type: 'string' }, workOrderId: { type: 'string' } }, required: ['workOrderId'] } } }
 ]
 
-export async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string): Promise<string> {
+export async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string, sessionOverride?: ChatSessionState): Promise<string> {
   try {
-    let metadata: ChatSessionState = {}
-    if (sessionId) metadata = await getSessionState(sessionId)
+    let sessionCache: ChatSessionState | null = sessionOverride ? { ...sessionOverride } : null
+    let metadata: ChatSessionState = sessionCache || {}
+    const loadSession = async (): Promise<ChatSessionState> => {
+      if (sessionCache) return sessionCache
+      if (sessionId) {
+        sessionCache = await getSessionState(sessionId)
+        metadata = sessionCache || {}
+        return sessionCache
+      }
+      sessionCache = {} as ChatSessionState
+      metadata = sessionCache
+      return sessionCache
+    }
+    const refreshSession = async (): Promise<ChatSessionState> => {
+      if (!sessionId) return metadata
+      sessionCache = await getSessionState(sessionId)
+      metadata = sessionCache || {}
+      return sessionCache
+    }
+
+    if (!sessionCache && sessionId) {
+      sessionCache = await getSessionState(sessionId)
+      metadata = sessionCache || {}
+    }
 
     switch (toolName) {
       case 'getTodayJobs': {
@@ -111,11 +133,12 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' })
           try {
-            const s = await getSessionState(sessionId)
+            const s = await refreshSession()
             if (!s.inspectorId) {
               const wo = await prisma.workOrder.findUnique({ where: { id: args.jobId }, select: { inspectors: { select: { id: true } } } }) as any
               const derived = wo?.inspectors?.[0]?.id
               if (derived) await updateSessionState(sessionId, { inspectorId: derived })
+              await refreshSession()
             }
           } catch {}
         }
@@ -152,7 +175,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const phase = (args.phase as string | undefined) || 'start'
         const workOrderId = args.workOrderId as string | undefined
         if (!workOrderId) return JSON.stringify({ success: false, error: 'Missing work order context' })
-        const session = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
+        const session = await loadSession()
 
         const mapCondition = (num?: number) => {
           const lookup: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UN_OBSERVABLE' }
@@ -165,7 +188,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (taskId === 'complete_all_tasks') {
             let location = session.currentLocation || ''
             if (!location && sessionId) {
-              const latest = await getSessionState(sessionId)
+              const latest = await refreshSession()
               location = latest.currentLocation || ''
             }
             if (!location) return JSON.stringify({ success: false, error: 'Could not determine current location' })
@@ -230,16 +253,17 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (phase === 'set_condition') {
           const condition = mapCondition(Number(args.conditionNumber))
           if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number. Please use 1-5.' })
-          const taskId = (args.taskId as string | undefined) || session.currentTaskId
-          const taskItemId = session.currentTaskItemId
+          const updatedSession = await loadSession()
+          const taskId = (args.taskId as string | undefined) || updatedSession.currentTaskId
+          const taskItemId = updatedSession.currentTaskItemId
           if (!taskId || !taskItemId) {
             return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
           }
 
-          let inspectorId = session.inspectorId || null
-          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
+          let inspectorId = updatedSession.inspectorId || null
+          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, updatedSession, workOrderId, updatedSession.inspectorPhone || sessionId)
 
-          let entryId = session.currentTaskEntryId || null
+          let entryId = updatedSession.currentTaskEntryId || null
           if (!entryId && inspectorId) {
             const existingEntry = await prisma.itemEntry.findFirst({ where: { taskId, inspectorId } })
             entryId = existingEntry?.id || null
@@ -275,28 +299,29 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         }
 
         if (phase === 'set_remarks') {
-          const taskId = (args.taskId as string | undefined) || session.currentTaskId
-          const taskItemId = session.currentTaskItemId
+          const updatedSession = await loadSession()
+          const taskId = (args.taskId as string | undefined) || updatedSession.currentTaskId
+          const taskItemId = updatedSession.currentTaskItemId
           if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
 
           const remarksRaw = (args.remarks ?? args.notes ?? '') as string
           const remarks = remarksRaw.trim()
           const shouldSkipRemarks = !remarks || remarks.toLowerCase() === 'skip' || remarks.toLowerCase() === 'no'
 
-          let inspectorId = session.inspectorId || null
-          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
+          let inspectorId = updatedSession.inspectorId || null
+          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, updatedSession, workOrderId, updatedSession.inspectorPhone || sessionId)
 
-          let entryId = session.currentTaskEntryId
+          let entryId = updatedSession.currentTaskEntryId
           if (!entryId && inspectorId) {
             const orphan = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, inspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
             if (orphan) {
-              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
+              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId, condition: (updatedSession.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
               entryId = orphan.id
             }
           }
 
           if (!entryId) {
-            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
+            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, condition: (updatedSession.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
             entryId = created.id
           } else if (!shouldSkipRemarks) {
             await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks } })
@@ -312,14 +337,16 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskEntryId: entryId || undefined,
               pendingTaskRemarks: shouldSkipRemarks ? undefined : (remarks || undefined)
             })
+            await refreshSession()
           }
 
           return JSON.stringify({ success: true, taskFlowStage: 'confirm' })
         }
 
         if (phase === 'finalize') {
-          const taskId = (args.taskId as string | undefined) || session.currentTaskId
-          const taskItemId = session.currentTaskItemId
+          const updatedSession = await loadSession()
+          const taskId = (args.taskId as string | undefined) || updatedSession.currentTaskId
+          const taskItemId = updatedSession.currentTaskItemId
           if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
 
           if (typeof args.completed !== 'boolean') {
@@ -328,11 +355,11 @@ export async function executeTool(toolName: string, args: any, threadId?: string
 
           const completed = args.completed
 
-          let inspectorId = session.inspectorId || null
-          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
+          let inspectorId = updatedSession.inspectorId || null
+          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, updatedSession, workOrderId, updatedSession.inspectorPhone || sessionId)
 
-          const condition = session.currentTaskCondition || 'GOOD'
-          const entryId = session.currentTaskEntryId
+          const condition = updatedSession.currentTaskCondition || 'GOOD'
+          const entryId = updatedSession.currentTaskEntryId
 
           let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true } })
           let targetItemId = task?.itemId || taskItemId
@@ -392,6 +419,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskItemId: targetItemId,
               pendingTaskRemarks: undefined
             })
+            await refreshSession()
           }
 
           if (completed) {
@@ -404,7 +432,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })
       }
       case 'setLocationCondition': {
-        const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
+        const s = await loadSession()
         const loc = args.location || (s.currentLocation as string) || ''
         if (!loc) return JSON.stringify({ success: false, error: 'No location in context' })
         const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UN_OBSERVABLE' }
@@ -420,7 +448,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: true, condition, mediaRequired, locationsFormatted })
       }
       case 'addLocationRemarks': {
-        const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
+        const s = await loadSession()
         const inspectorId = (s as any).inspectorId as string
         const itemId = (s as any).currentItemId as string
         if (!inspectorId || !itemId) return JSON.stringify({ success: false, error: 'Missing inspector or item context' })

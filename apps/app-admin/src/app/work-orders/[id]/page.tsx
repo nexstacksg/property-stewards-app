@@ -180,6 +180,11 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               Edit Work Order
             </Button>
           </Link>
+          <Link href={`/api/work-orders/${workOrder.id}/report`} target="_blank">
+            <Button variant="outline">
+              Generate PDF
+            </Button>
+          </Link>
         </div>
       </div>
 
