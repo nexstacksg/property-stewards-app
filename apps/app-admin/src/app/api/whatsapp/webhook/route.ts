@@ -9,7 +9,6 @@ import { executeTool } from './tools'
 
 const DEBUG_WHATSAPP = !['', '0', 'false', 'no'].includes((process.env.DEBUG_WHATSAPP || '').toLowerCase())
 
-// Per-instance idempotency to prevent duplicate responses
 const processedMessages = new Map<string, { timestamp: number; responseId: string; responded: boolean }>()
 
 // Clean up old processed messages every 5 minutes
