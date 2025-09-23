@@ -14,6 +14,7 @@ function normalizeCondition(value: unknown) {
 
 const entryInclude = {
   inspector: { select: { id: true, name: true } },
+  user: { select: { id: true, username: true, email: true } },
   task: {
     select: {
       id: true,

@@ -15,6 +15,7 @@ model User {
   passwordHash String
   role         Role     @default(ADMIN)
   confirmed    Boolean  @default(false)
+  itemEntries  ItemEntry[]
 }
 
 model Customer {
@@ -176,6 +177,7 @@ model ItemEntry {
   id              String   @id @default(cuid())
   itemId          String
   inspectorId     String?
+  userId          String?
   remarks         String?
   includeInReport Boolean @default(false)
   condition       Condition?
@@ -187,10 +189,12 @@ model ItemEntry {
 
   item            ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
+  user            User?                  @relation(fields: [userId], references: [id])
   task            ChecklistTask?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([itemId])
   @@index([inspectorId])
+  @@index([userId])
   @@index([taskId])
 }
 

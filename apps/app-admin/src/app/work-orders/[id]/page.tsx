@@ -40,6 +40,13 @@ async function getWorkOrder(id: string) {
                   contributions: {
                     include: {
                       inspector: true,
+                      user: {
+                        select: {
+                          id: true,
+                          username: true,
+                          email: true
+                        }
+                      },
                       task: {
                         select: {
                           id: true,
