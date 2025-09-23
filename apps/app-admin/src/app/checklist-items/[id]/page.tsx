@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import prisma from '@/lib/prisma'
+import ItemEntriesDialog from '@/components/item-entries-dialog'
 import {
   ArrowLeft,
   Camera,
@@ -33,7 +34,12 @@ async function getChecklistItem(id: string) {
           contract: {
             include: {
               customer: true,
-              address: true
+              address: true,
+              workOrders: {
+                select: {
+                  id: true
+                }
+              }
             }
           }
         }
@@ -42,7 +48,8 @@ async function getChecklistItem(id: string) {
         include: {
           entries: {
             include: {
-              inspector: { select: { id: true, name: true } }
+              inspector: { select: { id: true, name: true } },
+              user: { select: { id: true, username: true, email: true } }
             },
             orderBy: { createdOn: 'asc' }
           }
@@ -52,6 +59,7 @@ async function getChecklistItem(id: string) {
       contributions: {
         include: {
           inspector: { select: { id: true, name: true } },
+          user: { select: { id: true, username: true, email: true } },
           task: {
             select: {
               id: true
@@ -78,8 +86,21 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
   const standaloneEntries = (Array.isArray(checklistItem.contributions) ? checklistItem.contributions : []).filter(
     (entry: any) => !entry.task
   )
+  const allEntries = Array.isArray(checklistItem.contributions) ? checklistItem.contributions : []
   const itemPhotos = Array.isArray(checklistItem.photos) ? checklistItem.photos : []
   const itemVideos = Array.isArray(checklistItem.videos) ? checklistItem.videos : []
+  const dialogTasks = tasks.map((task: any) => ({
+    id: task.id,
+    name: task.name,
+    status: task.status,
+    condition: task.condition,
+    photos: task.photos,
+    videos: task.videos,
+    entries: Array.isArray(task.entries) ? task.entries.map((entry: any) => ({ id: entry.id })) : []
+  }))
+  const primaryWorkOrderId =
+    checklistItem.contractChecklist?.contract?.workOrders?.[0]?.id ?? 'unknown'
+  const remarkButtonLabel = `Add Remarks`
 
   const totalRemarks =
     tasks.reduce(
@@ -123,7 +144,16 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             <p className="text-sm text-muted-foreground">Deep dive into subtasks, remarks, and supporting media.</p>
           </div>
         </div>
-      
+        <div className="flex items-center gap-2">
+          <ItemEntriesDialog
+            itemId={checklistItem.id}
+            workOrderId={primaryWorkOrderId}
+            entries={allEntries}
+            tasks={dialogTasks}
+            itemName={checklistItem.name}
+            triggerLabel={remarkButtonLabel}
+          />
+        </div>
       </div>
 
       <Card className="shadow-sm">
@@ -296,7 +326,7 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                     ) : (
                       <div className="space-y-3">
                         {entries.map((entry: any) => {
-                          const reporter = entry.inspector?.name || 'Admin'
+                          const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || 'Team member'
                           const remarkPhotos = Array.isArray(entry.photos) ? entry.photos : []
                           const remarkVideos = Array.isArray(entry.videos) ? entry.videos : []
                           return (
@@ -304,7 +334,7 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                                 <div className="flex items-center gap-2 text-sm font-medium">
                                   <User className="h-4 w-4" />
-                                  {entry.inspector?.name || 'Admin'}
+                                  {reporter}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs">
                                   {entry.condition && <Badge variant="secondary">Condition: {(entry.condition)}</Badge>}
@@ -373,8 +403,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
               <CardDescription>Remarks attached directly to the checklist item.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {standaloneEntries.map((entry: any) => {
-                const reporter = entry.inspector?.name || 'Admin'
+            {standaloneEntries.map((entry: any) => {
+              const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || 'Team member'
                 const remarkPhotos = Array.isArray(entry.photos) ? entry.photos : []
                 const remarkVideos = Array.isArray(entry.videos) ? entry.videos : []
                 return (
@@ -382,7 +412,7 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                       <div className="flex items-center gap-2 text-sm font-medium">
                         <User className="h-4 w-4" />
-                        {entry.inspector?.name || 'Inspector'}
+                        {reporter}
                       </div>
                       <div className="flex items-center gap-2 text-xs">
                         {entry.includeInReport ? <Badge variant="outline">In report · {reporter}</Badge> : null}

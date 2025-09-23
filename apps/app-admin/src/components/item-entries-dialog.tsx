@@ -39,6 +39,7 @@ type Entry = {
   remarks?: string | null
   includeInReport?: boolean | null
   inspector?: { id: string; name: string } | null
+  user?: { id: string; username?: string | null; email?: string | null } | null
   condition?: string | null
   task?: Task | null
   photos?: string[] | null
@@ -57,6 +58,7 @@ type Props = {
   entries?: Entry[]
   tasks?: Task[]
   itemName?: string
+  triggerLabel?: string | ((count: number) => string)
 }
 
 function formatCondition(value?: string | null) {
@@ -80,6 +82,7 @@ export default function ItemEntriesDialog({
   entries = [],
   tasks = [],
   itemName,
+  triggerLabel,
 }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -289,6 +292,9 @@ export default function ItemEntriesDialog({
 
   const remarkCount = displayEntries.length
   const hasEntries = remarkCount > 0
+  const triggerText = typeof triggerLabel === 'function'
+    ? triggerLabel(remarkCount)
+    : triggerLabel ?? `Remarks (${remarkCount})`
 
   const handleDialogToggle = (nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -301,7 +307,7 @@ export default function ItemEntriesDialog({
     <Dialog open={open} onOpenChange={handleDialogToggle}>
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="relative z-10">
-          Remarks ({remarkCount})
+          {triggerText}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-2xl max-h-[72vh] overflow-auto">
@@ -490,19 +496,19 @@ export default function ItemEntriesDialog({
               {displayEntries.map((entry) => {
                 const task = entry.task
                 const conditionLabel = formatCondition(entry.condition ?? task?.condition)
-                const inspectorName = entry.inspector?.name
-                const mediaContext = task?.name || inspectorName || null
+                const createdBy = entry.inspector?.name || entry.user?.username || entry.user?.email || null
+                const headline = task?.name || createdBy || 'Remark'
+                const mediaContext = task?.name || createdBy || null
                 const mediaLabel = buildMediaLabel(itemName, mediaContext)
+                const showByline = Boolean(createdBy) && headline !== createdBy
 
                 return (
                   <div key={entry.id} className="rounded-md border p-3">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <p className="text-sm font-medium">
-                          {task?.name || inspectorName || "Remark"}
-                        </p>
-                        {inspectorName && task?.name ? (
-                          <p className="text-xs text-muted-foreground mt-0.5">By {inspectorName}</p>
+                        <p className="text-sm font-medium">{headline}</p>
+                        {showByline ? (
+                          <p className="text-xs text-muted-foreground mt-0.5">By {createdBy}</p>
                         ) : null}
                         {conditionLabel ? (
                           <p className="text-xs text-muted-foreground mt-0.5">Condition: {conditionLabel}</p>

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { getAuthSecret } from '@/lib/auth-secret'
+import { verifyJwt } from '@/lib/jwt'
 import { s3Client, BUCKET_NAME, PUBLIC_URL, SPACE_DIRECTORY } from '@/lib/s3-client'
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { randomUUID } from 'crypto'
@@ -124,6 +126,29 @@ export async function POST(
       return NextResponse.json({ error: 'Selected subtask was not found for this checklist item' }, { status: 400 })
     }
 
+    const sessionToken = request.cookies.get('session')?.value
+    let sessionUserId: string | null = null
+    if (sessionToken) {
+      const secret = getAuthSecret()
+      if (secret) {
+        try {
+          const payload = await verifyJwt<{ sub?: string }>(sessionToken, secret)
+          if (payload?.sub) sessionUserId = payload.sub
+        } catch (err) {
+          console.debug('Skipping user link for remark; session verification failed', err)
+        }
+      }
+    }
+
+    let sessionUserExists = false
+    if (sessionUserId) {
+      try {
+        sessionUserExists = Boolean(await prisma.user.findUnique({ where: { id: sessionUserId }, select: { id: true } }))
+      } catch (err) {
+        console.debug('Failed to resolve session user while saving remark', err)
+      }
+    }
+
     const entryData: any = {
       itemId: id,
       taskId: targetTask.id,
@@ -132,6 +157,10 @@ export async function POST(
 
     if (typeof normalizedCondition !== 'undefined') {
       entryData.condition = normalizedCondition ?? null
+    }
+
+    if (sessionUserId && sessionUserExists) {
+      entryData.userId = sessionUserId
     }
 
     const entry = await prisma.itemEntry.create({ data: entryData })
@@ -160,6 +189,7 @@ export async function POST(
       where: { id: entry.id },
       include: {
         inspector: { select: { id: true, name: true } },
+        user: { select: { id: true, username: true, email: true } },
         task: {
           select: {
             id: true,
@@ -210,6 +240,7 @@ export async function PATCH(
       data: updateData,
       include: {
         inspector: { select: { id: true, name: true } },
+        user: { select: { id: true, username: true, email: true } },
         task: {
           select: {
             id: true,

@@ -76,36 +76,51 @@ export async function resolveChecklistItemIdForLocation(workOrderId: string, loc
 // Utility: save media either to per-inspector ItemEntry or fallback to item-level arrays
 export async function saveMediaForItem(itemId: string, inspectorId: string | null, publicUrl: string, mediaType: 'photo' | 'video') {
   if (inspectorId) {
-    const entry = await prisma.itemEntry.upsert({
-      where: { itemId_inspectorId: { itemId, inspectorId } },
-      update: {},
-      create: { itemId, inspectorId }
-    })
-
-    let task = await prisma.checklistTask.findFirst({ where: { itemId, entryId: entry.id } })
-    if (!task) {
-      task = await prisma.checklistTask.create({
-        data: {
-          itemId,
-          entryId: entry.id,
-          inspectorId,
-          name: 'Inspector notes',
-          status: 'PENDING'
-        }
-      })
+    let entry = await prisma.itemEntry.findFirst({ where: { itemId, inspectorId }, select: { id: true, taskId: true } })
+    if (!entry) {
+      const created = await prisma.itemEntry.create({ data: { itemId, inspectorId } })
+      entry = { id: created.id, taskId: created.taskId }
     }
 
-    await prisma.checklistTask.update({
-      where: { id: task.id },
-      data: mediaType === 'photo'
-        ? { photos: { push: publicUrl } }
-        : { videos: { push: publicUrl } }
-    })
-    console.log('✅ Media saved to ChecklistTask for inspector', inspectorId)
+    let taskId = entry.taskId
+    if (!taskId) {
+      const existingTask = await prisma.checklistTask.findFirst({ where: { itemId, inspectorId, name: 'Inspector notes' } })
+      if (existingTask) {
+        taskId = existingTask.id
+      } else {
+        const createdTask = await prisma.checklistTask.create({
+          data: {
+            itemId,
+            inspectorId,
+            name: 'Inspector notes',
+            status: 'PENDING'
+          }
+        })
+        taskId = createdTask.id
+      }
+      if (taskId && entry.taskId !== taskId) {
+        await prisma.itemEntry.update({ where: { id: entry.id }, data: { taskId } })
+      }
+    }
+
+    const entryUpdateData = mediaType === 'photo'
+      ? { photos: { push: publicUrl } }
+      : { videos: { push: publicUrl } }
+    await prisma.itemEntry.update({ where: { id: entry.id }, data: entryUpdateData })
+
+    if (taskId) {
+      await prisma.checklistTask.update({
+        where: { id: taskId },
+        data: mediaType === 'photo'
+          ? { photos: { push: publicUrl } }
+          : { videos: { push: publicUrl } }
+      })
+    }
+    console.log('✅ Media saved to inspector entry/task for inspector', inspectorId)
   } else {
     const item = await prisma.contractChecklistItem.findUnique({
       where: { id: itemId },
-      include: { checklistTasks: { where: { entryId: null }, take: 1 } }
+      include: { checklistTasks: { where: { inspectorId: null }, take: 1 } }
     })
 
     if (!item) {
@@ -130,6 +145,26 @@ export async function saveMediaForItem(itemId: string, inspectorId: string | nul
         : { videos: { push: publicUrl } }
     })
     console.log('✅ Media saved to ChecklistTask (general)')
+  }
+}
+
+// Utility: append media to an existing item entry (per task)
+export async function saveMediaToItemEntry(entryId: string, publicUrl: string, mediaType: 'photo' | 'video') {
+  const entry = await prisma.itemEntry.update({
+    where: { id: entryId },
+    data: mediaType === 'photo'
+      ? { photos: { push: publicUrl } }
+      : { videos: { push: publicUrl } },
+    select: { taskId: true }
+  })
+
+  if (entry.taskId) {
+    await prisma.checklistTask.update({
+      where: { id: entry.taskId },
+      data: mediaType === 'photo'
+        ? { photos: { push: publicUrl } }
+        : { videos: { push: publicUrl } }
+    })
   }
 }
 

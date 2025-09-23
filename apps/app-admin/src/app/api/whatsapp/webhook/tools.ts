@@ -7,7 +7,6 @@ import {
   updateWorkOrderStatus,
   getTasksByLocation,
   getLocationsWithCompletionStatus,
-  updateTaskStatus,
   getInspectorByPhone,
   updateWorkOrderDetails,
   completeAllTasksForLocation,
@@ -15,6 +14,7 @@ import {
   getContractChecklistItemIdByLocation,
   getTaskMedia as getTaskMediaService
 } from '@/lib/services/inspectorService'
+import { resolveInspectorIdForSession } from './utils'
 
 export const assistantTools = [
   {
@@ -27,7 +27,25 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'setLocationCondition', description: 'Set condition for the current location by number (1=Good,2=Fair,3=Unsatisfactory,4=Not Applicable,5=Un-Observable)', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, conditionNumber: { type: 'number' } }, required: ['workOrderId', 'conditionNumber'] } } },
   { type: 'function' as const, function: { name: 'addLocationRemarks', description: 'Save remarks for current location and create/update an ItemEntry for the inspector', parameters: { type: 'object', properties: { remarks: { type: 'string' } }, required: ['remarks'] } } },
   { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
-  { type: 'function' as const, function: { name: 'completeTask', description: 'Mark task as complete', parameters: { type: 'object', properties: { taskId: { type: 'string' }, workOrderId: { type: 'string' }, notes: { type: 'string' } }, required: ['taskId', 'workOrderId'] } } },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'completeTask',
+      description: 'Handle per-task completion workflow (condition → media → remarks)',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string' },
+          workOrderId: { type: 'string' },
+          notes: { type: 'string' },
+          phase: { type: 'string', enum: ['start', 'set_condition', 'skip_media', 'set_remarks'] },
+          conditionNumber: { type: 'number' },
+          remarks: { type: 'string' }
+        },
+        required: ['workOrderId']
+      }
+    }
+  },
   { type: 'function' as const, function: { name: 'updateJobDetails', description: 'Update job details', parameters: { type: 'object', properties: { jobId: { type: 'string' }, updateType: { type: 'string', enum: ['customer', 'address', 'time', 'status'] }, newValue: { type: 'string' } }, required: ['jobId', 'updateType', 'newValue'] } } },
   { type: 'function' as const, function: { name: 'collectInspectorInfo', description: 'Collect and validate inspector name and phone number for identification', parameters: { type: 'object', properties: { name: { type: 'string' }, phone: { type: 'string' } }, required: ['name', 'phone'] } } },
   { type: 'function' as const, function: { name: 'getTaskMedia', description: 'Get photos and videos for a specific task', parameters: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } } },
@@ -92,7 +110,16 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       }
       case 'getTasksForLocation': {
         const { workOrderId, location, contractChecklistItemId } = args
-        if (sessionId) await updateSessionState(sessionId, { currentLocation: location })
+        if (sessionId) {
+          await updateSessionState(sessionId, {
+            currentLocation: location,
+            currentTaskId: undefined,
+            currentTaskName: undefined,
+            currentTaskEntryId: undefined,
+            currentTaskCondition: undefined,
+            taskFlowStage: undefined
+          })
+        }
         const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId) as any[]
         const formattedTasks = tasks.map((task: any, index: number) => ({ id: task.id, number: index + 1, description: task.action || `Check ${location.toLowerCase()} condition`, status: task.status, displayStatus: task.status === 'completed' ? 'done' : 'pending', notes: task.notes || null }))
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
@@ -100,30 +127,163 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: true, location, allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0, tasks: formattedTasks, locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation }, locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null, locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending' })
       }
       case 'completeTask': {
-        const { taskId, notes, workOrderId } = args
-        if (taskId === 'complete_all_tasks') {
-          let location = ''
-          if (sessionId) { const s = await getSessionState(sessionId); location = s.currentLocation || '' }
-          if (!location) return JSON.stringify({ success: false, error: 'Could not determine current location' })
-          const success = await completeAllTasksForLocation(workOrderId, location)
-          let itemIdForSession: string | null = null
-          try { itemIdForSession = await getContractChecklistItemIdByLocation(workOrderId, location) as any } catch {}
-          if (sessionId && itemIdForSession) await updateSessionState(sessionId, { currentItemId: itemIdForSession })
-          if (success) {
-            if (notes) {
-              const workOrder = await prisma.workOrder.findUnique({ where: { id: workOrderId }, include: { contract: { include: { contractChecklist: { include: { items: { where: { name: location } } } } } } } })
-              if ((workOrder as any)?.contract?.contractChecklist?.items[0]) {
-                await prisma.contractChecklistItem.update({ where: { id: (workOrder as any).contract.contractChecklist.items[0].id }, data: { remarks: notes } })
-              }
-            }
-            return JSON.stringify({ success: true, message: `All tasks for ${location} have been marked complete!`, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'Please select the condition for this location: [1] Good, [2] Fair, [3] Unsatisfactory, [4] Not Applicable, [5] Un-Observable. Reply with the number.' })
-          }
-          return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
+        const phase = (args.phase as string | undefined) || 'start'
+        const workOrderId = args.workOrderId as string | undefined
+        if (!workOrderId) return JSON.stringify({ success: false, error: 'Missing work order context' })
+        const session = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
+
+        const mapCondition = (num?: number) => {
+          const lookup: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UN_OBSERVABLE' }
+          return num ? lookup[num] : undefined
         }
-        const success = await updateTaskStatus(taskId, 'completed', notes)
-        if (!success) return JSON.stringify({ success: false, error: 'Failed to complete task. Task may not exist.' })
-        const progress = await getWorkOrderProgress(workOrderId) as any
-        return JSON.stringify({ success: true, message: 'Task marked as complete', taskCompleted: true, notes: notes || 'No additional notes', progress: { total: progress.total_tasks, completed: progress.completed_tasks, remaining: progress.pending_tasks + progress.in_progress_tasks }, nextAction: 'Task completed. Show updated list or select another task.' })
+
+        if (phase === 'start') {
+          const taskId = args.taskId as string | undefined
+          if (!taskId) return JSON.stringify({ success: false, error: 'Missing task identifier' })
+          if (taskId === 'complete_all_tasks') {
+            let location = session.currentLocation || ''
+            if (!location && sessionId) {
+              const latest = await getSessionState(sessionId)
+              location = latest.currentLocation || ''
+            }
+            if (!location) return JSON.stringify({ success: false, error: 'Could not determine current location' })
+            const success = await completeAllTasksForLocation(workOrderId, location)
+            let itemIdForSession: string | null = null
+            try { itemIdForSession = await getContractChecklistItemIdByLocation(workOrderId, location) as any } catch {}
+            if (sessionId && itemIdForSession) await updateSessionState(sessionId, { currentItemId: itemIdForSession, currentTaskId: undefined, currentTaskEntryId: undefined, currentTaskName: undefined, taskFlowStage: undefined, currentTaskCondition: undefined, currentTaskItemId: itemIdForSession })
+            if (success) {
+              const remarks = args.notes as string | undefined
+              if (remarks) {
+                try {
+                  const workOrder = await prisma.workOrder.findUnique({ where: { id: workOrderId }, include: { contract: { include: { contractChecklist: { include: { items: { where: { name: location } } } } } } } })
+                  const itemId = (workOrder as any)?.contract?.contractChecklist?.items?.[0]?.id
+                  if (itemId) await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { remarks } })
+                } catch (error) {
+                  console.error('Failed to save location remarks after complete-all:', error)
+                }
+              }
+              return JSON.stringify({ success: true, message: `All tasks for ${location} have been marked complete!`, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'Location completed. You can move on to another location.' })
+            }
+            return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
+          }
+
+          const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, name: true, itemId: true } })
+          let taskName = task?.name
+          let taskItemId = task?.itemId
+
+          if (!task) {
+            const item = await prisma.contractChecklistItem.findUnique({ where: { id: taskId }, select: { id: true, name: true } })
+            if (!item) return JSON.stringify({ success: false, error: 'Task not found' })
+            taskName = item.name
+            taskItemId = item.id
+          }
+
+          if (sessionId) {
+            await updateSessionState(sessionId, {
+              currentTaskId: taskId,
+              currentTaskName: taskName,
+              currentTaskItemId: taskItemId,
+              currentTaskEntryId: undefined,
+              currentTaskCondition: undefined,
+              taskFlowStage: 'condition'
+            })
+          }
+
+          return JSON.stringify({
+            success: true,
+            taskFlowStage: 'condition',
+            taskName,
+            message: `Please ask the inspector to provide the condition for "${taskName}". They should reply with a number:\n[1] Good\n[2] Fair\n[3] Unsatisfactory\n[4] Not Applicable\n[5] Un-Observable`
+          })
+        }
+
+        if (phase === 'set_condition') {
+          const condition = mapCondition(Number(args.conditionNumber))
+          if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number. Please use 1-5.' })
+          const taskId = (args.taskId as string | undefined) || session.currentTaskId
+          const taskItemId = session.currentTaskItemId
+          if (!taskId || !taskItemId) {
+            return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
+          }
+
+          let inspectorId = session.inspectorId || null
+          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
+
+          let entry = await prisma.itemEntry.findFirst({ where: { taskId, inspectorId: inspectorId || undefined } })
+          if (!entry) {
+            entry = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, condition: condition as any } })
+          } else {
+            entry = await prisma.itemEntry.update({ where: { id: entry.id }, data: { condition: condition as any } })
+          }
+
+          if (sessionId) {
+            await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskCondition: condition, taskFlowStage: 'media' })
+          }
+
+          return JSON.stringify({
+            success: true,
+            taskFlowStage: 'media',
+            message: `Condition recorded as ${condition.replace('_', ' ').toLowerCase()}. Ask the inspector to upload photos or videos for "${session.currentTaskName || 'this task'}". They can reply with media or type "skip" if there are none.`
+          })
+        }
+
+        if (phase === 'skip_media') {
+          if (sessionId) await updateSessionState(sessionId, { taskFlowStage: 'remarks' })
+          return JSON.stringify({ success: true, taskFlowStage: 'remarks', message: 'No media will be uploaded. Please collect remarks for this task or allow the inspector to reply with "skip".' })
+        }
+
+        if (phase === 'set_remarks') {
+          const taskId = (args.taskId as string | undefined) || session.currentTaskId
+          const taskItemId = session.currentTaskItemId
+          if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
+
+          const remarksRaw = (args.remarks ?? args.notes ?? '') as string
+          const remarks = remarksRaw.trim()
+          const shouldSkipRemarks = !remarks || remarks.toLowerCase() === 'skip' || remarks.toLowerCase() === 'no'
+
+          let inspectorId = session.inspectorId || null
+          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
+
+          let entryId = session.currentTaskEntryId
+          if (!entryId) {
+            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
+            entryId = created.id
+          } else if (!shouldSkipRemarks) {
+            await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks } })
+          }
+
+          if (shouldSkipRemarks && entryId && remarks) {
+            await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: null } })
+          }
+
+          const condition = session.currentTaskCondition || 'GOOD'
+          const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true } })
+          const targetItemId = task?.itemId || taskItemId
+
+          if (task) {
+            await prisma.checklistTask.update({ where: { id: taskId }, data: { status: 'COMPLETED', condition: condition as any, updatedOn: new Date(), inspectorId: inspectorId || task.inspectorId } })
+          } else {
+            await prisma.contractChecklistItem.update({ where: { id: taskId }, data: { status: 'COMPLETED', condition: condition as any, enteredOn: new Date(), enteredById: inspectorId || undefined } })
+          }
+
+          const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
+          await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: remaining === 0 ? 'COMPLETED' : 'PENDING', enteredOn: remaining === 0 ? new Date() : null } })
+
+          if (sessionId) {
+            await updateSessionState(sessionId, {
+              taskFlowStage: undefined,
+              currentTaskId: undefined,
+              currentTaskName: undefined,
+              currentTaskEntryId: entryId || undefined,
+              currentTaskCondition: undefined,
+              currentTaskItemId: targetItemId
+            })
+          }
+
+          return JSON.stringify({ success: true, taskCompleted: true, message: 'Task marked as complete. Show the updated task list and allow the inspector to continue.' })
+        }
+
+        return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })
       }
       case 'setLocationCondition': {
         const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
