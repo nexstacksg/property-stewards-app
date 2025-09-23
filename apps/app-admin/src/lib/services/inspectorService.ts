@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetLargeArray, cacheDel } from '@/lib/memcache'
+import { cacheDel, cacheGetJSON, cacheGetLargeArray, cacheSetJSON } from '@/lib/memcache'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -45,6 +45,20 @@ class SimpleCache<T> {
 const inspectorCache = new SimpleCache(300) // 5 minutes for inspector data
 const workOrderCache = new SimpleCache(60) // 1 minute for work orders
 const locationCache = new SimpleCache(120) // 2 minutes for locations
+
+const TASKS_CACHE_TTL = Number(process.env.TASKS_CACHE_TTL ?? 60)
+
+const normalizeLocationName = (value: string) => value.toLowerCase().replace(/\s+/g, '_')
+
+const tasksCacheKeyById = (workOrderId: string, contractChecklistItemId: string) => `mc:tasks:${workOrderId}:id:${contractChecklistItemId}`
+const tasksCacheKeyByLocation = (workOrderId: string, location: string) => `mc:tasks:${workOrderId}:loc:${normalizeLocationName(location)}`
+
+export async function invalidateTasksCache(workOrderId: string, options: { contractChecklistItemId?: string | null; location?: string | null } = {}) {
+  const keys: string[] = []
+  if (options.contractChecklistItemId) keys.push(tasksCacheKeyById(workOrderId, options.contractChecklistItemId))
+  if (options.location) keys.push(tasksCacheKeyByLocation(workOrderId, options.location))
+  await Promise.all(keys.map(key => cacheDel(key).catch(() => false)))
+}
 
 // Debug helper; set INSPECTOR_DEBUG=0 to silence
 function debugLog(...args: any[]) {
@@ -364,6 +378,17 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
 export async function getTasksByLocation(workOrderId: string, location: string, contractChecklistItemId?: string) {
   try {
+    const cacheKeyId = contractChecklistItemId ? tasksCacheKeyById(workOrderId, contractChecklistItemId) : null
+    const cacheKeyLocation = location ? tasksCacheKeyByLocation(workOrderId, location) : null
+
+    if (cacheKeyId) {
+      const cached = await cacheGetJSON<any[]>(cacheKeyId)
+      if (cached) return cached
+    } else if (cacheKeyLocation) {
+      const cached = await cacheGetJSON<any[]>(cacheKeyLocation)
+      if (cached) return cached
+    }
+
     const item = await prisma.contractChecklistItem.findFirst({
       where: {
         OR: [
@@ -380,6 +405,7 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
         id: true,
         name: true,
         remarks: true,
+        condition: true,
         photos: true,
         videos: true,
         status: true,
@@ -392,6 +418,7 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
             name: true,
             status: true,
             inspectorId: true,
+            condition: true,
             photos: true,
             videos: true,
             updatedOn: true,
@@ -409,8 +436,9 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
     if (!item) return []
 
     const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+    let mappedTasks: any[]
     if (tasks.length === 0) {
-      return [{
+      mappedTasks = [{
         id: item.id,
         location: item.name,
         action: item.remarks || 'Inspect area',
@@ -423,22 +451,32 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
         isSubTask: false,
         locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
       }]
+    } else {
+      mappedTasks = tasks.map((task: any, index: number) => ({
+        id: task.id,
+        location: item.name,
+        action: task.name || `Task ${index + 1}`,
+        status: task.status === 'COMPLETED' ? 'completed' : 'pending',
+        notes: (task.entries?.[0]?.remarks as string | undefined) || item.remarks || null,
+        photos: task.photos ?? [],
+        videos: task.videos ?? [],
+        completed_at: task.updatedOn,
+        completed_by: task.inspectorId,
+        isSubTask: true,
+        taskIndex: index,
+        locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending',
+        condition: task.condition || item.condition || null
+      }))
     }
 
-    return tasks.map((task: any, index: number) => ({
-      id: task.id,
-      location: item.name,
-      action: task.name || `Task ${index + 1}`,
-      status: task.status === 'COMPLETED' ? 'completed' : 'pending',
-      notes: (task.entries?.[0]?.remarks as string | undefined) || item.remarks || null,
-      photos: task.photos ?? [],
-      videos: task.videos ?? [],
-      completed_at: task.updatedOn,
-      completed_by: task.inspectorId,
-      isSubTask: true,
-      taskIndex: index,
-      locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
-    }))
+    if (cacheKeyId) {
+      await cacheSetJSON(cacheKeyId, mappedTasks, { ttlSeconds: TASKS_CACHE_TTL })
+    }
+    if (cacheKeyLocation) {
+      await cacheSetJSON(cacheKeyLocation, mappedTasks, { ttlSeconds: TASKS_CACHE_TTL })
+    }
+
+    return mappedTasks
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
     return []

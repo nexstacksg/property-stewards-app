@@ -12,7 +12,8 @@ import {
   completeAllTasksForLocation,
   getWorkOrderProgress,
   getContractChecklistItemIdByLocation,
-  getTaskMedia as getTaskMediaService
+  getTaskMedia as getTaskMediaService,
+  invalidateTasksCache
 } from '@/lib/services/inspectorService'
 import { resolveInspectorIdForSession } from './utils'
 
@@ -163,6 +164,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
                   console.error('Failed to save location remarks after complete-all:', error)
                 }
               }
+              await invalidateTasksCache(workOrderId, { contractChecklistItemId: itemIdForSession, location: session.currentLocation || location })
               return JSON.stringify({ success: true, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'location_completed' })
             }
             return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
@@ -241,6 +243,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             console.error('Failed to persist checklist task condition', error)
           }
 
+          await invalidateTasksCache(workOrderId, { contractChecklistItemId: taskId, location: session.currentLocation || null })
+
           if (sessionId) {
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: 'media' })
           }
@@ -285,6 +289,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: null } })
           }
 
+          await invalidateTasksCache(workOrderId, { contractChecklistItemId: taskId, location: session.currentLocation || null })
+
           if (sessionId) {
             await updateSessionState(sessionId, {
               taskFlowStage: 'confirm',
@@ -313,53 +319,57 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const condition = session.currentTaskCondition || 'GOOD'
           const entryId = session.currentTaskEntryId
 
-          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true } })
-          let targetItemId = task?.itemId || taskItemId
+          const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true } })
+          const targetItemId = task?.itemId || taskItemId
 
-          if (task) {
-            await prisma.checklistTask.update({
-              where: { id: taskId },
-              data: {
-                status: completed ? 'COMPLETED' : 'PENDING',
-                condition: condition as any,
-                inspectorId: inspectorId || task.inspectorId,
-                updatedOn: new Date()
-              }
-            })
-          } else {
-            await prisma.contractChecklistItem.update({
-              where: { id: taskId },
-              data: {
-                status: completed ? 'COMPLETED' : 'PENDING',
-                condition: condition as any,
-                enteredOn: completed ? new Date() : null,
-                enteredById: inspectorId || undefined
-              }
-            })
-          }
+          await prisma.$transaction(async tx => {
+            if (task) {
+              await tx.checklistTask.update({
+                where: { id: taskId },
+                data: {
+                  status: completed ? 'COMPLETED' : 'PENDING',
+                  condition: condition as any,
+                  inspectorId: inspectorId || task.inspectorId,
+                  updatedOn: new Date()
+                }
+              })
+            } else {
+              await tx.contractChecklistItem.update({
+                where: { id: taskId },
+                data: {
+                  status: completed ? 'COMPLETED' : 'PENDING',
+                  condition: condition as any,
+                  enteredOn: completed ? new Date() : null,
+                  enteredById: inspectorId || undefined
+                }
+              })
+            }
 
-          if (completed) {
-            const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
-            await prisma.contractChecklistItem.update({
-              where: { id: targetItemId },
-              data: {
-                status: remaining === 0 ? 'COMPLETED' : 'PENDING',
-                enteredOn: remaining === 0 ? new Date() : null
-              }
-            })
-          } else {
-            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: 'PENDING' } })
-          }
+            if (completed) {
+              const remaining = await tx.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
+              await tx.contractChecklistItem.update({
+                where: { id: targetItemId },
+                data: {
+                  status: remaining === 0 ? 'COMPLETED' : 'PENDING',
+                  enteredOn: remaining === 0 ? new Date() : null
+                }
+              })
+            } else {
+              await tx.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: 'PENDING', enteredOn: null } })
+            }
 
-          if (entryId) {
-            await prisma.itemEntry.update({
-              where: { id: entryId },
-              data: {
-                condition: condition as any,
-                inspectorId: inspectorId || undefined
-              }
-            })
-          }
+            if (entryId) {
+              await tx.itemEntry.update({
+                where: { id: entryId },
+                data: {
+                  condition: condition as any,
+                  inspectorId: inspectorId || undefined
+                }
+              })
+            }
+          })
+
+          await invalidateTasksCache(workOrderId, { contractChecklistItemId: targetItemId, location: session.currentLocation || null })
 
           if (sessionId) {
             await updateSessionState(sessionId, {
@@ -393,6 +403,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (!itemId) itemId = (await getContractChecklistItemIdByLocation(args.workOrderId, loc)) as any
         if (!itemId) return JSON.stringify({ success: false, error: 'Unable to resolve checklist item' })
         await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { condition: condition as any, status: 'COMPLETED' } })
+        await invalidateTasksCache(args.workOrderId, { contractChecklistItemId: itemId, location: loc })
         const mediaRequired = !(condition === 'GOOD' || condition === 'UN_OBSERVABLE')
         const locs2 = await getLocationsWithCompletionStatus(args.workOrderId) as any[]
         const locationsFormatted = locs2.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
@@ -405,6 +416,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (!inspectorId || !itemId) return JSON.stringify({ success: false, error: 'Missing inspector or item context' })
         const entry = await prisma.itemEntry.create({ data: { itemId, inspectorId, remarks: args.remarks } })
         const workOrderId = (s as any).workOrderId as string
+        if (workOrderId) {
+          await invalidateTasksCache(workOrderId, { contractChecklistItemId: itemId, location: (s as any).currentLocation || null })
+        }
         const locs3 = workOrderId ? (await getLocationsWithCompletionStatus(workOrderId)) as any[] : []
         const locationsFormatted = locs3.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, entryId: entry.id, locationsFormatted })
