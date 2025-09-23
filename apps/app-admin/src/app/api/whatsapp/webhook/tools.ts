@@ -188,6 +188,19 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskCondition: undefined,
               taskFlowStage: 'condition'
             })
+
+            try {
+              const inspectorForEntry = session.inspectorId
+              if (taskItemId && inspectorForEntry && task?.id) {
+                const orphan = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, inspectorId: inspectorForEntry, taskId: null }, orderBy: { createdOn: 'desc' } })
+                if (orphan) {
+                  await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: task.id } })
+                  await updateSessionState(sessionId, { currentTaskEntryId: orphan.id })
+                }
+              }
+            } catch (error) {
+              console.error('Failed to link existing item entry to task', error)
+            }
           }
 
           return JSON.stringify({ success: true, taskFlowStage: 'condition', taskName })
@@ -209,6 +222,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!entryId && inspectorId) {
             const existingEntry = await prisma.itemEntry.findFirst({ where: { taskId, inspectorId } })
             entryId = existingEntry?.id || null
+          }
+          if (!entryId && inspectorId && taskItemId) {
+            const orphan = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, inspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
+            if (orphan) {
+              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId } })
+              entryId = orphan.id
+            }
           }
 
           if (entryId) {
@@ -240,6 +260,14 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
 
           let entryId = session.currentTaskEntryId
+          if (!entryId && inspectorId) {
+            const orphan = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, inspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
+            if (orphan) {
+              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
+              entryId = orphan.id
+            }
+          }
+
           if (!entryId) {
             const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
             entryId = created.id

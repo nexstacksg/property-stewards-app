@@ -107,8 +107,17 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     if (isTaskFlowMedia && activeTaskId) {
       try {
         if (!activeTaskEntryId && activeTaskItemId) {
-          const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined } })
-          activeTaskEntryId = created.id
+          if (resolvedInspectorId) {
+            const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
+            if (orphan) {
+              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, condition: (metadata.currentTaskCondition as any) || undefined } })
+              activeTaskEntryId = orphan.id
+            }
+          }
+          if (!activeTaskEntryId) {
+            const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined } })
+            activeTaskEntryId = created.id
+          }
           await updateSessionState(phoneNumber, { currentTaskEntryId: activeTaskEntryId })
         }
         if (activeTaskEntryId) {
