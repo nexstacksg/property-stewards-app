@@ -100,6 +100,21 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const publicUrl = `${PUBLIC_URL}/${key}`
     console.log('✅ Uploaded to DigitalOcean Spaces:', publicUrl)
 
+    // Possible remarks bundled with the media
+    const rawRemarkCandidates: unknown[] = [
+      data.caption,
+      data.text,
+      data.body,
+      data.message?.text?.body,
+      data.message?.caption,
+      data.message?.imageMessage?.caption,
+      data.message?.imageMessage?.text,
+      data.media?.caption,
+      data.media?.text
+    ]
+    const mediaRemarkRaw = rawRemarkCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
+    const mediaRemark = mediaRemarkRaw.trim()
+
     // Save to DB
     let handledByTaskFlow = false
     const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
@@ -110,20 +125,31 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
           if (resolvedInspectorId) {
             const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
             if (orphan) {
-              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, condition: (metadata.currentTaskCondition as any) || undefined } })
+              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
               activeTaskEntryId = orphan.id
             }
           }
           if (!activeTaskEntryId) {
-            const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined } })
+            const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
             activeTaskEntryId = created.id
           }
           await updateSessionState(phoneNumber, { currentTaskEntryId: activeTaskEntryId })
         }
         if (activeTaskEntryId) {
           await saveMediaToItemEntry(activeTaskEntryId, publicUrl, mediaType)
+          if (mediaRemark) {
+            try {
+              await prisma.itemEntry.update({ where: { id: activeTaskEntryId }, data: { remarks: mediaRemark } })
+            } catch (error) {
+              console.error('❌ Failed to attach bundled remarks to item entry', error)
+            }
+          }
           handledByTaskFlow = true
-          await updateSessionState(phoneNumber, { taskFlowStage: 'remarks', currentTaskEntryId: activeTaskEntryId })
+          if (mediaRemark) {
+            await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: mediaRemark })
+            return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nIs this task complete now? Reply [1] Yes or [2] No.`
+          }
+          await updateSessionState(phoneNumber, { taskFlowStage: 'remarks', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: undefined })
           return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nPlease share any remarks for this task, or reply "skip" if there are none.`
         }
       } catch (error) {
