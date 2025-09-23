@@ -28,6 +28,7 @@ export type ChatSessionState = {
   currentTaskEntryId?: string
   currentTaskCondition?: string
   taskFlowStage?: 'condition' | 'media' | 'remarks' | 'confirm'
+  pendingTaskRemarks?: string | null
 
   // assistant/thread context
   threadId?: string

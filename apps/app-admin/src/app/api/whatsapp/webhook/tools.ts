@@ -235,6 +235,12 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             await prisma.itemEntry.update({ where: { id: entryId }, data: { condition: condition as any, inspectorId: inspectorId || undefined } })
           }
 
+          try {
+            await prisma.checklistTask.update({ where: { id: taskId }, data: { condition: condition as any } })
+          } catch (error) {
+            console.error('Failed to persist checklist task condition', error)
+          }
+
           if (sessionId) {
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: 'media' })
           }
@@ -282,7 +288,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (sessionId) {
             await updateSessionState(sessionId, {
               taskFlowStage: 'confirm',
-              currentTaskEntryId: entryId || undefined
+              currentTaskEntryId: entryId || undefined,
+              pendingTaskRemarks: shouldSkipRemarks ? undefined : (remarks || undefined)
             })
           }
 
@@ -361,7 +368,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskName: undefined,
               currentTaskEntryId: entryId || undefined,
               currentTaskCondition: undefined,
-              currentTaskItemId: targetItemId
+              currentTaskItemId: targetItemId,
+              pendingTaskRemarks: undefined
             })
           }
 
