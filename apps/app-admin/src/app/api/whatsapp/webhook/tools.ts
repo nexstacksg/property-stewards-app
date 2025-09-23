@@ -249,8 +249,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         }
 
         if (phase === 'skip_media') {
-          if (sessionId) await updateSessionState(sessionId, { taskFlowStage: 'remarks' })
-          return JSON.stringify({ success: true, taskFlowStage: 'remarks', mediaSkipped: true })
+          if (sessionId) await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
+          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true })
         }
 
         if (phase === 'set_remarks') {
