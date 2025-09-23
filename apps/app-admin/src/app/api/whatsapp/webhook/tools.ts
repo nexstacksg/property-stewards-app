@@ -38,9 +38,10 @@ export const assistantTools = [
           taskId: { type: 'string' },
           workOrderId: { type: 'string' },
           notes: { type: 'string' },
-          phase: { type: 'string', enum: ['start', 'set_condition', 'skip_media', 'set_remarks'] },
+          phase: { type: 'string', enum: ['start', 'set_condition', 'skip_media', 'set_remarks', 'finalize'] },
           conditionNumber: { type: 'number' },
-          remarks: { type: 'string' }
+          remarks: { type: 'string' },
+          completed: { type: 'boolean' }
         },
         required: ['workOrderId']
       }
@@ -256,18 +257,84 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: null } })
           }
 
-          const condition = session.currentTaskCondition || 'GOOD'
-          const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true } })
-          const targetItemId = task?.itemId || taskItemId
-
-          if (task) {
-            await prisma.checklistTask.update({ where: { id: taskId }, data: { status: 'COMPLETED', condition: condition as any, updatedOn: new Date(), inspectorId: inspectorId || task.inspectorId } })
-          } else {
-            await prisma.contractChecklistItem.update({ where: { id: taskId }, data: { status: 'COMPLETED', condition: condition as any, enteredOn: new Date(), enteredById: inspectorId || undefined } })
+          if (sessionId) {
+            await updateSessionState(sessionId, {
+              taskFlowStage: 'confirm',
+              currentTaskEntryId: entryId || undefined
+            })
           }
 
-          const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
-          await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: remaining === 0 ? 'COMPLETED' : 'PENDING', enteredOn: remaining === 0 ? new Date() : null } })
+          return JSON.stringify({
+            success: true,
+            taskFlowStage: 'confirm',
+            message: 'Ask the inspector if this task is now complete. If they reply with "yes" (or 1), call completeTask with phase "finalize" and completed=true. If they say "no" (or 2), call completeTask with phase "finalize" and completed=false.'
+          })
+        }
+
+        if (phase === 'finalize') {
+          const taskId = (args.taskId as string | undefined) || session.currentTaskId
+          const taskItemId = session.currentTaskItemId
+          if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
+
+          if (typeof args.completed !== 'boolean') {
+            return JSON.stringify({ success: false, error: 'Missing completion decision. Provide completed=true or completed=false.' })
+          }
+
+          const completed = args.completed
+
+          let inspectorId = session.inspectorId || null
+          if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
+
+          const condition = session.currentTaskCondition || 'GOOD'
+          const entryId = session.currentTaskEntryId
+
+          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true } })
+          let targetItemId = task?.itemId || taskItemId
+
+          if (task) {
+            await prisma.checklistTask.update({
+              where: { id: taskId },
+              data: {
+                status: completed ? 'COMPLETED' : 'PENDING',
+                condition: condition as any,
+                inspectorId: inspectorId || task.inspectorId,
+                updatedOn: new Date()
+              }
+            })
+          } else {
+            await prisma.contractChecklistItem.update({
+              where: { id: taskId },
+              data: {
+                status: completed ? 'COMPLETED' : 'PENDING',
+                condition: condition as any,
+                enteredOn: completed ? new Date() : null,
+                enteredById: inspectorId || undefined
+              }
+            })
+          }
+
+          if (completed) {
+            const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
+            await prisma.contractChecklistItem.update({
+              where: { id: targetItemId },
+              data: {
+                status: remaining === 0 ? 'COMPLETED' : 'PENDING',
+                enteredOn: remaining === 0 ? new Date() : null
+              }
+            })
+          } else {
+            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: 'PENDING' } })
+          }
+
+          if (entryId) {
+            await prisma.itemEntry.update({
+              where: { id: entryId },
+              data: {
+                condition: condition as any,
+                inspectorId: inspectorId || undefined
+              }
+            })
+          }
 
           if (sessionId) {
             await updateSessionState(sessionId, {
@@ -280,7 +347,11 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             })
           }
 
-          return JSON.stringify({ success: true, taskCompleted: true, message: 'Task marked as complete. Show the updated task list and allow the inspector to continue.' })
+          if (completed) {
+            return JSON.stringify({ success: true, taskCompleted: true, message: 'Task marked as complete. Refresh the task list so the inspector can continue.' })
+          }
+
+          return JSON.stringify({ success: true, taskCompleted: false, message: 'Task left as pending. Ask what the inspector would like to do next or show the task list again.' })
         }
 
         return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })

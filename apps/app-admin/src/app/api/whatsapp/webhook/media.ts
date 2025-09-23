@@ -38,7 +38,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     // Extract media URL
     let mediaUrl: string | undefined
     let mediaType: 'photo' | 'video' = 'photo'
-    const mediaDownloadPath = data.media?.file?.download
+    const mediaDownloadPath = data.media?.file?.download || data.media?.links?.download || data.links?.download
 
     if (data.type === 'image' || data.message?.imageMessage?.url) {
       mediaUrl = data.url || data.message?.imageMessage?.url
@@ -56,6 +56,9 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       mediaUrl = data.fileUrl
       mediaType = (data.mimetype || data.mimeType)?.startsWith('video/') ? 'video' : 'photo'
       console.log('📎 Found media in data.fileUrl:', { url: mediaUrl, mimetype: data.mimetype || data.mimeType })
+    } else if (mediaDownloadPath && data.media?.mime) {
+      mediaType = data.media.mime.startsWith('video/') ? 'video' : 'photo'
+      console.log('📎 Media type inferred from mime:', { mime: data.media.mime, mediaType })
     }
 
     let response: Response
@@ -63,7 +66,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       response = await fetch(mediaUrl, { method: 'GET', headers: { 'User-Agent': 'Property-Stewards-Bot/1.0', 'Accept': 'image/*,video/*,*/*' } })
     } else if (mediaDownloadPath) {
       const base = process.env.WASSENGER_API_BASE || 'https://api.wassenger.com'
-      const downloadUrl = `${base}${mediaDownloadPath}`
+      const downloadUrl = mediaDownloadPath.startsWith('http') ? mediaDownloadPath : `${base}${mediaDownloadPath}`
       console.log('📎 Using Wassenger download endpoint:', downloadUrl)
       response = await fetch(downloadUrl, { method: 'GET', headers: { Token: process.env.WASSENGER_API_KEY || '', Accept: 'image/*,video/*,*/*', 'User-Agent': 'Property-Stewards-Bot/1.0' } })
     } else {
