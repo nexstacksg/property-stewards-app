@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { PropertyType } from '@prisma/client'
 
 // GET /api/checklists - Get all checklist templates
 export async function GET() {
@@ -42,9 +43,20 @@ export async function POST(request: NextRequest) {
     } = body
 
     // Validate required fields
-    if (!name || !propertyType || !items || items.length === 0) {
+    if (!name || !propertyType || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
         { error: 'Missing required fields' },
+        { status: 400 }
+      )
+    }
+
+    const normalizedPropertyType = typeof propertyType === 'string'
+      ? propertyType.trim().toUpperCase().replace(/\s+/g, '_')
+      : propertyType
+
+    if (!normalizedPropertyType || !Object.values(PropertyType).includes(normalizedPropertyType as PropertyType)) {
+      return NextResponse.json(
+        { error: 'Invalid propertyType value' },
         { status: 400 }
       )
     }
@@ -73,7 +85,7 @@ export async function POST(request: NextRequest) {
     const checklist = await prisma.checklist.create({
       data: {
         name,
-        propertyType,
+        propertyType: normalizedPropertyType as PropertyType,
         remarks,
         items: {
           create: validItems.map((item: any, index: number) => ({

@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { parseActionIntoTasks } from '@/lib/utils/taskParser'
 
+function toChecklistTaskPayload(action: string | undefined) {
+  const parsed = parseActionIntoTasks(action ?? '')
+  return parsed.length > 0
+    ? parsed.map(task => ({
+        name: task.task,
+        status: task.status === 'done' ? 'COMPLETED' : 'PENDING',
+      }))
+    : []
+}
+
 // POST /api/contracts/[id]/checklist - Add a checklist to a contract
 export async function POST(
   request: NextRequest,
@@ -72,15 +82,20 @@ export async function POST(
       }
 
       if (sourceItems.length > 0) {
-        await tx.contractChecklistItem.createMany({
-          data: sourceItems.map((item, index) => ({
-            contractChecklistId: checklist.id,
-            name: item.name,
-            order: item.order ?? index + 1,
-            remarks: item.action ?? '',
-            tasks: parseActionIntoTasks(item.action ?? '')
-          }))
-        })
+        for (const [index, item] of sourceItems.entries()) {
+          const tasks = toChecklistTaskPayload(item.action)
+          await tx.contractChecklistItem.create({
+            data: {
+              contractChecklistId: checklist.id,
+              name: item.name,
+              order: item.order ?? index + 1,
+              remarks: item.action ?? '',
+              checklistTasks: tasks.length > 0 ? {
+                create: tasks
+              } : undefined
+            }
+          })
+        }
       }
 
       return await tx.contractChecklist.findUnique({
@@ -91,7 +106,7 @@ export async function POST(
           }
         }
       })
-    })
+    }, { timeout: 15000, maxWait: 10000 })
 
     return NextResponse.json(contractChecklist, { status: 201 })
   } catch (error) {
@@ -134,22 +149,27 @@ export async function PUT(
       // Replace items if provided
       if (items && items.length > 0) {
         await tx.contractChecklistItem.deleteMany({ where: { contractChecklistId: checklist.id } })
-        await tx.contractChecklistItem.createMany({
-          data: items.map((item, index) => ({
-            contractChecklistId: checklist!.id,
-            name: item.name,
-            order: item.order ?? index + 1,
-            remarks: item.action ?? '',
-            tasks: parseActionIntoTasks(item.action ?? '')
-          }))
-        })
+        for (const [index, item] of items.entries()) {
+          const tasks = toChecklistTaskPayload(item.action)
+          await tx.contractChecklistItem.create({
+            data: {
+              contractChecklistId: checklist!.id,
+              name: item.name,
+              order: item.order ?? index + 1,
+              remarks: item.action ?? '',
+              checklistTasks: tasks.length > 0 ? {
+                create: tasks
+              } : undefined
+            }
+          })
+        }
       }
 
       return await tx.contractChecklist.findUnique({
         where: { id: checklist.id },
         include: { items: { orderBy: { order: 'asc' } } }
       })
-    })
+    }, { timeout: 15000, maxWait: 10000 })
 
     return NextResponse.json(updatedChecklist)
   } catch (error) {
