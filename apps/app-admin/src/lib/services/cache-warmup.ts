@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetJSON, cacheSetJSON, cacheSetLargeArray, getMemcacheClient } from '@/lib/memcache'
+import { cacheDel, cacheGetJSON, cacheSetJSON, cacheSetLargeArray, getMemcacheClient } from '@/lib/memcache'
 
 type WarmupResult = {
   ok: boolean
@@ -267,7 +267,16 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     results.contractChecklistItems = { ok: false, skipped: false, message: `Failed: ${(e as Error).message}` }
   }
 
+  // Clear assistant cache so a new assistant picks up latest instructions
+  try {
+    await cacheDel('assistant:id')
+    await cacheDel('assistant:meta')
+    results.assistant = { ok: true, skipped: false, message: 'Cleared assistant cache; next request will recreate assistant' }
+  } catch (e) {
+    results.assistant = { ok: false, skipped: false, message: `Failed to clear assistant cache: ${(e as Error).message}` }
+  }
 
+  
   // Write a manifest with counts and updatedAt
   try {
     await delKeys('mc:manifest:all')
