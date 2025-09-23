@@ -82,10 +82,12 @@ CONVERSATION FLOW GUIDELINES:
      [5] Kitchen
      
      Please select a location to continue the inspection."
-   - If user selects a completed location:
+   - If user selects a completed location (check locationStatus === 'done' or allTasksCompleted === true from getTasksForLocation result):
      * Inform them: "This location has already been completed!"
      * Suggest: "Please select another location that needs inspection"
-     * Show list of pending locations
+     * Refresh the location list by calling getJobLocations again and re-list ONLY the pending ones in numbered format, e.g.:
+       "Pending locations:\n[2] Master Bedroom\n[4] Kitchen"
+     * If no pending locations remain, say so clearly and shift to end-of-job wrap up
    - Guide through task completion workflow
 
 5. Task Inspection Flow:
