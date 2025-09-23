@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetLargeArray, cacheDel } from '@/lib/memcache'
+import { cacheGetLargeArray, cacheDel, cacheSetLargeArray } from '@/lib/memcache'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -45,6 +45,8 @@ class SimpleCache<T> {
 const inspectorCache = new SimpleCache(300) // 5 minutes for inspector data
 const workOrderCache = new SimpleCache(60) // 1 minute for work orders
 const locationCache = new SimpleCache(120) // 2 minutes for locations
+
+const DEFAULT_TTL_SECONDS = Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
 
 // Debug helper; set INSPECTOR_DEBUG=0 to silence
 function debugLog(...args: any[]) {
@@ -924,10 +926,75 @@ export async function updateWorkOrderDetails(
       try { await cacheDel('mc:customers:all') } catch {}
       try { await cacheDel('mc:customer-addresses:all') } catch {}
     }
-    
+
+    // Refresh affected cache datasets so assistants don't see empty lists
+    try {
+      await refreshWorkOrdersCache()
+      if (updateType === 'customer' || updateType === 'address') {
+        await Promise.all([
+          updateType === 'customer' ? refreshCustomersCache() : Promise.resolve(),
+          refreshCustomerAddressesCache()
+        ])
+      } else if (updateType === 'status' || updateType === 'time') {
+        // no additional datasets beyond work orders
+      }
+    } catch (error) {
+      console.error('Error refreshing caches after work order update:', error)
+    }
+
     return true
   } catch (error) {
     console.error('Error updating work order details:', error)
     return false
   }
+}
+
+async function refreshWorkOrdersCache() {
+  const workOrdersRaw = await prisma.workOrder.findMany({
+    select: {
+      id: true,
+      inspectors: { select: { id: true } },
+      contractId: true,
+      status: true,
+      scheduledStartDateTime: true,
+      scheduledEndDateTime: true,
+      remarks: true,
+      contract: {
+        select: {
+          customer: { select: { id: true, name: true } },
+          address: { select: { id: true, address: true, postalCode: true, propertyType: true } }
+        }
+      }
+    }
+  })
+
+  const workOrders = workOrdersRaw.map(wo => ({
+    id: wo.id,
+    inspectorId: Array.isArray(wo.inspectors) && wo.inspectors.length > 0 ? wo.inspectors[0].id : null,
+    inspectorIds: Array.isArray(wo.inspectors) ? wo.inspectors.map(ins => ins.id) : [],
+    contractId: wo.contractId,
+    status: wo.status,
+    scheduledStartDateTime: wo.scheduledStartDateTime,
+    scheduledEndDateTime: wo.scheduledEndDateTime,
+    remarks: wo.remarks,
+    customer: wo.contract?.customer ? { id: wo.contract.customer.id, name: wo.contract.customer.name } : null,
+    address: wo.contract?.address ? {
+      id: wo.contract.address.id,
+      address: wo.contract.address.address,
+      postalCode: wo.contract.address.postalCode,
+      propertyType: wo.contract.address.propertyType
+    } : null
+  }))
+
+  await cacheSetLargeArray('mc:work-orders:all', workOrders, undefined, { ttlSeconds: DEFAULT_TTL_SECONDS })
+}
+
+async function refreshCustomersCache() {
+  const customers = await prisma.customer.findMany({})
+  await cacheSetLargeArray('mc:customers:all', customers, undefined, { ttlSeconds: DEFAULT_TTL_SECONDS })
+}
+
+async function refreshCustomerAddressesCache() {
+  const addresses = await prisma.customerAddress.findMany({})
+  await cacheSetLargeArray('mc:customer-addresses:all', addresses, undefined, { ttlSeconds: DEFAULT_TTL_SECONDS })
 }
