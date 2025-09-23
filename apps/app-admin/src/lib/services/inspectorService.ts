@@ -131,22 +131,48 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     debugLog('getTodayJobsForInspector: cached workOrders =', workOrders.length)
     const todays = workOrders
       .filter((wo: any) => {
-        const dt = new Date(wo.scheduledStartDateTime)
-        return wo.inspectorId === inspectorId && dt >= startOfDay && dt <= endOfDay
+        if (wo.inspectorId !== inspectorId) return false
+
+        const startRaw = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
+        const endRaw = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
+
+        if (!startRaw && !endRaw) return false
+
+        const start = startRaw || endRaw
+        const end = endRaw || startRaw
+
+        if (!start || !end) return false
+
+        // Normalize ordering
+        const startTime = Math.min(start.getTime(), end.getTime())
+        const endTime = Math.max(start.getTime(), end.getTime())
+
+        return startTime <= endOfDay.getTime() && endTime >= startOfDay.getTime()
       })
-      .sort((a: any, b: any) => new Date(a.scheduledStartDateTime).getTime() - new Date(b.scheduledStartDateTime).getTime())
+      .sort((a: any, b: any) => {
+        const aStart = a.scheduledStartDateTime ? new Date(a.scheduledStartDateTime) : (a.scheduledEndDateTime ? new Date(a.scheduledEndDateTime) : new Date(0))
+        const bStart = b.scheduledStartDateTime ? new Date(b.scheduledStartDateTime) : (b.scheduledEndDateTime ? new Date(b.scheduledEndDateTime) : new Date(0))
+        return aStart.getTime() - bStart.getTime()
+      })
     debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 
-    return todays.map((wo: any) => ({
-      id: wo.id,
-      property_address: wo.address ? `${wo.address.address}, ${wo.address.postalCode}` : 'Unknown address',
-      customer_name: wo.customer?.name || 'Unknown',
-      scheduled_date: new Date(wo.scheduledStartDateTime),
-      inspection_type: wo.address ? `${wo.address.propertyType} Inspection` : 'Inspection',
-      status: wo.status,
-      priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',
+    return todays.map((wo: any) => {
+      const scheduledStart = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
+      const scheduledEnd = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
+      const primaryDate = scheduledStart || scheduledEnd || new Date()
+      return {
+        id: wo.id,
+        property_address: wo.address ? `${wo.address.address}, ${wo.address.postalCode}` : 'Unknown address',
+        customer_name: wo.customer?.name || 'Unknown',
+        scheduled_date: primaryDate,
+        scheduled_start: scheduledStart || null,
+        scheduled_end: scheduledEnd || null,
+        inspection_type: wo.address ? `${wo.address.propertyType} Inspection` : 'Inspection',
+        status: wo.status,
+        priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',
       notes: wo.remarks || ''
-    }))
+    }
+    })
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
     return []
