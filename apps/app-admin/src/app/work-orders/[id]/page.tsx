@@ -24,6 +24,8 @@ import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
 import ItemEntriesDialog from "@/components/item-entries-dialog"
 import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
+import { GenerateWorkOrderPdfButton } from "@/components/generate-work-order-pdf-button"
+import { buildWorkOrderReportFilename } from "@/lib/filename"
 
 async function getWorkOrder(id: string) {
   const workOrder = await prisma.workOrder.findUnique({
@@ -134,7 +136,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
   const completedItems = checklistItems.filter((item: any) => item.status === 'COMPLETED').length
   const totalItems = checklistItems.length
   const progressRate = totalItems > 0 ? (completedItems / totalItems) * 100 : 0
-  
+
   // Calculate sub-items from checklist tasks if available, otherwise fallback to remarks parsing
   let totalSubItems = 0
   checklistItems.forEach((item: any) => {
@@ -149,6 +151,12 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
     const subItemCount = subItems.length > 0 ? subItems.length : 1
     totalSubItems += subItemCount
   })
+
+  const reportFileName = buildWorkOrderReportFilename(
+    workOrder.contract?.customer?.name,
+    workOrder.contract?.address?.postalCode,
+    workOrder.id
+  )
 
   return (
     <div className="p-6 space-y-6">
@@ -180,11 +188,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               Edit Work Order
             </Button>
           </Link>
-          <Link href={`/api/work-orders/${workOrder.id}/report`} target="_blank">
-            <Button variant="outline">
-              Generate PDF
-            </Button>
-          </Link>
+          <GenerateWorkOrderPdfButton workOrderId={workOrder.id} fileName={reportFileName} />
         </div>
       </div>
 
