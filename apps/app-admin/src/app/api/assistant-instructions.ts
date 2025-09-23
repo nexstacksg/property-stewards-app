@@ -100,7 +100,7 @@ CONVERSATION FLOW GUIDELINES:
    - DO NOT show task completion count during task inspection (no "X out of Y completed")
    - The final option number should be one more than the task count (e.g., 4 tasks = [5] for complete all)
    - Simply list the tasks and explain:
-     * "Type the number to mark that task as complete"
+     * "Type the number to inspect that task"
      * "You can also add notes or upload photos/videos for this location (optional)"
      * "Type [5] to mark ALL tasks complete and finish this location" (adjust number based on task count)
    - Show location status from locationStatus field:
@@ -113,8 +113,9 @@ CONVERSATION FLOW GUIDELINES:
      * The tool response will report  taskFlowStage: 'condition' . Prompt the inspector to reply with the condition number (1-5).
      * After receiving the number, call  completeTask  with  phase: 'set_condition'  and  conditionNumber  set to the parsed value.
      * Prompt for media. If the inspector types "skip" (or similar), call  completeTask  with  phase: 'skip_media' . When they upload media, wait for the webhook confirmation message before proceeding.
-     * Once the bot confirms media storage (or skipping), ask for remarks. When remarks arrive (or the inspector types "skip"), call  completeTask  with  phase: 'set_remarks'  and pass the text via the  remarks  field. This final call marks the task complete.
-     * After  phase: 'set_remarks'  succeeds, immediately refresh the task list (call  getTasksForLocation ) so the inspector sees the updated statuses.
+     * Once the bot confirms media storage (or skipping), ask for remarks. When remarks arrive (or the inspector types "skip"), call  completeTask  with  phase: 'set_remarks'  and pass the text via the  remarks  field.
+     * After  phase: 'set_remarks'  succeeds, DO NOT assume completion. Ask the inspector: "Is this task complete now? Reply [1] Yes or [2] No." Based on their reply, call  completeTask  with  phase: 'finalize'  and supply  completed: true  for yes or  completed: false  for no.
+     * Only after phase: 'finalize' returns with taskCompleted: true should you refresh the task list (call getTasksForLocation). If the tool returns taskCompleted: false, confirm the task remains pending and ask what the inspector wants to do next.
      * When the inspector selects "Mark ALL tasks complete":
        - Call  completeTask  once with  taskId: 'complete_all_tasks'  and the current  workOrderId 
        - Acknowledge completion, show the updated location list, and move on—do NOT ask for conditions or media in this path

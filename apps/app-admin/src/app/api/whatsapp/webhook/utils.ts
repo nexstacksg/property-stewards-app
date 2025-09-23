@@ -15,7 +15,10 @@ export function detectHasMedia(data: any): boolean {
     data?.message?.videoMessage ||
     data?.message?.documentMessage ||
     data?.url ||
-    data?.fileUrl
+    data?.fileUrl ||
+    data?.media?.file?.download ||
+    data?.media?.links?.download ||
+    data?.media?.links?.resource
   )
 }
 
