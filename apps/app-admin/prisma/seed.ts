@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
@@ -10,7 +11,8 @@ type SeedChecklistTask = {
 }
 
 type SeedInspectorEntry = {
-  inspectorId: string
+  inspectorId?: string
+  userId?: string
   remarks?: string
   includeInReport?: boolean
   photos?: string[]
@@ -50,6 +52,7 @@ async function main() {
   await prisma.customerAddress.deleteMany()
   await prisma.customer.deleteMany()
   await prisma.inspector.deleteMany()
+  await prisma.user.deleteMany()
 
   // Create Inspectors
   const inspector1 = await prisma.inspector.create({
@@ -86,6 +89,18 @@ async function main() {
   })
 
   console.log('Created inspectors:', { inspector1, inspector2, inspector3 })
+
+  const adminPasswordHash = await bcrypt.hash('admin123', 10)
+  const adminUser = await prisma.user.create({
+    data: {
+      username: 'admin',
+      email: 'admin@example.com',
+      passwordHash: adminPasswordHash,
+      confirmed: true,
+    }
+  })
+
+  console.log('Created admin user:', { id: adminUser.id, email: adminUser.email })
 
   // Create Customers
   const customer1 = await prisma.customer.create({
@@ -429,7 +444,15 @@ async function main() {
               videos: []
             }
           ]
-        }
+        },
+        {
+          userId: adminUser.id,
+          remarks: 'Internal QA note: monitor for recurring moisture.',
+          includeInReport: false,
+          photos: [],
+          videos: [],
+          tasks: []
+        },
       ]
     },
     {
@@ -559,10 +582,15 @@ async function main() {
     }
 
     for (const entrySeed of itemSeed.inspectorEntries || []) {
+      if (!entrySeed.inspectorId && !entrySeed.userId) {
+        throw new Error('Seed entry must include an inspectorId or userId')
+      }
+
       const entry = await prisma.itemEntry.create({
         data: {
           itemId: item.id,
-          inspectorId: entrySeed.inspectorId,
+          inspectorId: entrySeed.inspectorId ?? undefined,
+          userId: entrySeed.userId ?? undefined,
           remarks: entrySeed.remarks,
           includeInReport: entrySeed.includeInReport ?? false,
           photos: entrySeed.photos ?? [],
@@ -575,7 +603,7 @@ async function main() {
         const createdTask = await prisma.checklistTask.create({
           data: {
             itemId: item.id,
-            inspectorId: entrySeed.inspectorId,
+            inspectorId: entrySeed.inspectorId ?? undefined,
             name: task.name,
             status: task.status,
             photos: task.photos ?? [],

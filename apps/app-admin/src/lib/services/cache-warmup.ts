@@ -110,6 +110,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
           select: {
             id: true,
             inspectorId: true,
+            user: { select: { id: true, username: true, email: true } },
             remarks: true,
             includeInReport: true,
             condition: true,
@@ -190,6 +191,7 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
       id: entry.id,
       inspectorId: entry.inspectorId,
       inspector: entry.inspector,
+      user: entry.user,
       remarks: entry.remarks,
       includeInReport: entry.includeInReport,
       condition: entry.condition,

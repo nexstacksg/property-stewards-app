@@ -10,7 +10,11 @@ export async function GET(
     const { id } = await params
     const contributions = await prisma.itemEntry.findMany({
       where: { itemId: id },
-      include: { inspector: true, tasks: true },
+      include: {
+        inspector: true,
+        user: { select: { id: true, username: true, email: true } },
+        tasks: true,
+      },
       orderBy: { createdOn: 'asc' }
     })
     return NextResponse.json({ contributions })
