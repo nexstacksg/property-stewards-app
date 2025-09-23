@@ -149,8 +149,8 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
             await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: mediaRemark })
             return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nIs this task complete now? Reply [1] Yes or [2] No.`
           }
-          await updateSessionState(phoneNumber, { taskFlowStage: 'remarks', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: undefined })
-          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nPlease share any remarks for this task, or reply "skip" if there are none.`
+          await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: undefined })
+          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nReply [1] Yes if this task is complete or [2] No to keep it pending. If you need to add a note, send it before choosing.`
         }
       } catch (error) {
         console.error('❌ Failed to save media to task entry, falling back to item storage', error)
