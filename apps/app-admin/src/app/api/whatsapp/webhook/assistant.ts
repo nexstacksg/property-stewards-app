@@ -4,6 +4,7 @@ import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import { cacheDel, cacheGetJSON, cacheSetJSON, getMemcacheClient } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
 import { ASSISTANT_VERSION, INSTRUCTIONS } from '@/app/api/assistant-instructions'
+import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -36,8 +37,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       // Try to find inspector by phone to enrich metadata
       let inspector: any = null
       try {
-        const { getInspectorByPhone } = await import('@/lib/services/inspectorService')
-        inspector = await getInspectorByPhone('+' + phoneNumber) || await getInspectorByPhone(phoneNumber)
+        inspector = await getInspectorByPhone('+' + phoneNumber)
+        if (!inspector) inspector = await getInspectorByPhone(phoneNumber)
       } catch {}
       const thread = await openai.beta.threads.create({ metadata: { channel: 'whatsapp', phoneNumber, inspectorId: inspector?.id || '', inspectorName: inspector?.name || '', workOrderId: '', currentLocation: '', createdAt: new Date().toISOString() } })
       threadId = thread.id
