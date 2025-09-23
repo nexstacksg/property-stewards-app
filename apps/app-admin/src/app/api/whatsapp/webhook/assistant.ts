@@ -1,9 +1,9 @@
 import OpenAI from 'openai'
+import prisma from '@/lib/prisma'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import { cacheDel, cacheGetJSON, cacheSetJSON, getMemcacheClient } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
 import { ASSISTANT_VERSION, INSTRUCTIONS } from '@/app/api/assistant-instructions'
-import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -26,52 +26,73 @@ export async function postAssistantMessageIfThread(phone: string, content: strin
 
 export async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
-    let threadId: string | undefined = whatsappThreads.get(phoneNumber)
+    let threadId: any = whatsappThreads.get(phoneNumber)
     let metadata = await getSessionState(phoneNumber)
-    if (!threadId && metadata?.threadId) {
-      threadId = metadata.threadId
+    if (!threadId && (metadata as any)?.threadId) {
+      threadId = (metadata as any).threadId
       whatsappThreads.set(phoneNumber, threadId)
     }
-
     if (!threadId) {
+      // Try to find inspector by phone to enrich metadata
       let inspector: any = null
       try {
+        const { getInspectorByPhone } = await import('@/lib/services/inspectorService')
         inspector = await getInspectorByPhone('+' + phoneNumber) || await getInspectorByPhone(phoneNumber)
       } catch {}
-      const thread = await openai.beta.threads.create({
-        metadata: {
-          channel: 'whatsapp',
-          phoneNumber,
-          inspectorId: inspector?.id || '',
-          inspectorName: inspector?.name || '',
-          workOrderId: '',
-          currentLocation: '',
-          createdAt: new Date().toISOString()
-        }
-      })
+      const thread = await openai.beta.threads.create({ metadata: { channel: 'whatsapp', phoneNumber, inspectorId: inspector?.id || '', inspectorName: inspector?.name || '', workOrderId: '', currentLocation: '', createdAt: new Date().toISOString() } })
       threadId = thread.id
-      await updateSessionState(phoneNumber, {
-        inspectorId: inspector?.id || '',
-        inspectorName: inspector?.name || '',
-        workOrderId: '',
-        currentLocation: '',
-        createdAt: new Date().toISOString(),
-        threadId
-      })
+      await updateSessionState(phoneNumber, { inspectorId: inspector?.id || '', inspectorName: inspector?.name || '', workOrderId: '', currentLocation: '', createdAt: new Date().toISOString(), threadId: threadId as string })
       whatsappThreads.set(phoneNumber, threadId)
     }
 
     await openai.beta.threads.messages.create(threadId, { role: 'user', content: message })
 
-    const ensuredAssistantId = await ensureAssistant()
-    const assistantReply = await runAssistantWithStreaming(threadId, ensuredAssistantId, phoneNumber)
-    if (assistantReply && assistantReply.trim()) return assistantReply
+    // Ensure assistant exists
+    if (assistantId && assistantVersionLoaded !== ASSISTANT_VERSION) {
+      assistantId = null
+      assistantCreationPromise = null
+    }
+    if (!assistantId) {
+      let assistantMeta: { version?: string } | null = null
+      try { assistantMeta = await cacheGetJSON<{ version?: string }>('assistant:meta') } catch {}
+      if (assistantMeta && assistantMeta.version !== ASSISTANT_VERSION) {
+        assistantId = null
+        assistantCreationPromise = null
+        try {
+          await cacheDel('assistant:id')
+          await cacheDel('assistant:meta')
+        } catch {}
+      }
+      try { assistantId = await cacheGetJSON<string>('assistant:id') } catch {}
+      if (!assistantId) {
+        if (!assistantCreationPromise) {
+          const mc = getMemcacheClient()
+          let canCreate = true
+          if (mc) {
+            try { const locked = await mc.add('assistant:creating', Buffer.from('1'), { expires: 60 }); canCreate = locked } catch {}
+          }
+          assistantCreationPromise = canCreate ? createAssistant() : (async () => { for (let i = 0; i < 40; i++) { const id = await cacheGetJSON<string>('assistant:id'); if (id) return id; await new Promise(r => setTimeout(r, 500)) } throw new Error('Timeout waiting for assistant id from cache') })()
+        }
+        try { assistantId = await assistantCreationPromise } catch (e) { assistantCreationPromise = null; return 'Service initialization failed. Please try again.' }
+      }
+    }
+    assistantVersionLoaded = ASSISTANT_VERSION
 
+    const run = await openai.beta.threads.runs.create(threadId, { assistant_id: assistantId as string })
+    let runStatus = await waitForRunCompletion(threadId, run.id)
+    let toolCallRounds = 0
+    const maxToolCallRounds = 5
+    while (runStatus.status === 'requires_action' && toolCallRounds < maxToolCallRounds) {
+      await handleToolCalls(threadId, run.id, runStatus, phoneNumber)
+      runStatus = await waitForRunCompletion(threadId, run.id)
+      toolCallRounds++
+    }
+    if (runStatus.status !== 'completed') return 'Sorry, I encountered an issue processing your request. Please try again.'
     const messages = await openai.beta.threads.messages.list(threadId)
-    const lastAssistantMessage = messages.data.find(msg => msg.role === 'assistant')
-    if (lastAssistantMessage) {
-      const textPart = lastAssistantMessage.content.find(part => part.type === 'text') as any
-      if (textPart?.text?.value) return textPart.text.value
+    const lastMessage = messages.data[0]
+    if (lastMessage && lastMessage.role === 'assistant') {
+      const content = lastMessage.content[0]
+      if (content.type === 'text') return content.text.value
     }
     return 'I processed your information but couldn\'t generate a response. Please try again.'
   } catch (error) {
@@ -80,8 +101,22 @@ export async function processWithAssistant(phoneNumber: string, message: string)
   }
 }
 
-async function handleToolCalls(threadId: string, runId: string, requiredAction: any, phoneNumber: string) {
-  const toolCalls = requiredAction?.submit_tool_outputs?.tool_calls || []
+async function waitForRunCompletion(threadId: string, runId: string) {
+  let attempts = 0
+  const maxAttempts = 600
+  let runStatus = await openai.beta.threads.runs.retrieve(runId, { thread_id: threadId })
+  while ((runStatus.status === 'queued' || runStatus.status === 'in_progress') && attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    runStatus = await openai.beta.threads.runs.retrieve(runId, { thread_id: threadId })
+    attempts++
+    if (attempts % 50 === 0) console.log(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`) 
+  }
+  if (attempts >= maxAttempts) console.log(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`)
+  return runStatus
+}
+
+async function handleToolCalls(threadId: string, runId: string, runStatus: any, phoneNumber: string) {
+  const toolCalls = runStatus.required_action?.submit_tool_outputs?.tool_calls || []
   const toolOutputs = [] as any[]
   for (const toolCall of toolCalls) {
     const functionName = toolCall.function.name
@@ -91,10 +126,7 @@ async function handleToolCalls(threadId: string, runId: string, requiredAction: 
     const output = await executeTool(functionName, functionArgs, threadId, phoneNumber)
     toolOutputs.push({ tool_call_id: toolCall.id, output })
   }
-  await openai.beta.threads.runs.submitToolOutputs(runId, {
-    thread_id: threadId,
-    tool_outputs: toolOutputs
-  })
+  await openai.beta.threads.runs.submitToolOutputs(runId, { thread_id: threadId, tool_outputs: toolOutputs })
 }
 
 async function createAssistant() {
@@ -110,186 +142,3 @@ async function createAssistant() {
     throw error
   }
 }
-
-async function ensureAssistant(): Promise<string> {
-  if (assistantId && assistantVersionLoaded === ASSISTANT_VERSION) return assistantId
-
-  try {
-    const meta = await cacheGetJSON<{ version?: string }>('assistant:meta')
-    if (meta?.version !== ASSISTANT_VERSION) {
-      assistantId = null
-      assistantCreationPromise = null
-      await cacheDel('assistant:id')
-      await cacheDel('assistant:meta')
-    }
-  } catch {}
-
-  if (!assistantId) {
-    try { assistantId = await cacheGetJSON<string>('assistant:id') } catch {}
-  }
-
-  if (!assistantId) {
-    if (!assistantCreationPromise) {
-      const mc = getMemcacheClient()
-      let canCreate = true
-      if (mc) {
-        try {
-          const locked = await mc.add('assistant:creating', Buffer.from('1'), { expires: 60 })
-          canCreate = locked
-        } catch {}
-      }
-      assistantCreationPromise = canCreate
-        ? createAssistant()
-        : (async () => {
-            for (let i = 0; i < 40; i++) {
-              const id = await cacheGetJSON<string>('assistant:id')
-              if (id) return id
-              await new Promise(resolve => setTimeout(resolve, 500))
-            }
-            throw new Error('Timeout waiting for assistant id from cache')
-          })()
-    }
-
-    try {
-      assistantId = await assistantCreationPromise
-    } catch (error) {
-      assistantCreationPromise = null
-      console.error('Failed to initialize assistant:', error)
-      throw error
-    }
-  }
-
-  assistantVersionLoaded = ASSISTANT_VERSION
-  return assistantId as string
-}
-
-type StreamRunResult = {
-  text: string
-  runId: string | null
-  status: 'completed' | 'requires_action' | 'failed' | 'cancelled'
-  requiredAction?: any
-  error?: string
-}
-
-function extractTextFromContent(content: any[] | undefined): string {
-  if (!Array.isArray(content)) return ''
-  return content
-    .map(part => {
-      if (part?.type === 'text') return part.text?.value ?? ''
-      return ''
-    })
-    .join('')
-}
-
-async function streamRunOnce(threadId: string, params: { assistantId?: string; runId?: string }): Promise<StreamRunResult> {
-  const stream = params.runId
-    ? await openai.beta.threads.runs.stream(threadId, { run_id: params.runId })
-    : await openai.beta.threads.runs.stream(threadId, { assistant_id: params.assistantId as string })
-
-  let aggregatedText = ''
-  let status: StreamRunResult['status'] = 'completed'
-  let runId: string | null = params.runId ?? null
-  let requiredAction: any = null
-  let error: string | undefined
-
-  for await (const event of stream) {
-    switch (event.event) {
-      case 'thread.message.delta': {
-        const delta = event.data?.delta
-        if (!delta) break
-        if (!delta.role || delta.role === 'assistant') {
-          aggregatedText += extractTextFromContent(delta.content)
-        }
-        break
-      }
-      case 'thread.message.completed': {
-        const message = event.data?.message
-        if (message?.role === 'assistant') {
-          aggregatedText += extractTextFromContent(message.content)
-        }
-        break
-      }
-      case 'thread.run.requires_action': {
-        requiredAction = event.data.required_action
-        runId = event.data.id
-        status = 'requires_action'
-        break
-      }
-      case 'thread.run.completed': {
-        runId = event.data.id
-        status = 'completed'
-        break
-      }
-      case 'thread.run.failed': {
-        runId = event.data.id
-        status = 'failed'
-        error = event.data.last_error?.message || 'Assistant run failed'
-        break
-      }
-      case 'thread.run.cancelled': {
-        runId = event.data.id
-        status = 'cancelled'
-        break
-      }
-      default:
-        break
-    }
-  }
-
-  return {
-    text: aggregatedText.trim(),
-    runId,
-    status,
-    requiredAction,
-    error,
-  }
-}
-
-async function runAssistantWithStreaming(threadId: string, ensuredAssistantId: string, phoneNumber: string): Promise<string | null> {
-  let runId: string | null = null
-  let latestText: string | null = null
-  const maxToolCallRounds = 5
-
-  for (let attempt = 0; attempt < maxToolCallRounds; attempt++) {
-    const result = await streamRunOnce(threadId, { assistantId: runId ? undefined : ensuredAssistantId, runId })
-    if (result.error) {
-      console.error('Assistant run stream error:', result.error)
-      return null
-    }
-
-    if (result.text) latestText = result.text
-    runId = result.runId
-
-    if (result.status === 'requires_action' && runId && result.requiredAction) {
-      await handleToolCalls(threadId, runId, result.requiredAction, phoneNumber)
-      continue
-    }
-
-    if (result.status === 'completed') {
-      return latestText
-    }
-
-    if (result.status === 'cancelled') {
-      console.warn('Assistant run cancelled unexpectedly')
-      return latestText
-    }
-
-    if (result.status === 'failed') {
-      console.error('Assistant run failed for thread', threadId)
-      return null
-    }
-  }
-
-  console.warn('Assistant exceeded max tool call rounds')
-  return latestText
-}
-
-export async function warmAssistant() {
-  try {
-    await ensureAssistant()
-  } catch (error) {
-    console.error('Failed to warm assistant at startup:', error)
-  }
-}
-
-void warmAssistant()
