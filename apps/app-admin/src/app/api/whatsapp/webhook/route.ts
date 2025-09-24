@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { detectHasMedia, sendWhatsAppResponse } from './utils'
+import { detectHasMedia, sendWhatsAppResponse, buildInstantReply } from './utils'
 import { handleMediaMessage } from './media'
 import { processWithAssistant, postAssistantMessageIfThread } from './assistant'
 import { getMemcacheClient } from '@/lib/memcache'
@@ -84,6 +84,14 @@ export async function POST(request: NextRequest) {
     const processed = processedMessages.get(messageId)
     if (processed?.responded) return NextResponse.json({ success: true })
     processedMessages.set(messageId, { timestamp: Date.now(), responseId: `resp-${Date.now()}`, responded: false })
+
+    // Instant acknowledgement so inspectors get immediate feedback while processing continues
+    try {
+      const instantReply = buildInstantReply(message || '', hasMedia)
+      if (instantReply) await sendWhatsAppResponse(phoneNumber, instantReply)
+    } catch (error) {
+      console.error('⚠️ Failed to send instant acknowledgement:', error)
+    }
 
     // Media handling
     if (hasMedia) {
