@@ -134,7 +134,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
   const completedItems = checklistItems.filter((item: any) => item.status === 'COMPLETED').length
   const totalItems = checklistItems.length
   const progressRate = totalItems > 0 ? (completedItems / totalItems) * 100 : 0
-  
+
   // Calculate sub-items from checklist tasks if available, otherwise fallback to remarks parsing
   let totalSubItems = 0
   checklistItems.forEach((item: any) => {

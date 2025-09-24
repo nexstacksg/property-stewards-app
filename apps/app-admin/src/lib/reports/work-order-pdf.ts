@@ -1,0 +1,684 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+
+export const COLUMN_WIDTHS = [40, 170, 100, 225]
+export const TABLE_MARGIN = 36
+const CELL_PADDING = 8
+const MAX_IMAGES_PER_CELL = 6
+const PHOTO_HEIGHT = 60
+const VIDEO_HEIGHT = 48
+const MAX_MEDIA_LINKS = 4
+const MEDIA_PER_ROW = 2
+const MEDIA_GUTTER = 8
+const SEGMENT_SPACING = 12
+const LOGO_PATH = join(process.cwd(), "public", "logo.png")
+const LOGO_ORIGINAL_WIDTH = 2560
+const LOGO_ORIGINAL_HEIGHT = 986
+export const LOGO_ASPECT_RATIO = LOGO_ORIGINAL_HEIGHT / LOGO_ORIGINAL_WIDTH
+
+let LOGO_BUFFER: Buffer | null | undefined
+let PDFDocumentCtor: any | null = null
+
+export async function getPDFDocumentCtor() {
+  if (!PDFDocumentCtor) {
+    const pdfkitModule = await import("pdfkit")
+    PDFDocumentCtor = (pdfkitModule as any).default ?? pdfkitModule
+  }
+
+  return PDFDocumentCtor
+}
+
+export function getLogoBuffer() {
+  if (LOGO_BUFFER === undefined) {
+    try {
+      LOGO_BUFFER = readFileSync(LOGO_PATH)
+    } catch (error) {
+      console.error("Failed to load report logo", error)
+      LOGO_BUFFER = null
+    }
+  }
+
+  return LOGO_BUFFER ?? undefined
+}
+
+export function formatDateTime(value?: Date | string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleString("en-SG", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  })
+}
+
+export function formatDate(value?: Date | string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleDateString("en-SG", { dateStyle: "medium" })
+}
+
+export function formatScheduleRange(start?: Date | string | null, end?: Date | string | null) {
+  const startStr = formatDateTime(start)
+  const endStr = formatDateTime(end)
+
+  if (startStr && endStr) {
+    return `${startStr} - ${endStr}`
+  }
+
+  return startStr || endStr || ""
+}
+
+export function formatEnum(value?: string | null) {
+  if (!value) return ""
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+}
+
+type EntryLike = {
+  inspector?: { name?: string | null } | null
+  user?: { username?: string | null; email?: string | null } | null
+  remarks?: string | null
+  condition?: string | null
+  createdOn?: Date | string | null
+  photos?: string[] | null
+  videos?: string[] | null
+}
+
+type VideoItem = {
+  url: string
+  label: string
+}
+
+type CellSegment = {
+  text?: string
+  photos?: Buffer[]
+  videos?: VideoItem[]
+}
+
+type TableCell = {
+  text?: string
+  bold?: boolean
+  photos?: Buffer[]
+  videos?: VideoItem[]
+  segments?: CellSegment[]
+}
+
+type TableRow = [TableCell, TableCell, TableCell, TableCell]
+
+async function fetchImage(url: string): Promise<Buffer | null> {
+  if (!url) return null
+
+  try {
+    if (url.startsWith("data:")) {
+      const base64 = url.split(",")[1]
+      return Buffer.from(base64, "base64")
+    }
+
+    if (!/^https?:/i.test(url)) {
+      return null
+    }
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
+    if (!response.ok) return null
+    const arrayBuffer = await response.arrayBuffer()
+    return Buffer.from(arrayBuffer)
+  } catch (error) {
+    return null
+  }
+}
+
+async function loadImages(urls: string[], cache: Map<string, Buffer>): Promise<Buffer[]> {
+  const result: Buffer[] = []
+
+  for (const url of urls.slice(0, MAX_IMAGES_PER_CELL)) {
+    if (!url) continue
+    if (cache.has(url)) {
+      result.push(cache.get(url)!)
+      continue
+    }
+
+    const buffer = await fetchImage(url)
+    if (buffer) {
+      cache.set(url, buffer)
+      result.push(buffer)
+    }
+  }
+
+  return result
+}
+
+function formatEntryLine(entry: EntryLike) {
+  const reporterLabels: string[] = []
+
+  if (entry.inspector?.name) {
+    reporterLabels.push(`Inspector: ${entry.inspector.name}`)
+  }
+
+  const userName = entry.user?.username || entry.user?.email
+  if (userName) {
+    reporterLabels.push(`Admin: ${userName}`)
+  }
+
+  if (reporterLabels.length === 0) {
+    reporterLabels.push("Team member")
+  }
+
+  const reporter = reporterLabels.join(" ")
+  const remarkText = entry.remarks?.trim()
+  return remarkText && remarkText.length > 0 ? `${reporter} - ${remarkText}` : `${reporter}`
+}
+
+function truncateUrl(url: string, maxLength = 80) {
+  if (url.length <= maxLength) return url
+  return `${url.slice(0, maxLength - 3)}...`
+}
+
+function getCellSegments(cell: TableCell): CellSegment[] {
+  if (cell.segments && cell.segments.length > 0) {
+    return cell.segments
+  }
+
+  if ((cell.text && cell.text.trim().length > 0) || (cell.photos && cell.photos.length) || (cell.videos && cell.videos.length)) {
+    return [{
+      text: cell.text,
+      photos: cell.photos,
+      videos: cell.videos
+    }]
+  }
+
+  return []
+}
+
+function buildVideoItems(urls: string[]) {
+  const visible = urls.slice(0, MAX_MEDIA_LINKS)
+  const items: VideoItem[] = visible.map((url, index) => ({ url, label: `Video ${index + 1}` }))
+  const overflowCount = urls.length - visible.length
+  return {
+    items,
+    overflowLines:
+      overflowCount > 0
+        ? [`• +${overflowCount} more video link(s)`]
+        : []
+  }
+}
+
+async function buildRemarkSegment({
+  text,
+  photoUrls,
+  videoUrls,
+  imageCache,
+  seenPhotos,
+  seenVideos
+}: {
+  text?: string
+  photoUrls: string[]
+  videoUrls: string[]
+  imageCache: Map<string, Buffer>
+  seenPhotos?: Set<string>
+  seenVideos?: Set<string>
+}): Promise<CellSegment | null> {
+  const normalizedPhotos = photoUrls.filter(Boolean)
+  const normalizedVideos = videoUrls.filter(Boolean)
+
+  const uniquePhotos = normalizedPhotos.filter((url) => {
+    if (!seenPhotos) return true
+    return !seenPhotos.has(url)
+  })
+
+  uniquePhotos.forEach((url) => seenPhotos?.add(url))
+
+  const uniqueVideos = normalizedVideos.filter((url) => {
+    if (!seenVideos) return true
+    return !seenVideos.has(url)
+  })
+
+  uniqueVideos.forEach((url) => seenVideos?.add(url))
+
+  const images = await loadImages(uniquePhotos, imageCache)
+  const remainingPhotoUrls = uniquePhotos.slice(images.length)
+
+  const lines: string[] = []
+  const hasRemark = Boolean(text && text.trim().length > 0)
+  if (hasRemark) {
+    lines.push(text!.trim())
+  }
+
+
+
+  if (remainingPhotoUrls.length > 0) {
+    lines.push("Additional photo links:")
+    remainingPhotoUrls.slice(0, MAX_MEDIA_LINKS).forEach((url, index) => {
+      lines.push(`• Photo ${images.length + index + 1}: ${truncateUrl(url)}`)
+    })
+    if (remainingPhotoUrls.length > MAX_MEDIA_LINKS) {
+      lines.push(`• +${remainingPhotoUrls.length - MAX_MEDIA_LINKS} more photo link(s)`)
+    }
+  }
+
+  const { items: videoItems, overflowLines } = buildVideoItems(uniqueVideos)
+  if (videoItems.length > 0) {
+    videoItems.forEach((item) => {
+      lines.push(`${item.label}: ${truncateUrl(item.url)}`)
+    })
+  }
+  if (overflowLines.length > 0) {
+    lines.push(...overflowLines)
+  }
+
+  if (!hasRemark && images.length === 0 && videoItems.length === 0 && remainingPhotoUrls.length === 0 && overflowLines.length === 0) {
+    return null
+  }
+
+  return {
+    text: lines.length > 0 ? lines.join("\n") : undefined,
+    photos: images,
+    videos: videoItems
+  }
+}
+
+async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Promise<TableRow[]> {
+  const rows: TableRow[] = []
+
+  for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+    const item = items[itemIndex]
+    const standaloneEntries = (item.contributions || []).filter((entry: any) => !entry.taskId)
+    const reportEntries = standaloneEntries.filter((entry: any) => entry?.includeInReport !== false)
+
+    const remarkSegments: CellSegment[] = []
+    const seenItemPhotos = new Set<string>()
+    const seenItemVideos = new Set<string>()
+
+    if (typeof item.remarks === "string" && item.remarks.trim().length > 0) {
+      const summarySegment = await buildRemarkSegment({
+        text: `Summary - ${item.remarks.trim()}`,
+        photoUrls: Array.isArray(item.photos) ? item.photos : [],
+        videoUrls: Array.isArray(item.videos) ? item.videos : [],
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (summarySegment) {
+        remarkSegments.push(summarySegment)
+      }
+    } else if (
+      (Array.isArray(item.photos) && item.photos.length > 0) ||
+      (Array.isArray(item.videos) && item.videos.length > 0)
+    ) {
+      const mediaOnlySegment = await buildRemarkSegment({
+        text: undefined,
+        photoUrls: Array.isArray(item.photos) ? item.photos : [],
+        videoUrls: Array.isArray(item.videos) ? item.videos : [],
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (mediaOnlySegment) {
+        remarkSegments.push(mediaOnlySegment)
+      }
+    }
+
+    for (const entry of reportEntries as EntryLike[]) {
+      const entrySegment = await buildRemarkSegment({
+        text: formatEntryLine(entry),
+        photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
+        videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (entrySegment) {
+        remarkSegments.push(entrySegment)
+      }
+    }
+
+    const remarkCell: TableCell = remarkSegments.length
+      ? { segments: remarkSegments }
+      : { text: "No remarks provided." }
+
+    rows.push([
+      { text: String(itemIndex + 1), bold: true },
+      { text: item.name || item.item || `Checklist Item ${itemIndex + 1}`, bold: true },
+      { text: formatEnum(item.status ?? undefined) || "N/A", bold: true },
+      remarkCell
+    ])
+
+    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+
+    for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
+      const task = tasks[taskIndex]
+      const label = `${String.fromCharCode(97 + taskIndex)}. ${task.name || "Subtask"}`
+      const entries = Array.isArray(task.entries) ? task.entries : []
+
+      const filteredEntries = entries.filter((entry: EntryLike) => (entry as any)?.includeInReport !== false)
+      const taskSegments: CellSegment[] = []
+
+      if (
+        (Array.isArray(task.photos) && task.photos.length > 0) ||
+        (Array.isArray(task.videos) && task.videos.length > 0)
+      ) {
+        const taskMediaSegment = await buildRemarkSegment({
+          text: undefined,
+          photoUrls: Array.isArray(task.photos) ? task.photos : [],
+          videoUrls: Array.isArray(task.videos) ? task.videos : [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        if (taskMediaSegment) {
+          taskSegments.push(taskMediaSegment)
+        }
+      }
+
+      for (const entry of filteredEntries as EntryLike[]) {
+        const taskEntrySegment = await buildRemarkSegment({
+          text: formatEntryLine(entry),
+          photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
+          videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        if (taskEntrySegment) {
+          taskSegments.push(taskEntrySegment)
+        }
+      }
+
+      const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
+
+      rows.push([
+        { text: "" },
+        { text: label },
+        { text: conditionText },
+        taskSegments.length ? { segments: taskSegments } : { text: "" }
+      ])
+    }
+  }
+
+  return rows
+}
+
+function calculateRowHeight(doc: any, cells: TableCell[]) {
+  let rowHeight = 0
+
+  cells.forEach((cell, index) => {
+    const width = COLUMN_WIDTHS[index] - CELL_PADDING * 2
+    const segments = getCellSegments(cell)
+    let cellHeight = 0
+
+    segments.forEach((segment, segmentIndex) => {
+      let segmentHeight = 0
+      let mediaHeight = 0
+
+      if (segment.photos && segment.photos.length) {
+        const photoRows = Math.ceil(segment.photos.length / MEDIA_PER_ROW)
+        mediaHeight += photoRows * PHOTO_HEIGHT + (photoRows - 1) * MEDIA_GUTTER
+      }
+
+      if (segment.videos && segment.videos.length) {
+        if (mediaHeight > 0) {
+          mediaHeight += MEDIA_GUTTER
+        }
+        const videoRows = Math.ceil(segment.videos.length / MEDIA_PER_ROW)
+        mediaHeight += videoRows * VIDEO_HEIGHT + (videoRows - 1) * MEDIA_GUTTER
+      }
+
+      let textHeight = 0
+      if (segment.text && segment.text.trim().length > 0) {
+        doc.font(cell.bold ? "Helvetica-Bold" : "Helvetica")
+        textHeight = doc.heightOfString(segment.text, {
+          width,
+          align: "left"
+        })
+      }
+
+      segmentHeight += textHeight
+
+      if (textHeight > 0 && mediaHeight > 0) {
+        segmentHeight += MEDIA_GUTTER
+      }
+
+      segmentHeight += mediaHeight
+
+      cellHeight += segmentHeight
+
+      if (segmentIndex < segments.length - 1) {
+        cellHeight += SEGMENT_SPACING
+      }
+    })
+
+    rowHeight = Math.max(rowHeight, cellHeight)
+  })
+
+  return Math.max(rowHeight + CELL_PADDING * 2, 24)
+}
+
+function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header?: boolean } = {}) {
+  const { header = false } = options
+  const rowHeight = calculateRowHeight(doc, cells)
+  let x = TABLE_MARGIN
+
+  cells.forEach((cell, index) => {
+    const width = COLUMN_WIDTHS[index]
+    doc.lineWidth(0.7)
+
+    if (header) {
+      doc.save()
+      doc.rect(x, y, width, rowHeight).fill("#e2e8f0")
+      doc.restore()
+      doc.rect(x, y, width, rowHeight).stroke()
+      doc.font("Helvetica-Bold")
+    } else {
+      doc.rect(x, y, width, rowHeight).stroke()
+      doc.font(cell.bold ? "Helvetica-Bold" : "Helvetica")
+    }
+
+    doc.fillColor("#111827")
+
+    let contentTop = y + CELL_PADDING
+
+    const drawPhotos = (startY: number, photos?: Buffer[]) => {
+      if (!photos || photos.length === 0) return 0
+      const usableWidth = width - CELL_PADDING * 2 - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
+      const thumbWidth = usableWidth / MEDIA_PER_ROW
+      const rows = Math.ceil(photos.length / MEDIA_PER_ROW)
+      photos.forEach((buffer, index) => {
+        const col = index % MEDIA_PER_ROW
+        const row = Math.floor(index / MEDIA_PER_ROW)
+        const drawX = x + CELL_PADDING + col * (thumbWidth + MEDIA_GUTTER)
+        const drawY = startY + row * (PHOTO_HEIGHT + MEDIA_GUTTER)
+        doc.image(buffer, drawX, drawY, {
+          fit: [thumbWidth, PHOTO_HEIGHT],
+          align: "center",
+          valign: "top"
+        })
+      })
+      return rows * PHOTO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+    }
+
+    const drawVideos = (startY: number, videos?: VideoItem[]) => {
+      if (!videos || videos.length === 0) return 0
+      const usableWidth = width - CELL_PADDING * 2 - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
+      const cardWidth = usableWidth / MEDIA_PER_ROW
+      const rows = Math.ceil(videos.length / MEDIA_PER_ROW)
+      videos.forEach((_video, index) => {
+        const col = index % MEDIA_PER_ROW
+        const row = Math.floor(index / MEDIA_PER_ROW)
+        const drawX = x + CELL_PADDING + col * (cardWidth + MEDIA_GUTTER)
+        const drawY = startY + row * (VIDEO_HEIGHT + MEDIA_GUTTER)
+        doc.save()
+        doc.roundedRect(drawX, drawY, cardWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
+
+        const centerY = drawY + VIDEO_HEIGHT / 2
+        const iconRadius = 12
+        const iconCenterX = drawX + iconRadius + 10
+        doc.circle(iconCenterX, centerY, iconRadius).fill("#0ea5e9")
+        doc.fillColor("#ffffff")
+        doc.moveTo(iconCenterX - 4, centerY - 6)
+        doc.lineTo(iconCenterX + 6, centerY)
+        doc.lineTo(iconCenterX - 4, centerY + 6)
+        doc.closePath().fill("#ffffff")
+
+        doc.restore()
+        doc.fillColor("#111827")
+      })
+      return rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+    }
+
+    const segments = getCellSegments(cell)
+
+    segments.forEach((segment, segmentIndex) => {
+      let segmentTop = contentTop
+
+      const photos = segment.photos
+      const videos = segment.videos
+      const segmentText = segment.text?.trim()
+      let textHeight = 0
+
+      if (segmentText && segmentText.length > 0) {
+        doc.font(cell.bold ? "Helvetica-Bold" : "Helvetica")
+        doc.fillColor("#111827")
+        textHeight = doc.heightOfString(segmentText, {
+          width: width - CELL_PADDING * 2,
+          align: "left"
+        })
+        doc.text(segmentText, x + CELL_PADDING, segmentTop, {
+          width: width - CELL_PADDING * 2,
+          align: "left"
+        })
+        segmentTop += textHeight
+      }
+
+      const hasMedia = Boolean((photos && photos.length) || (videos && videos.length))
+      if (textHeight > 0 && hasMedia) {
+        segmentTop += MEDIA_GUTTER
+      }
+
+      const photoHeight = drawPhotos(segmentTop, photos)
+      if (photoHeight > 0) {
+        segmentTop += photoHeight
+      }
+
+      if (photoHeight > 0 && videos && videos.length) {
+        segmentTop += MEDIA_GUTTER
+      }
+
+      const videoHeight = drawVideos(segmentTop, videos)
+      if (videoHeight > 0) {
+        segmentTop += videoHeight
+      }
+
+      contentTop = segmentTop
+
+      if (segmentIndex < segments.length - 1) {
+        contentTop += SEGMENT_SPACING
+      }
+    })
+
+    x += width
+  })
+
+  return rowHeight
+}
+
+export async function appendWorkOrderSection(
+  doc: any,
+  workOrder: any,
+  imageCache: Map<string, Buffer>,
+  options: {
+    heading?: string
+    startOnNewPage?: boolean
+    includeMeta?: boolean
+    filterByWorkOrderId?: string | null
+  } = {}
+) {
+  if (options.startOnNewPage) {
+    doc.addPage()
+  }
+
+  const headingLabel =
+    options.heading ?? `Work Order ${workOrder.id.slice(-8).toUpperCase()} (${formatEnum(workOrder.status)})`
+
+  doc.font("Helvetica-Bold").fontSize(14).text(headingLabel, { align: "left" })
+  doc.moveDown(0.25)
+
+  const includeMeta = options.includeMeta ?? true
+
+  if (includeMeta) {
+    const scheduleLine = formatScheduleRange(
+      workOrder.scheduledStartDateTime,
+      workOrder.scheduledEndDateTime
+    )
+    doc.font("Helvetica").fontSize(10)
+    if (scheduleLine) {
+      doc.text(`Scheduled: ${scheduleLine}`)
+    }
+
+    const actualLine = formatScheduleRange(workOrder.actualStart, workOrder.actualEnd)
+    if (actualLine) {
+      doc.text(`Actual: ${actualLine}`)
+    }
+
+    if (Array.isArray(workOrder.inspectors) && workOrder.inspectors.length) {
+      const inspectorNames = workOrder.inspectors.map((inspector: any) => inspector.name).filter(Boolean).join(", ")
+      if (inspectorNames) {
+        doc.text(`Inspectors: ${inspectorNames}`)
+      }
+    }
+
+    doc.moveDown(0.75)
+  } else {
+    doc.moveDown(0.25)
+  }
+
+  const rawItems = Array.isArray(workOrder.contract?.contractChecklist?.items)
+    ? workOrder.contract.contractChecklist.items
+    : []
+
+  const filterId = options.filterByWorkOrderId === undefined ? workOrder.id : options.filterByWorkOrderId
+  const scopedItems = rawItems.filter((item: any) =>
+    !item.workOrderId || !filterId || item.workOrderId === filterId
+  )
+
+  const tableRows = await buildTableRows(scopedItems, imageCache)
+
+  if (tableRows.length === 0) {
+    doc.text("No checklist items found for this work order.", { italic: true })
+    doc.moveDown()
+    return
+  }
+
+  doc.fontSize(10)
+  let y = doc.y
+
+  const headerRow: TableCell[] = [
+    { text: "S/N", bold: true },
+    { text: "Item / Subtask", bold: true },
+    { text: "Status / Condition", bold: true },
+    { text: "Remarks / Media", bold: true }
+  ]
+
+  const headerHeight = drawTableRow(doc, y, headerRow, { header: true })
+  y += headerHeight
+
+  tableRows.forEach((row) => {
+    const remainingSpace = doc.page.height - TABLE_MARGIN - y
+    const requiredHeight = calculateRowHeight(doc, row)
+
+    if (requiredHeight > remainingSpace) {
+      doc.addPage()
+      y = TABLE_MARGIN
+      const headerAgainHeight = drawTableRow(doc, y, headerRow, { header: true })
+      y += headerAgainHeight
+    }
+
+    const consumedHeight = drawTableRow(doc, y, row)
+    y += consumedHeight
+  })
+
+  doc.moveDown()
+}
+ 

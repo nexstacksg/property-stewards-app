@@ -2,6 +2,10 @@ import prisma from '@/lib/prisma'
 import { updateSessionState } from '@/lib/chat-session'
 import { getLocationsWithCompletionStatus, getInspectorByPhone, getContractChecklistItemIdByLocation } from '@/lib/services/inspectorService'
 
+const debugLog = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== 'production') console.log(...args)
+}
+
 // Utility: detect if Wassenger payload contains media
 export function detectHasMedia(data: any): boolean {
   return Boolean(
@@ -26,6 +30,48 @@ export function detectHasMedia(data: any): boolean {
 export async function buildLocationsFormatted(workOrderId: string): Promise<string[]> {
   const locs = (await getLocationsWithCompletionStatus(workOrderId)) as any[]
   return locs.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
+}
+
+const GREETING_KEYWORDS = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']
+const DONE_KEYWORDS = ['done', 'completed', 'complete', 'finished', 'finish', 'submitted']
+const HELP_KEYWORDS = ['help', 'assist', 'support', 'stuck']
+const SELECTION_REGEX = /^\s*(?:\[\s*(\d{1,2})\s*\]|option\s+(\d{1,2})|(\d{1,2}))\s*([).,;-])?\s*$/i
+
+function normalizeMessage(message: string) {
+  return message.trim().toLowerCase()
+}
+
+export function buildInstantReply(message: string, hasMedia: boolean): string {
+  if (hasMedia) return '📸 Thanks! I\'m saving your media now—hang tight for the update.'
+
+  const normalized = normalizeMessage(message)
+  if (!normalized) return '✅ Got it! Let me check that for you.'
+
+  const matchSelection = message.match(SELECTION_REGEX)
+  const selectedNumber = matchSelection ? (matchSelection[1] || matchSelection[2] || matchSelection[3]) : null
+  if (selectedNumber) return `☑️ Option [${selectedNumber}] received—processing that now.`
+
+  const isGreeting = GREETING_KEYWORDS.some(keyword => normalized === keyword || normalized.startsWith(`${keyword} `))
+  if (isGreeting) return '👋 Hi there! Let me pull up your inspection details.'
+
+  const containsDoneKeyword = DONE_KEYWORDS.some(keyword => normalized.includes(keyword))
+  if (containsDoneKeyword) return '👍 Noted! I\'m updating the inspection record now.'
+
+  const containsHelpKeyword = HELP_KEYWORDS.some(keyword => normalized.includes(keyword))
+  if (containsHelpKeyword) return '💡 I\'m here to help—give me a moment to sort this out.'
+
+  const isQuestion = message.trim().endsWith('?') || /\b(what|when|where|how|why|can|could|should|do you|does)\b/i.test(message)
+  if (isQuestion) return '🔎 Thanks for the question! Checking the details for you now.'
+
+  if (normalized.includes('photo') || normalized.includes('picture') || normalized.includes('image')) {
+    return '📸 Got your note about photos—give me a moment to handle that.'
+  }
+
+  if (normalized.includes('job') || normalized.includes('work order') || normalized.includes('schedule')) {
+    return '🗂️ On it—fetching your job schedule now.'
+  }
+
+  return '✅ Thanks for the update! Let me process that for you.'
 }
 
 // Utility: resolve inspector id from session/phone/work order and persist to session if found
@@ -79,75 +125,24 @@ export async function resolveChecklistItemIdForLocation(workOrderId: string, loc
 // Utility: save media either to per-inspector ItemEntry or fallback to item-level arrays
 export async function saveMediaForItem(itemId: string, inspectorId: string | null, publicUrl: string, mediaType: 'photo' | 'video') {
   if (inspectorId) {
-    let entry = await prisma.itemEntry.findFirst({ where: { itemId, inspectorId }, select: { id: true, taskId: true } })
-    if (!entry) {
-      const created = await prisma.itemEntry.create({ data: { itemId, inspectorId } })
-      entry = { id: created.id, taskId: created.taskId }
-    }
+    let entry = await prisma.itemEntry.findFirst({ where: { itemId, inspectorId }, orderBy: { createdOn: 'desc' } })
+    if (!entry) entry = await prisma.itemEntry.create({ data: { itemId, inspectorId } })
 
-    let taskId = entry.taskId
-    if (!taskId) {
-      const existingTask = await prisma.checklistTask.findFirst({ where: { itemId, inspectorId, name: 'Inspector notes' } })
-      if (existingTask) {
-        taskId = existingTask.id
-      } else {
-        const createdTask = await prisma.checklistTask.create({
-          data: {
-            itemId,
-            inspectorId,
-            name: 'Inspector notes',
-            status: 'PENDING'
-          }
-        })
-        taskId = createdTask.id
-      }
-      if (taskId && entry.taskId !== taskId) {
-        await prisma.itemEntry.update({ where: { id: entry.id }, data: { taskId } })
-      }
-    }
-
-    const entryUpdateData = mediaType === 'photo'
-      ? { photos: { push: publicUrl } }
-      : { videos: { push: publicUrl } }
-    await prisma.itemEntry.update({ where: { id: entry.id }, data: entryUpdateData })
-
-    if (taskId) {
-      await prisma.checklistTask.update({
-        where: { id: taskId },
-        data: mediaType === 'photo'
-          ? { photos: { push: publicUrl } }
-          : { videos: { push: publicUrl } }
-      })
-    }
-    console.log('✅ Media saved to inspector entry/task for inspector', inspectorId)
-  } else {
-    const item = await prisma.contractChecklistItem.findUnique({
-      where: { id: itemId },
-      include: { checklistTasks: { where: { inspectorId: null }, take: 1 } }
-    })
-
-    if (!item) {
-      throw new Error('Checklist item not found')
-    }
-
-    let task = item.checklistTasks[0]
-    if (!task) {
-      task = await prisma.checklistTask.create({
-        data: {
-          itemId,
-          name: item.name || 'General inspection',
-          status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
-        }
-      })
-    }
-
-    await prisma.checklistTask.update({
-      where: { id: task.id },
+    await prisma.itemEntry.update({
+      where: { id: entry.id },
       data: mediaType === 'photo'
         ? { photos: { push: publicUrl } }
         : { videos: { push: publicUrl } }
     })
-    console.log('✅ Media saved to ChecklistTask (general)')
+    debugLog('✅ Media saved to inspector entry for inspector', inspectorId)
+  } else {
+    await prisma.contractChecklistItem.update({
+      where: { id: itemId },
+      data: mediaType === 'photo'
+        ? { photos: { push: publicUrl } }
+        : { videos: { push: publicUrl } }
+    })
+    debugLog('✅ Media saved to contract checklist item', itemId)
   }
 }
 
@@ -190,7 +185,7 @@ export async function sendWhatsAppResponse(to: string, message: string) {
       throw new Error(`Wassenger API error: ${response.status} - ${error}`)
     }
     const result = await response.json()
-    console.log(`✅ Message sent to ${to}`)
+    debugLog(`✅ Message sent to ${to}`)
     return result
   } catch (error) {
     console.error('❌ Error sending WhatsApp message:', error)

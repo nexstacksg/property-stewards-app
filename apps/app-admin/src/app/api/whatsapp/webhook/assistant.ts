@@ -1,9 +1,14 @@
 import OpenAI from 'openai'
 import prisma from '@/lib/prisma'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
-import { cacheGetJSON, cacheSetJSON, getMemcacheClient } from '@/lib/memcache'
+import { cacheDel, cacheGetJSON, cacheSetJSON, getMemcacheClient } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
-import { INSTRUCTIONS } from '@/app/api/assistant-instructions'
+import { ASSISTANT_VERSION, INSTRUCTIONS } from '@/app/api/assistant-instructions'
+import { getInspectorByPhone } from '@/lib/services/inspectorService'
+
+const debugLog = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== 'production') console.log(...args)
+}
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -11,6 +16,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const whatsappThreads = new Map<string, string>()
 
 let assistantId: string | null = null
+let assistantVersionLoaded: string | null = null
 let assistantCreationPromise: Promise<string> | null = null
 
 export function getCachedThreadId(phone: string) {
@@ -35,8 +41,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       // Try to find inspector by phone to enrich metadata
       let inspector: any = null
       try {
-        const { getInspectorByPhone } = await import('@/lib/services/inspectorService')
-        inspector = await getInspectorByPhone('+' + phoneNumber) || await getInspectorByPhone(phoneNumber)
+        inspector = await getInspectorByPhone('+' + phoneNumber)
+        if (!inspector) inspector = await getInspectorByPhone(phoneNumber)
       } catch {}
       const thread = await openai.beta.threads.create({ metadata: { channel: 'whatsapp', phoneNumber, inspectorId: inspector?.id || '', inspectorName: inspector?.name || '', workOrderId: '', currentLocation: '', createdAt: new Date().toISOString() } })
       threadId = thread.id
@@ -47,7 +53,21 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     await openai.beta.threads.messages.create(threadId, { role: 'user', content: message })
 
     // Ensure assistant exists
+    if (assistantId && assistantVersionLoaded !== ASSISTANT_VERSION) {
+      assistantId = null
+      assistantCreationPromise = null
+    }
     if (!assistantId) {
+      let assistantMeta: { version?: string } | null = null
+      try { assistantMeta = await cacheGetJSON<{ version?: string }>('assistant:meta') } catch {}
+      if (assistantMeta && assistantMeta.version !== ASSISTANT_VERSION) {
+        assistantId = null
+        assistantCreationPromise = null
+        try {
+          await cacheDel('assistant:id')
+          await cacheDel('assistant:meta')
+        } catch {}
+      }
       try { assistantId = await cacheGetJSON<string>('assistant:id') } catch {}
       if (!assistantId) {
         if (!assistantCreationPromise) {
@@ -61,6 +81,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         try { assistantId = await assistantCreationPromise } catch (e) { assistantCreationPromise = null; return 'Service initialization failed. Please try again.' }
       }
     }
+    assistantVersionLoaded = ASSISTANT_VERSION
 
     const run = await openai.beta.threads.runs.create(threadId, { assistant_id: assistantId as string })
     let runStatus = await waitForRunCompletion(threadId, run.id)
@@ -93,9 +114,9 @@ async function waitForRunCompletion(threadId: string, runId: string) {
     await new Promise(resolve => setTimeout(resolve, 100))
     runStatus = await openai.beta.threads.runs.retrieve(runId, { thread_id: threadId })
     attempts++
-    if (attempts % 50 === 0) console.log(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`) 
+    if (attempts % 50 === 0) debugLog(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`) 
   }
-  if (attempts >= maxAttempts) console.log(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`)
+  if (attempts >= maxAttempts) debugLog(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`)
   return runStatus
 }
 
@@ -116,7 +137,10 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
 async function createAssistant() {
   try {
     const assistant = await openai.beta.assistants.create({ name: 'Property Inspector Assistant v0.7', instructions: INSTRUCTIONS, model: 'gpt-4o-mini', tools: assistantTools })
-    try { await cacheSetJSON('assistant:id', assistant.id, { ttlSeconds: 30 * 24 * 60 * 60 }) } catch {}
+    try {
+      await cacheSetJSON('assistant:id', assistant.id, { ttlSeconds: 30 * 24 * 60 * 60 })
+      await cacheSetJSON('assistant:meta', { version: ASSISTANT_VERSION }, { ttlSeconds: 30 * 24 * 60 * 60 })
+    } catch {}
     return assistant.id
   } catch (error) {
     console.error('❌ ASSISTANT CREATION FAILED:', error)

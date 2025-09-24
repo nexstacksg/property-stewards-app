@@ -11,6 +11,9 @@ const nextConfig: NextConfig = {
     // your project has type errors.
     ignoreBuildErrors: true,
   },
+  experimental: {
+    serverComponentsExternalPackages: ["pdfkit"],
+  },
 };
 
 export default nextConfig;
