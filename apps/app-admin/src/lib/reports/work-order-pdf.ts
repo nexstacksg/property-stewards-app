@@ -152,7 +152,22 @@ async function loadImages(urls: string[], cache: Map<string, Buffer>): Promise<B
 }
 
 function formatEntryLine(entry: EntryLike) {
-  const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || "Team member"
+  const reporterLabels: string[] = []
+
+  if (entry.inspector?.name) {
+    reporterLabels.push(`Inspector: ${entry.inspector.name}`)
+  }
+
+  const userName = entry.user?.username || entry.user?.email
+  if (userName) {
+    reporterLabels.push(`Admin: ${userName}`)
+  }
+
+  if (reporterLabels.length === 0) {
+    reporterLabels.push("Team member")
+  }
+
+  const reporter = reporterLabels.join(" ")
   const remarkText = entry.remarks?.trim()
   return remarkText && remarkText.length > 0 ? `${reporter} - ${remarkText}` : `${reporter}`
 }
@@ -237,9 +252,7 @@ async function buildRemarkSegment({
     lines.push(...overflowLines)
   }
 
-  if (lines.length === 0 && (images.length > 0 || videoItems.length > 0)) {
-    lines.push("Media attached.")
-  }
+
 
   return {
     text: lines.join("\n"),
