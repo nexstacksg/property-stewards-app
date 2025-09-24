@@ -20,6 +20,8 @@ import {
   AlertCircle
 } from "lucide-react"
 import prisma from "@/lib/prisma"
+import { GeneratePdfButton } from "@/components/generate-pdf-button"
+import { buildContractReportFilename } from "@/lib/filename"
 
 async function getContract(id: string) {
   const contract = await prisma.contract.findUnique({
@@ -100,10 +102,15 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   const contract = await getContract(resolvedParams.id) as any
 
   // Calculate completion rate
-  const completedWorkOrders = contract.workOrders.filter(wo => wo.status === 'COMPLETED').length
+  const completedWorkOrders = contract.workOrders.filter((wo: any) => wo.status === 'COMPLETED').length
   const totalWorkOrders = contract.workOrders.length
   const completionRate = totalWorkOrders > 0 ? (completedWorkOrders / totalWorkOrders) * 100 : 0
   const contractTypeLabel = contract.contractType === 'REPAIR' ? 'Repair' : 'Inspection'
+  const contractReportFileName = buildContractReportFilename(
+    contract.customer?.name,
+    contract.address?.postalCode,
+    contract.id
+  )
 
   return (
     <div className="p-6 space-y-6">
@@ -141,6 +148,11 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               Add Work Order
             </Button>
           </Link>
+          <GeneratePdfButton
+            href={`/api/contracts/${contract.id}/report`}
+            fileName={contractReportFileName}
+            label="Generate PDF"
+          />
         </div>
       </div>
 

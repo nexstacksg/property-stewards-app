@@ -5,18 +5,19 @@ import { FileDown, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
-interface GenerateWorkOrderPdfButtonProps {
-  workOrderId: string
+interface GeneratePdfButtonProps {
+  href: string
   fileName: string
+  label?: string
 }
 
-export function GenerateWorkOrderPdfButton({ workOrderId, fileName }: GenerateWorkOrderPdfButtonProps) {
+export function GeneratePdfButton({ href, fileName, label = "Generate PDF" }: GeneratePdfButtonProps) {
   const [isLoading, setIsLoading] = useState(false)
 
   const handleGenerate = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch(`/api/work-orders/${workOrderId}/report`, {
+      const response = await fetch(href, {
         cache: "no-store"
       })
 
@@ -25,16 +26,16 @@ export function GenerateWorkOrderPdfButton({ workOrderId, fileName }: GenerateWo
       }
 
       const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
+      const blobUrl = window.URL.createObjectURL(blob)
       const link = document.createElement("a")
-      link.href = url
+      link.href = blobUrl
       link.download = fileName
       document.body.appendChild(link)
       link.click()
       link.remove()
-      window.URL.revokeObjectURL(url)
+      window.URL.revokeObjectURL(blobUrl)
     } catch (error) {
-      console.error("Failed to generate work order PDF", error)
+      console.error("Failed to generate PDF", error)
       alert("Unable to generate PDF. Please try again.")
     } finally {
       setIsLoading(false)
@@ -51,7 +52,7 @@ export function GenerateWorkOrderPdfButton({ workOrderId, fileName }: GenerateWo
       ) : (
         <>
           <FileDown className="mr-2 h-4 w-4" />
-          Generate PDF
+          {label}
         </>
       )}
     </Button>
