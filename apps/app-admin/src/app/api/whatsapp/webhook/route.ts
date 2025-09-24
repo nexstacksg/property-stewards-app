@@ -3,12 +3,8 @@ import { detectHasMedia, sendWhatsAppResponse } from './utils'
 import { handleMediaMessage } from './media'
 import { processWithAssistant, postAssistantMessageIfThread } from './assistant'
 import { getMemcacheClient } from '@/lib/memcache'
-import { getSessionState } from '@/lib/chat-session'
-import type { ChatSessionState } from '@/lib/chat-session'
-import { executeTool } from './tools'
 
-const DEBUG_WHATSAPP = !['', '0', 'false', 'no'].includes((process.env.DEBUG_WHATSAPP || '').toLowerCase())
-
+// Per-instance idempotency to prevent duplicate responses
 const processedMessages = new Map<string, { timestamp: number; responseId: string; responded: boolean }>()
 
 // Clean up old processed messages every 5 minutes
@@ -63,17 +59,11 @@ export async function POST(request: NextRequest) {
     const phoneNumber = rawPhone?.replace(/[\s+-]/g, '').replace(/^0+/, '').replace('@c.us', '') || ''
     const message = data.body || data.message?.text?.body || ''
 
-    if (DEBUG_WHATSAPP) {
-      console.log('📋 Message summary:', { id: messageId, phone: phoneNumber, type: data.type, messageType: data.messageType, hasBody: !!data.body, bodyLength: message?.length || 0, hasMedia: !!(data.media || data.message?.imageMessage || data.message?.videoMessage), event })
-      console.log('🔍 Full WhatsApp message data:', JSON.stringify(data, null, 2))
-    }
+    console.log('📋 Message summary:', { id: messageId, phone: phoneNumber, type: data.type, messageType: data.messageType, hasBody: !!data.body, bodyLength: message?.length || 0, hasMedia: !!(data.media || data.message?.imageMessage || data.message?.videoMessage), event })
+    console.log('🔍 Full WhatsApp message data:', JSON.stringify(data, null, 2))
 
     const hasMedia = detectHasMedia(data)
-    if (DEBUG_WHATSAPP) {
-      console.log('🔍 Media detection check:', { hasMedia: data.hasMedia, media: data.media, type: data.type, messageType: data.messageType, imageMessage: data.message?.imageMessage, videoMessage: data.message?.videoMessage, documentMessage: data.message?.documentMessage, detectedMedia: hasMedia })
-    }
-
-    const sessionState = await getSessionState(phoneNumber)
+    console.log('🔍 Media detection check:', { hasMedia: data.hasMedia, media: data.media, type: data.type, messageType: data.messageType, imageMessage: data.message?.imageMessage, videoMessage: data.message?.videoMessage, documentMessage: data.message?.documentMessage, detectedMedia: hasMedia })
 
     // Cross-instance idempotency via Memcache
     const mc = getMemcacheClient()
@@ -95,22 +85,10 @@ export async function POST(request: NextRequest) {
     if (processed?.responded) return NextResponse.json({ success: true })
     processedMessages.set(messageId, { timestamp: Date.now(), responseId: `resp-${Date.now()}`, responded: false })
 
-    // Fast-path intents (non-media)
-    if (!hasMedia && message && message.trim()) {
-      const quickHandled = await handleQuickIntent(message, sessionState, phoneNumber)
-      if (quickHandled) {
-        const msgData = processedMessages.get(messageId)
-        if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
-        console.log('⚡ Quick intent handled without assistant')
-        return NextResponse.json({ success: true })
-      }
-    }
-
     // Media handling
     if (hasMedia) {
       console.log('🔄 Processing media message...')
-      await sendWhatsAppResponse(phoneNumber, 'Got it 👍 downloading your media...')
-      const mediaResponse = await handleMediaMessage(data, phoneNumber, sessionState)
+      const mediaResponse = await handleMediaMessage(data, phoneNumber)
       if (mediaResponse) {
         await sendWhatsAppResponse(phoneNumber, mediaResponse)
         if (mediaResponse.includes('successfully')) await postAssistantMessageIfThread(phoneNumber, mediaResponse)
@@ -129,7 +107,6 @@ export async function POST(request: NextRequest) {
 
     console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`)
     try {
-      if (message && message.trim()) await sendWhatsAppResponse(phoneNumber, 'Let me check that for you...')
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media')
       if (assistantResponse && assistantResponse.trim()) {
         await sendWhatsAppResponse(phoneNumber, assistantResponse)
@@ -149,138 +126,4 @@ export async function POST(request: NextRequest) {
     // Return success to prevent webhook retries
     return NextResponse.json({ success: true })
   }
-}
-
-type QuickIntentHandler = (message: string, session: ChatSessionState, phoneNumber: string) => Promise<boolean>
-
-type QuickIntentDefinition = {
-  test: RegExp | ((msg: string) => boolean)
-  handler: QuickIntentHandler
-  ack?: string
-}
-
-const QUICK_INTENT_HANDLERS: QuickIntentDefinition[] = [
-  {
-    test: /^(hi|hello|hey|yo|good (morning|afternoon|evening))\b/,
-    ack: 'One sec, crafting a reply...',
-    handler: async (_message, session, phoneNumber) => {
-      const name = session?.inspectorName ? ` ${session.inspectorName.split(' ')[0]}` : ''
-      await sendWhatsAppResponse(phoneNumber, `Hi${name}! 👋 I\'m here to help with your inspections. Ask me for your jobs or type [help] if you need ideas.`)
-      return true
-    }
-  },
-  {
-    test: (msg: string) => /jobs?/.test(msg) && /(show|what|list|today)/.test(msg),
-    ack: 'Got it—retrieving today\'s jobs...',
-    handler: async (_message, session, phoneNumber) => {
-      const payload = await executeTool('getTodayJobs', {
-        inspectorId: session?.inspectorId,
-        inspectorPhone: session?.inspectorPhone || session?.phoneNumber || phoneNumber
-      }, undefined, phoneNumber, session)
-      const data = safeJsonParse(payload)
-      if (!data?.success) {
-        await sendWhatsAppResponse(phoneNumber, 'I couldn\'t find your jobs right now. Please try again in a moment or ask an admin to check your assignment.')
-        return true
-      }
-      if (!data.jobs || data.jobs.length === 0) {
-        await sendWhatsAppResponse(phoneNumber, 'It seems there are no inspection jobs available for today.')
-        return true
-      }
-      await sendWhatsAppResponse(phoneNumber, formatJobsList(data.jobs))
-      return true
-    }
-  },
-  {
-    test: (msg: string) => /start/.test(msg) && /job/.test(msg),
-    ack: 'On it—checking your job details...',
-    handler: async (_message, session, phoneNumber) => {
-      const jobId = session?.workOrderId
-      if (!jobId) {
-        await sendWhatsAppResponse(phoneNumber, 'Please select a job first before starting. Ask me for your jobs if you need the list again!')
-        return true
-      }
-      const payload = await executeTool('startJob', { jobId }, undefined, phoneNumber, session)
-      const data = safeJsonParse(payload)
-      if (!data?.success) {
-        await sendWhatsAppResponse(phoneNumber, 'I wasn\'t able to start the job. If it\'s already running, try asking for the locations instead.')
-        return true
-      }
-      await sendWhatsAppResponse(phoneNumber, formatStartJob(data))
-      return true
-    }
-  },
-  {
-    test: (msg: string) => /(show|list).*(location|room)/.test(msg) || /^locations?$/.test(msg),
-    ack: 'One moment, getting the locations...',
-    handler: async (_message, session, phoneNumber) => {
-      const jobId = session?.workOrderId
-      if (!jobId) {
-        await sendWhatsAppResponse(phoneNumber, 'Once you pick a job I\'ll show you the locations to inspect. Ask me for today\'s jobs to get started!')
-        return true
-      }
-      const payload = await executeTool('getJobLocations', { jobId }, undefined, phoneNumber, session)
-      const data = safeJsonParse(payload)
-      if (!data?.success || !Array.isArray(data.locationsFormatted)) {
-        await sendWhatsAppResponse(phoneNumber, 'I couldn\'t fetch the locations just now. Try again shortly or start the job again to refresh the list.')
-        return true
-      }
-      await sendWhatsAppResponse(phoneNumber, formatLocationsList(data.locationsFormatted))
-      return true
-    }
-  },
-  {
-    test: (msg: string) => /(upload|send).*(photo|picture|media)/.test(msg),
-    ack: 'All right, primed to save your photo...',
-    handler: async (_message, session, phoneNumber) => {
-      const locationHint = session?.currentLocation ? ` for ${session.currentLocation}` : ''
-      await sendWhatsAppResponse(phoneNumber, `Sure! Snap the photo${locationHint ? ` ${locationHint}` : ''} and send it here. You can add a caption to record remarks and I\'ll save both together.`)
-      return true
-    }
-  }
-]
-
-async function handleQuickIntent(message: string, session: ChatSessionState, phoneNumber: string): Promise<boolean> {
-  const normalized = message.trim().toLowerCase()
-  if (!normalized) return false
-  for (const intent of QUICK_INTENT_HANDLERS) {
-    try {
-      const match = intent.test instanceof RegExp ? intent.test.test(normalized) : intent.test(normalized)
-      if (match) {
-        if (intent.ack) {
-          try { await sendWhatsAppResponse(phoneNumber, intent.ack) } catch (error) { console.error('Quick intent ack failed:', error) }
-        }
-        return await intent.handler(normalized, session, phoneNumber)
-      }
-    } catch (error) {
-      console.error('Quick intent handler failed:', error)
-    }
-  }
-  return false
-}
-
-function safeJsonParse(payload: string | null | undefined) {
-  if (!payload) return null
-  try { return JSON.parse(payload) } catch (error) {
-    console.error('Failed to parse tool response:', error)
-    return null
-  }
-}
-
-function formatJobsList(jobs: any[]) {
-  const lines = jobs.map((job: any) => {
-    const selection = job.selectionNumber || `[${job.jobNumber || '?'}]`
-    return `${selection}\n🏠 Property: ${job.property || 'Unknown'}\n⏰ Time: ${job.time || '—'}\n👤 Customer: ${job.customer || 'Unknown'}\n⭐ Priority: ${job.priority || 'Normal'}\nStatus: ${job.status || 'SCHEDULED'}`
-  })
-  const prompt = `Type ${jobs.map((job: any) => job.selectionNumber || `[${job.jobNumber}]`).join(', ')} to select a job.`
-  return `Here are your inspection jobs for today:\n\n${lines.join('\n\n')}\n\n${prompt}`
-}
-
-function formatStartJob(data: any) {
-  const locations = Array.isArray(data.locationsFormatted) ? data.locationsFormatted.join('\n') : 'No locations found yet.'
-  const progress = data.progress ? `Progress: ${data.progress.completed_tasks || 0}/${data.progress.total_tasks || 0} tasks completed.` : ''
-  return `The job has been successfully started! Here are the locations available for inspection:\n\n${locations}\n\n${progress ? `${progress}\n\n` : ''}Please select a location to continue the inspection.`
-}
-
-function formatLocationsList(locationsFormatted: string[]) {
-  return `Here are the locations available for inspection:\n\n${locationsFormatted.join('\n')}\n\nReply with the number (e.g., 1) to select a location.`
 }
