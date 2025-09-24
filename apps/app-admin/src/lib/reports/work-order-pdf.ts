@@ -210,17 +210,36 @@ async function buildRemarkSegment({
   text,
   photoUrls,
   videoUrls,
-  imageCache
+  imageCache,
+  seenPhotos,
+  seenVideos
 }: {
   text?: string
   photoUrls: string[]
   videoUrls: string[]
   imageCache: Map<string, Buffer>
-}): Promise<CellSegment> {
+  seenPhotos?: Set<string>
+  seenVideos?: Set<string>
+}): Promise<CellSegment | null> {
   const normalizedPhotos = photoUrls.filter(Boolean)
   const normalizedVideos = videoUrls.filter(Boolean)
-  const images = await loadImages(normalizedPhotos, imageCache)
-  const remainingPhotoUrls = normalizedPhotos.slice(images.length)
+
+  const uniquePhotos = normalizedPhotos.filter((url) => {
+    if (!seenPhotos) return true
+    return !seenPhotos.has(url)
+  })
+
+  uniquePhotos.forEach((url) => seenPhotos?.add(url))
+
+  const uniqueVideos = normalizedVideos.filter((url) => {
+    if (!seenVideos) return true
+    return !seenVideos.has(url)
+  })
+
+  uniqueVideos.forEach((url) => seenVideos?.add(url))
+
+  const images = await loadImages(uniquePhotos, imageCache)
+  const remainingPhotoUrls = uniquePhotos.slice(images.length)
 
   const lines: string[] = []
   const hasRemark = Boolean(text && text.trim().length > 0)
@@ -228,9 +247,7 @@ async function buildRemarkSegment({
     lines.push(text!.trim())
   }
 
-  // if (images.length > 0 && !hasRemark) {
-  //   lines.push(`Photos attached (${images.length}).`)
-  // }
+
 
   if (remainingPhotoUrls.length > 0) {
     lines.push("Additional photo links:")
@@ -242,7 +259,7 @@ async function buildRemarkSegment({
     }
   }
 
-  const { items: videoItems, overflowLines } = buildVideoItems(normalizedVideos)
+  const { items: videoItems, overflowLines } = buildVideoItems(uniqueVideos)
   if (videoItems.length > 0) {
     videoItems.forEach((item) => {
       lines.push(`${item.label}: ${truncateUrl(item.url)}`)
@@ -252,10 +269,12 @@ async function buildRemarkSegment({
     lines.push(...overflowLines)
   }
 
-
+  if (!hasRemark && images.length === 0 && videoItems.length === 0 && remainingPhotoUrls.length === 0 && overflowLines.length === 0) {
+    return null
+  }
 
   return {
-    text: lines.join("\n"),
+    text: lines.length > 0 ? lines.join("\n") : undefined,
     photos: images,
     videos: videoItems
   }
@@ -270,39 +289,50 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
     const reportEntries = standaloneEntries.filter((entry: any) => entry?.includeInReport !== false)
 
     const remarkSegments: CellSegment[] = []
+    const seenItemPhotos = new Set<string>()
+    const seenItemVideos = new Set<string>()
 
     if (typeof item.remarks === "string" && item.remarks.trim().length > 0) {
-      remarkSegments.push(
-        await buildRemarkSegment({
-          text: `Summary - ${item.remarks.trim()}`,
-          photoUrls: Array.isArray(item.photos) ? item.photos : [],
-          videoUrls: Array.isArray(item.videos) ? item.videos : [],
-          imageCache
-        })
-      )
+      const summarySegment = await buildRemarkSegment({
+        text: `Summary - ${item.remarks.trim()}`,
+        photoUrls: Array.isArray(item.photos) ? item.photos : [],
+        videoUrls: Array.isArray(item.videos) ? item.videos : [],
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (summarySegment) {
+        remarkSegments.push(summarySegment)
+      }
     } else if (
       (Array.isArray(item.photos) && item.photos.length > 0) ||
       (Array.isArray(item.videos) && item.videos.length > 0)
     ) {
-      remarkSegments.push(
-        await buildRemarkSegment({
-          text: undefined,
-          photoUrls: Array.isArray(item.photos) ? item.photos : [],
-          videoUrls: Array.isArray(item.videos) ? item.videos : [],
-          imageCache
-        })
-      )
+      const mediaOnlySegment = await buildRemarkSegment({
+        text: undefined,
+        photoUrls: Array.isArray(item.photos) ? item.photos : [],
+        videoUrls: Array.isArray(item.videos) ? item.videos : [],
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (mediaOnlySegment) {
+        remarkSegments.push(mediaOnlySegment)
+      }
     }
 
     for (const entry of reportEntries as EntryLike[]) {
-      remarkSegments.push(
-        await buildRemarkSegment({
-          text: formatEntryLine(entry),
-          photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
-          videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
-          imageCache
-        })
-      )
+      const entrySegment = await buildRemarkSegment({
+        text: formatEntryLine(entry),
+        photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
+        videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (entrySegment) {
+        remarkSegments.push(entrySegment)
+      }
     }
 
     const remarkCell: TableCell = remarkSegments.length
@@ -330,25 +360,31 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
         (Array.isArray(task.photos) && task.photos.length > 0) ||
         (Array.isArray(task.videos) && task.videos.length > 0)
       ) {
-        taskSegments.push(
-          await buildRemarkSegment({
-            text: undefined,
-            photoUrls: Array.isArray(task.photos) ? task.photos : [],
-            videoUrls: Array.isArray(task.videos) ? task.videos : [],
-            imageCache
-          })
-        )
+        const taskMediaSegment = await buildRemarkSegment({
+          text: undefined,
+          photoUrls: Array.isArray(task.photos) ? task.photos : [],
+          videoUrls: Array.isArray(task.videos) ? task.videos : [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        if (taskMediaSegment) {
+          taskSegments.push(taskMediaSegment)
+        }
       }
 
       for (const entry of filteredEntries as EntryLike[]) {
-        taskSegments.push(
-          await buildRemarkSegment({
-            text: formatEntryLine(entry),
-            photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
-            videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
-            imageCache
-          })
-        )
+        const taskEntrySegment = await buildRemarkSegment({
+          text: formatEntryLine(entry),
+          photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
+          videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        if (taskEntrySegment) {
+          taskSegments.push(taskEntrySegment)
+        }
       }
 
       const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
