@@ -28,6 +28,48 @@ export async function buildLocationsFormatted(workOrderId: string): Promise<stri
   return locs.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
 }
 
+const GREETING_KEYWORDS = ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening']
+const DONE_KEYWORDS = ['done', 'completed', 'complete', 'finished', 'finish', 'submitted']
+const HELP_KEYWORDS = ['help', 'assist', 'support', 'stuck']
+const SELECTION_REGEX = /^\s*(?:\[\s*(\d{1,2})\s*\]|option\s+(\d{1,2})|(\d{1,2}))\s*([).,;-])?\s*$/i
+
+function normalizeMessage(message: string) {
+  return message.trim().toLowerCase()
+}
+
+export function buildInstantReply(message: string, hasMedia: boolean): string {
+  if (hasMedia) return '📸 Thanks! I\'m saving your media now—hang tight for the update.'
+
+  const normalized = normalizeMessage(message)
+  if (!normalized) return '✅ Got it! Let me check that for you.'
+
+  const matchSelection = message.match(SELECTION_REGEX)
+  const selectedNumber = matchSelection ? (matchSelection[1] || matchSelection[2] || matchSelection[3]) : null
+  if (selectedNumber) return `☑️ Option [${selectedNumber}] received—processing that now.`
+
+  const isGreeting = GREETING_KEYWORDS.some(keyword => normalized === keyword || normalized.startsWith(`${keyword} `))
+  if (isGreeting) return '👋 Hi there! Let me pull up your inspection details.'
+
+  const containsDoneKeyword = DONE_KEYWORDS.some(keyword => normalized.includes(keyword))
+  if (containsDoneKeyword) return '👍 Noted! I\'m updating the inspection record now.'
+
+  const containsHelpKeyword = HELP_KEYWORDS.some(keyword => normalized.includes(keyword))
+  if (containsHelpKeyword) return '💡 I\'m here to help—give me a moment to sort this out.'
+
+  const isQuestion = message.trim().endsWith('?') || /\b(what|when|where|how|why|can|could|should|do you|does)\b/i.test(message)
+  if (isQuestion) return '🔎 Thanks for the question! Checking the details for you now.'
+
+  if (normalized.includes('photo') || normalized.includes('picture') || normalized.includes('image')) {
+    return '📸 Got your note about photos—give me a moment to handle that.'
+  }
+
+  if (normalized.includes('job') || normalized.includes('work order') || normalized.includes('schedule')) {
+    return '🗂️ On it—fetching your job schedule now.'
+  }
+
+  return '✅ Thanks for the update! Let me process that for you.'
+}
+
 // Utility: resolve inspector id from session/phone/work order and persist to session if found
 export async function resolveInspectorIdForSession(sessionId: string, metadata: any, workOrderId?: string, fallbackPhone?: string): Promise<string | null> {
   // 1) session
