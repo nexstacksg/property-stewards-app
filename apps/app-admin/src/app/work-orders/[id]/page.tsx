@@ -24,8 +24,6 @@ import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
 import ItemEntriesDialog from "@/components/item-entries-dialog"
 import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
-import { GenerateWorkOrderPdfButton } from "@/components/generate-work-order-pdf-button"
-import { buildWorkOrderReportFilename } from "@/lib/filename"
 
 async function getWorkOrder(id: string) {
   const workOrder = await prisma.workOrder.findUnique({
@@ -152,12 +150,6 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
     totalSubItems += subItemCount
   })
 
-  const reportFileName = buildWorkOrderReportFilename(
-    workOrder.contract?.customer?.name,
-    workOrder.contract?.address?.postalCode,
-    workOrder.id
-  )
-
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -188,7 +180,6 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               Edit Work Order
             </Button>
           </Link>
-          <GenerateWorkOrderPdfButton workOrderId={workOrder.id} fileName={reportFileName} />
         </div>
       </div>
 
