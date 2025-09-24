@@ -29,6 +29,13 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
+  let instantReplyPromise: Promise<void> | null = null
+  const waitForInstantReply = async () => {
+    if (!instantReplyPromise) return
+    try { await instantReplyPromise } catch (error) { console.error('⚠️ Instant acknowledgement failed after dispatch:', error) }
+    instantReplyPromise = null
+  }
+
   try {
     // Verify webhook secret
     const { searchParams } = new URL(request.url)
@@ -88,9 +95,13 @@ export async function POST(request: NextRequest) {
     // Instant acknowledgement so inspectors get immediate feedback while processing continues
     try {
       const instantReply = buildInstantReply(message || '', hasMedia)
-      if (instantReply) await sendWhatsAppResponse(phoneNumber, instantReply)
+      if (instantReply) {
+        instantReplyPromise = sendWhatsAppResponse(phoneNumber, instantReply)
+          .then(() => {})
+          .catch(error => { console.error('⚠️ Failed to send instant acknowledgement:', error) })
+      }
     } catch (error) {
-      console.error('⚠️ Failed to send instant acknowledgement:', error)
+      console.error('⚠️ Error preparing instant acknowledgement:', error)
     }
 
     // Media handling
@@ -98,6 +109,7 @@ export async function POST(request: NextRequest) {
       console.log('🔄 Processing media message...')
       const mediaResponse = await handleMediaMessage(data, phoneNumber)
       if (mediaResponse) {
+        await waitForInstantReply()
         await sendWhatsAppResponse(phoneNumber, mediaResponse)
         if (mediaResponse.includes('successfully')) await postAssistantMessageIfThread(phoneNumber, mediaResponse)
         const msgData = processedMessages.get(messageId)
@@ -109,7 +121,10 @@ export async function POST(request: NextRequest) {
 
     // Skip empty non-media
     if (!message || !message.trim()) {
-      if (!hasMedia) return NextResponse.json({ success: true })
+      if (!hasMedia) {
+        await waitForInstantReply()
+        return NextResponse.json({ success: true })
+      }
       console.log('📎 Media-only message detected')
     }
 
@@ -117,6 +132,7 @@ export async function POST(request: NextRequest) {
     try {
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media')
       if (assistantResponse && assistantResponse.trim()) {
+        await waitForInstantReply()
         await sendWhatsAppResponse(phoneNumber, assistantResponse)
         const msgData = processedMessages.get(messageId)
         if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
@@ -124,14 +140,17 @@ export async function POST(request: NextRequest) {
       }
     } catch (error) {
       console.error('❌ Error in assistant processing:', error)
+      await waitForInstantReply()
       await sendWhatsAppResponse(phoneNumber, 'Sorry, I encountered an error processing your request. Please try again.')
       const msgData = processedMessages.get(messageId)
       if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
     }
+    await waitForInstantReply()
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('❌ Webhook error:', error)
     // Return success to prevent webhook retries
+    await waitForInstantReply()
     return NextResponse.json({ success: true })
   }
 }
