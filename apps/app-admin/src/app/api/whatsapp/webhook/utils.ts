@@ -2,6 +2,10 @@ import prisma from '@/lib/prisma'
 import { updateSessionState } from '@/lib/chat-session'
 import { getLocationsWithCompletionStatus, getInspectorByPhone, getContractChecklistItemIdByLocation } from '@/lib/services/inspectorService'
 
+const debugLog = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== 'production') console.log(...args)
+}
+
 // Utility: detect if Wassenger payload contains media
 export function detectHasMedia(data: any): boolean {
   return Boolean(
@@ -130,7 +134,7 @@ export async function saveMediaForItem(itemId: string, inspectorId: string | nul
         ? { photos: { push: publicUrl } }
         : { videos: { push: publicUrl } }
     })
-    console.log('✅ Media saved to inspector entry for inspector', inspectorId)
+    debugLog('✅ Media saved to inspector entry for inspector', inspectorId)
   } else {
     await prisma.contractChecklistItem.update({
       where: { id: itemId },
@@ -138,7 +142,7 @@ export async function saveMediaForItem(itemId: string, inspectorId: string | nul
         ? { photos: { push: publicUrl } }
         : { videos: { push: publicUrl } }
     })
-    console.log('✅ Media saved to contract checklist item', itemId)
+    debugLog('✅ Media saved to contract checklist item', itemId)
   }
 }
 
@@ -181,7 +185,7 @@ export async function sendWhatsAppResponse(to: string, message: string) {
       throw new Error(`Wassenger API error: ${response.status} - ${error}`)
     }
     const result = await response.json()
-    console.log(`✅ Message sent to ${to}`)
+    debugLog(`✅ Message sent to ${to}`)
     return result
   } catch (error) {
     console.error('❌ Error sending WhatsApp message:', error)

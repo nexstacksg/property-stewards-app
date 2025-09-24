@@ -6,6 +6,10 @@ import { assistantTools, executeTool } from './tools'
 import { ASSISTANT_VERSION, INSTRUCTIONS } from '@/app/api/assistant-instructions'
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
+const debugLog = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== 'production') console.log(...args)
+}
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 // Thread management for WhatsApp conversations (in-memory hint; persisted via session)
@@ -110,9 +114,9 @@ async function waitForRunCompletion(threadId: string, runId: string) {
     await new Promise(resolve => setTimeout(resolve, 100))
     runStatus = await openai.beta.threads.runs.retrieve(runId, { thread_id: threadId })
     attempts++
-    if (attempts % 50 === 0) console.log(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`) 
+    if (attempts % 50 === 0) debugLog(`⏳ Still waiting for run completion... (${attempts / 10}s elapsed)`) 
   }
-  if (attempts >= maxAttempts) console.log(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`)
+  if (attempts >= maxAttempts) debugLog(`⚠️ Run completion timed out after ${maxAttempts / 10} seconds`)
   return runStatus
 }
 
