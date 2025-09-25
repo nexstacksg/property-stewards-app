@@ -18,7 +18,8 @@
     "db:seed:item-entries": "tsx prisma/seed-item-entries.ts",
     "db:studio": "prisma studio",
     "cache:warm": "tsx scripts/warm-cache.ts",
-    "cache:warm:ci": "pnpm cache:warm || true"
+    "cache:warm:ci": "pnpm cache:warm || true",
+    "typecheck": "tsc --noEmit"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

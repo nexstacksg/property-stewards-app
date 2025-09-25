@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { normalizePropertySize } from '@/lib/property-size'
 
 // PATCH /api/customer-addresses/[id] - Update a customer address
 export async function PATCH(
@@ -19,16 +20,40 @@ export async function PATCH(
       status
     } = body
 
+    let normalizedSize: string | undefined
+    if (typeof propertySize === 'string' && propertySize.trim().length > 0) {
+      let typeForSize = propertyType
+      if (!typeForSize) {
+        const existing = await prisma.customerAddress.findUnique({
+          where: { id },
+          select: { propertyType: true }
+        })
+        typeForSize = existing?.propertyType
+      }
+
+      try {
+        normalizedSize = normalizePropertySize(typeForSize, propertySize)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid property size'
+        return NextResponse.json({ error: message }, { status: 400 })
+      }
+    }
+
+    const updateData: any = {
+      address,
+      postalCode,
+      propertyType,
+      remarks,
+      status
+    }
+
+    if (normalizedSize !== undefined) {
+      updateData.propertySize = normalizedSize
+    }
+
     const customerAddress = await prisma.customerAddress.update({
       where: { id },
-      data: {
-        address,
-        postalCode,
-        propertyType,
-        propertySize,
-        remarks,
-        status
-      }
+      data: updateData
     })
 
     return NextResponse.json(customerAddress)
