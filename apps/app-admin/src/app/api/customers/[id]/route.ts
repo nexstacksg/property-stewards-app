@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { normalizePropertySize } from '@/lib/property-size'
 
 // GET /api/customers/[id] - Get a single customer
 export async function GET(
@@ -124,6 +125,26 @@ export async function PUT(
     } = body
 
     // Use transaction to update customer and addresses
+    let preparedAddresses: Array<any> | undefined
+    try {
+      if (Array.isArray(addresses)) {
+        preparedAddresses = addresses.map((address: any, index: number) => {
+          const hasSize = typeof address?.propertySize === 'string' && address.propertySize.trim().length > 0
+          if (!hasSize) {
+            throw new Error(`Address #${index + 1} is missing property size`)
+          }
+
+          return {
+            ...address,
+            normalizedSize: normalizePropertySize(address.propertyType, address.propertySize)
+          }
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid property size'
+      return NextResponse.json({ error: message }, { status: 400 })
+    }
+
     const customer = await prisma.$transaction(async (tx) => {
       // Update customer
       const updatedCustomer = await tx.customer.update({
@@ -156,8 +177,8 @@ export async function PUT(
       }
 
       // Update or create addresses
-      if (addresses && addresses.length > 0) {
-        for (const address of addresses) {
+      if (preparedAddresses && preparedAddresses.length > 0) {
+        for (const address of preparedAddresses) {
           if (address.id) {
             // Update existing address
             await tx.customerAddress.update({
@@ -166,7 +187,7 @@ export async function PUT(
                 address: address.address,
                 postalCode: address.postalCode,
                 propertyType: address.propertyType,
-                propertySize: address.propertySize,
+                propertySize: address.normalizedSize,
                 remarks: address.remarks,
                 status: address.status || 'ACTIVE'
               }
@@ -179,7 +200,7 @@ export async function PUT(
                 address: address.address,
                 postalCode: address.postalCode,
                 propertyType: address.propertyType,
-                propertySize: address.propertySize,
+                propertySize: address.normalizedSize,
                 remarks: address.remarks,
                 status: 'ACTIVE'
               }

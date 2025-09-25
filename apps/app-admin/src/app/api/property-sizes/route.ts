@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { normalizePropertySize } from '@/lib/property-size'
 
 // GET /api/property-sizes?type=HDB
 // Returns size options for a given property type code
@@ -19,7 +20,24 @@ export async function GET(request: NextRequest) {
       orderBy: [{ name: 'asc' }]
     })
 
-    return NextResponse.json(sizes)
+    const seen = new Map<string, { id: string; code: string; name: string }>()
+
+    for (const size of sizes) {
+      try {
+        const normalizedCode = normalizePropertySize(type, size.code)
+        const candidate = { ...size, code: normalizedCode }
+        const existing = seen.get(normalizedCode)
+
+        if (!existing || size.code === normalizedCode) {
+          seen.set(normalizedCode, candidate)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown property size error'
+        console.warn(`Skipping property size option ${size.code}: ${message}`)
+      }
+    }
+
+    return NextResponse.json(Array.from(seen.values()))
   } catch (e) {
     console.error('Error fetching property sizes:', e)
     return NextResponse.json({ error: 'Failed to fetch property sizes' }, { status: 500 })
@@ -60,4 +78,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Failed to create property size' }, { status: 500 })
   }
 }
-

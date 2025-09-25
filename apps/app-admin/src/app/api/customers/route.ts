@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { normalizePropertySize } from '@/lib/property-size'
 
 // GET /api/customers - Get all customers
 export async function GET(request: NextRequest) {
@@ -66,7 +67,6 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    
     const {
       name,
       type,
@@ -91,6 +91,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Create customer with addresses if provided
+    let addressPayload
+
+    if (Array.isArray(addresses)) {
+      addressPayload = addresses.map((addr: any, index: number) => {
+        if (!addr?.propertyType || !addr?.propertySize) {
+          throw new Error(`Address #${index + 1} is missing propertyType or propertySize`)
+        }
+
+        return {
+          address: addr.address,
+          postalCode: addr.postalCode,
+          propertyType: addr.propertyType,
+          propertySize: normalizePropertySize(addr.propertyType, addr.propertySize),
+          remarks: addr.remarks
+        }
+      })
+    }
+
     const customer = await prisma.customer.create({
       data: {
         name,
@@ -104,15 +122,7 @@ export async function POST(request: NextRequest) {
         memberTier,
         billingAddress,
         remarks,
-        addresses: addresses ? {
-          create: addresses.map((addr: any) => ({
-            address: addr.address,
-            postalCode: addr.postalCode,
-            propertyType: addr.propertyType,
-            propertySize: addr.propertySize,
-            remarks: addr.remarks
-          }))
-        } : undefined
+        addresses: addressPayload ? { create: addressPayload } : undefined
       },
       include: {
         addresses: true
@@ -122,6 +132,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(customer, { status: 201 })
   } catch (error) {
     console.error('Error creating customer:', error)
+    if (error instanceof Error && /property size/i.test(error.message)) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 400 }
+      )
+    }
     return NextResponse.json(
       { error: 'Failed to create customer' },
       { status: 500 }
