@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import prisma from "@/lib/prisma"
+import { normalizePropertySize } from "@/lib/property-size"
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -19,13 +20,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     // Create the address
+    let normalizedSize: string
+    try {
+      normalizedSize = normalizePropertySize(body.propertyType, body.propertySize)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid property size'
+      return NextResponse.json({ error: message }, { status: 400 })
+    }
+
     const address = await prisma.customerAddress.create({
       data: {
         customerId: id,
         address: body.address,
         postalCode: body.postalCode,
         propertyType: body.propertyType,
-        propertySize: body.propertySize,
+        propertySize: normalizedSize,
         remarks: body.remarks || null,
         status: "ACTIVE"
       }
