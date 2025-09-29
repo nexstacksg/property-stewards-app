@@ -83,6 +83,10 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
 
   const contract = checklistItem.contractChecklist?.contract
   const tasks = Array.isArray(checklistItem.checklistTasks) ? checklistItem.checklistTasks : []
+  const subtaskNames = tasks
+    .map((task: any) => (typeof task.name === 'string' ? task.name.trim() : ''))
+    .filter((name: string) => name.length > 0)
+  const subtaskSummary = subtaskNames.length > 0 ? subtaskNames.join(', ') : 'No subtasks assigned'
   const standaloneEntries = (Array.isArray(checklistItem.contributions) ? checklistItem.contributions : []).filter(
     (entry: any) => !entry.task
   )
@@ -212,10 +216,9 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                   <p className="text-muted-foreground">Status</p>
                   <p className="font-medium">{checklistItem.status || 'N/A'}</p>
                 </div>
-                
-                  <div>
-                  <p className="text-muted-foreground">Remark</p>
-                  <p className="font-medium">{checklistItem.remarks || 'N/A'}</p>
+                <div>
+                  <p className="text-muted-foreground">Subtasks</p>
+                  <p className="font-medium truncate" title={subtaskSummary}>{subtaskSummary}</p>
                 </div>
               </div>
             </div>

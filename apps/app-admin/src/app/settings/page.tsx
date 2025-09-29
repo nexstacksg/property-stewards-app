@@ -1,13 +1,16 @@
 import Link from "next/link"
+import { redirect } from "next/navigation"
+import { cookies } from "next/headers"
 import { ArrowLeft } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { prisma } from "@/lib/prisma"
+import { getAuthSecret } from "@/lib/auth-secret"
+import { verifyJwt } from "@/lib/jwt"
 
 import MasterSettingsPanel, {
-  type ChecklistSummary,
   type MasterSettingsSectionKey,
   type PropertySummary,
   type UserSummary
@@ -15,22 +18,52 @@ import MasterSettingsPanel, {
 
 const masterSections: MasterSettingsSectionKey[] = [
   "user-settings",
-  "master-data",
-  "permission",
+  "data-settings",
+  "documentation",
 ]
 
+async function getCurrentUser(): Promise<UserSummary | null> {
+  const cookieStore = await cookies()
+  const sessionToken = cookieStore.get("session")?.value
+  if (!sessionToken) {
+    return null
+  }
+
+  const secret = getAuthSecret()
+  if (!secret) {
+    return null
+  }
+
+  const payload = await verifyJwt<{ sub?: string }>(sessionToken, secret)
+  if (!payload?.sub) {
+    return null
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      confirmed: true,
+    }
+  })
+
+  if (!user) {
+    return null
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    confirmed: user.confirmed,
+  }
+}
+
 export default async function SettingsPage() {
-  const [users, properties, checklists] = await Promise.all([
-    prisma.user.findMany({
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        role: true,
-        confirmed: true,
-      },
-      orderBy: { username: "asc" },
-    }),
+  const [currentUser, properties] = await Promise.all([
+    getCurrentUser(),
     prisma.property.findMany({
       select: {
         id: true,
@@ -49,24 +82,15 @@ export default async function SettingsPage() {
       },
       orderBy: { name: "asc" },
     }),
-    prisma.checklist.findMany({
-      select: {
-        id: true,
-        name: true,
-        propertyType: true,
-        status: true,
-      },
-      orderBy: { name: "asc" },
-    }),
   ])
 
-  const userSummaries: UserSummary[] = users.map((user) => ({ ...user }))
+  if (!currentUser) {
+    redirect("/login")
+  }
+
   const propertySummaries: PropertySummary[] = properties.map((property) => ({
     ...property,
     sizes: property.sizes.map((size) => ({ ...size })),
-  }))
-  const checklistSummaries: ChecklistSummary[] = checklists.map((checklist) => ({
-    ...checklist,
   }))
 
   return (
@@ -81,7 +105,7 @@ export default async function SettingsPage() {
           <div>
             <h1 className="text-3xl font-bold leading-tight">Settings</h1>
             <p className="text-sm text-muted-foreground">
-              Configure user settings, master data records, and workspace permissions.
+              Tune workspace defaults, manage your admin profile, and maintain property data.
             </p>
           </div>
         </div>
@@ -96,9 +120,8 @@ export default async function SettingsPage() {
         <CardContent>
           <MasterSettingsPanel
             sections={masterSections}
-            users={userSummaries}
+            currentUser={currentUser}
             properties={propertySummaries}
-            checklists={checklistSummaries}
           />
         </CardContent>
       </Card>
