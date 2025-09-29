@@ -18,16 +18,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Property type not found' }, { status: 404 })
     }
 
-    await prisma.$transaction([
-      prisma.property.update({
-        where: { id },
-        data: { status: 'INACTIVE' }
-      }),
-      prisma.propertySizeOption.updateMany({
-        where: { propertyId: id },
-        data: { status: 'INACTIVE' }
-      })
-    ])
+    await prisma.property.delete({ where: { id } })
 
     return NextResponse.json({ success: true })
   } catch (error) {
