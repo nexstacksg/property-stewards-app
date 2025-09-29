@@ -71,6 +71,7 @@ export default async function SettingsPage() {
         name: true,
         status: true,
         sizes: {
+          where: { status: 'ACTIVE' },
           select: {
             id: true,
             code: true,
