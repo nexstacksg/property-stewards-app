@@ -1,35 +1,24 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { Database, Shield, Users } from "lucide-react"
+import { useEffect, useMemo, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
+import { BookOpen, Database, UserCog, Plus, Trash2, Loader2 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import type { PropertyType, Role, Status } from "@prisma/client"
+import type { Status } from "@prisma/client"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { cn } from "@/lib/utils"
 
 export type UserSummary = {
   id: string
   username: string
   email: string
-  role: Role
   confirmed: boolean
 }
 
@@ -46,23 +35,15 @@ export type PropertySummary = {
   }>
 }
 
-export type ChecklistSummary = {
-  id: string
-  name: string
-  propertyType: PropertyType
-  status: Status
-}
-
 export type MasterSettingsSectionKey =
   | "user-settings"
-  | "master-data"
-  | "permission"
+  | "data-settings"
+  | "documentation"
 
 export type MasterSettingsPanelProps = {
   sections: MasterSettingsSectionKey[]
-  users: UserSummary[]
+  currentUser: UserSummary | null
   properties: PropertySummary[]
-  checklists: ChecklistSummary[]
 }
 
 const SECTION_METADATA: Record<MasterSettingsSectionKey, {
@@ -71,19 +52,19 @@ const SECTION_METADATA: Record<MasterSettingsSectionKey, {
   icon: LucideIcon
 }> = {
   "user-settings": {
-    title: "User Settings",
-    description: "Manage administrator accounts, profiles, and authentication.",
-    icon: Users,
+    title: "My Account",
+    description: "Update your administrator email, username, and passwords.",
+    icon: UserCog,
   },
-  "master-data": {
-    title: "Master Data CRUD",
-    description: "Configure master records such as properties, clients, and asset catalogs.",
+  "data-settings": {
+    title: "Data Settings",
+    description: "Maintain property types and size options used across contracts.",
     icon: Database,
   },
-  permission: {
-    title: "Permission",
-    description: "Define roles, access policies, and workspace-level guardrails.",
-    icon: Shield,
+  documentation: {
+    title: "Workspace Documentation",
+    description: "Review internal references that guide assistant and admin workflows.",
+    icon: BookOpen,
   },
 }
 
@@ -92,294 +73,585 @@ const statusVariantMap: Record<Status, "default" | "outline"> = {
   INACTIVE: "outline",
 }
 
-function UserSettingsForm({ users }: { users: UserSummary[] }) {
-  if (!users.length) {
+const documentationResources = [
+  {
+    title: "Property Inspector Assistant v0.2",
+    description:
+      "Architecture notes for Property Stewards' inspection assistant and the operational tooling that supports inspectors.",
+    filePath: "apps/app-admin/docs/openai.md",
+    url: "https://github.com/property-stewards-app/property-stewards-app/blob/main/apps/app-admin/docs/openai.md",
+    highlights: [
+      "Explains how the inspection assistant guides property teams through daily work using structured prompts and responses.",
+      "Documents the four custom tools (getTodayJobs, selectJob, getJobLocations, completeTask) that keep inspections in sync with the platform.",
+      "Outlines thread lifecycle management so chats retain context across runs and deployments.",
+      "Lists required environment variables (OPENAI_API_KEY, TEST_INSPECTOR_PHONE, TEST_INSPECTOR_ID) for local and staging setups.",
+    ],
+  },
+]
+
+function DocumentationPanel() {
+  return (
+    <div className="space-y-6">
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle>Internal References</CardTitle>
+          <CardDescription>
+            Key documents that outline how assistants integrate with inspection operations and the supporting infrastructure.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {documentationResources.map((resource) => (
+            <div
+              key={resource.title}
+              className="space-y-4 rounded-lg border bg-muted/10 p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-foreground">
+                    {resource.title}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {resource.description}
+                  </p>
+                </div>
+                <Badge variant="outline">Markdown</Badge>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Highlights
+                </p>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                  {resource.highlights.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Document location:
+                <span className="ml-1 font-mono text-[11px] text-foreground">{resource.filePath}</span>
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function UserAccountForm({ user }: { user: UserSummary | null }) {
+  const [username, setUsername] = useState(user?.username ?? "")
+  const [email, setEmail] = useState(user?.email ?? "")
+  const [newPassword, setNewPassword] = useState("")
+
+  if (!user) {
     return (
       <p className="text-sm text-muted-foreground">
-        No admin users found. Create a user to get started.
+        No administrator profile detected. Add an admin user first.
       </p>
     )
   }
 
   return (
     <div className="space-y-6">
-      {users.map((user) => (
-        <div
-          key={user.id}
-          className="space-y-4 rounded-lg border bg-white/80 p-4 shadow-sm"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-foreground">{user.username}</p>
-              <p className="text-xs text-muted-foreground">{user.email}</p>
-            </div>
-            <Badge variant={user.confirmed ? "default" : "outline"}>
-              {user.confirmed ? "Confirmed" : "Pending"}
-            </Badge>
+      <div className="rounded-lg border bg-white/80 p-4 shadow-sm">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="account-username">Username</Label>
+            <Input
+              id="account-username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="off"
+            />
+            <p className="text-xs text-muted-foreground">
+              This name appears in audit logs and PDF exports.
+            </p>
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor={`username-${user.id}`}>Username</Label>
-              <Input
-                id={`username-${user.id}`}
-                defaultValue={user.username}
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor={`email-${user.id}`}>Email</Label>
-              <Input id={`email-${user.id}`} defaultValue={user.email} type="email" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor={`role-${user.id}`}>Role</Label>
-              <Select defaultValue={user.role}>
-                <SelectTrigger id={`role-${user.id}`}>
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ADMIN">Administrator</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor={`password-${user.id}`}>Reset Password</Label>
-              <Input
-                id={`password-${user.id}`}
-                placeholder="Generate new password"
-                type="password"
-              />
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="account-email">Email</Label>
+            <Input
+              id="account-email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Used for login credentials and notification delivery.
+            </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm">Save Changes</Button>
-            <Button size="sm" variant="outline">
-              Send password reset email
-            </Button>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="account-password">New Password</Label>
+            <Input
+              id="account-password"
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="Generate a new password or leave blank"
+            />
           </div>
         </div>
-      ))}
+
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Button size="sm">Save Account Changes</Button>
+          <Button size="sm" variant="outline">
+            Send Password Reset Email
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
 
-function MasterDataForm({
-  properties,
-  checklists,
-}: {
-  properties: PropertySummary[]
-  checklists: ChecklistSummary[]
-}) {
+function DataSettingsPanel({ properties }: { properties: PropertySummary[] }) {
+  const router = useRouter()
+  const [propertyList, setPropertyList] = useState<PropertySummary[]>(properties)
   const [selectedPropertyId, setSelectedPropertyId] = useState(
     () => properties[0]?.id ?? ""
   )
-  const [selectedChecklistId, setSelectedChecklistId] = useState(
-    () => checklists[0]?.id ?? ""
-  )
+  const [newPropertyName, setNewPropertyName] = useState("")
+  const [newPropertyCode, setNewPropertyCode] = useState("")
+  const [newSizeLabel, setNewSizeLabel] = useState("")
+  const [sizeFeedback, setSizeFeedback] = useState<string | null>(null)
+  const [sizePending, startSizeTransition] = useTransition()
+  const [propertyFeedback, setPropertyFeedback] = useState<string | null>(null)
+  const [propertyPending, startPropertyTransition] = useTransition()
+
+  useEffect(() => {
+    setPropertyList(properties)
+    if (!properties.some((property) => property.id === selectedPropertyId)) {
+      setSelectedPropertyId(properties[0]?.id ?? "")
+    }
+  }, [properties, selectedPropertyId])
 
   const activeProperty = useMemo(
-    () => properties.find((property) => property.id === selectedPropertyId),
-    [properties, selectedPropertyId]
+    () => propertyList.find((property) => property.id === selectedPropertyId),
+    [propertyList, selectedPropertyId]
   )
-  const activeChecklist = useMemo(
-    () => checklists.find((item) => item.id === selectedChecklistId),
-    [checklists, selectedChecklistId]
-  )
+  const propertyCount = propertyList.length
+  const hasProperties = propertyCount > 0
 
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="property-select">Property Type</Label>
-          <Select value={selectedPropertyId} onValueChange={setSelectedPropertyId}>
-            <SelectTrigger id="property-select">
-              <SelectValue placeholder="Select property" />
-            </SelectTrigger>
-            <SelectContent>
-              {properties.map((property) => (
-                <SelectItem key={property.id} value={property.id}>
-                  {property.name} ({property.code})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="checklist-select">Checklist Template</Label>
-          <Select value={selectedChecklistId} onValueChange={setSelectedChecklistId}>
-            <SelectTrigger id="checklist-select">
-              <SelectValue placeholder="Select checklist" />
-            </SelectTrigger>
-            <SelectContent>
-              {checklists.map((checklist) => (
-                <SelectItem key={checklist.id} value={checklist.id}>
-                  {checklist.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+  const normalizedCode = (value: string) =>
+    value
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/_{2,}/g, '_')
+      .replace(/^_|_$/g, '')
 
-      {activeProperty ? (
-        <div className="space-y-3 rounded-lg border bg-white/80 p-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-foreground">
-              {activeProperty.name} sizes
-            </p>
-            <Badge variant={statusVariantMap[activeProperty.status]}>
-              {activeProperty.status.toLowerCase()}
-            </Badge>
-          </div>
-          {activeProperty.sizes.length ? (
-            <div className="flex flex-wrap gap-2">
-              {activeProperty.sizes.map((size) => (
-                <Badge
-                  key={size.id}
-                  variant={statusVariantMap[size.status]}
-                  className="uppercase"
-                >
-                  {size.name}
-                </Badge>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No size options configured yet.
-            </p>
-          )}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Select a property type to view available sizes.
-        </p>
-      )}
+  const handleAddPropertyType: React.FormEventHandler<HTMLFormElement> = (event) => {
+    event.preventDefault()
+    if (propertyPending) return
 
-      {activeChecklist ? (
-        <div className="space-y-2 rounded-lg border bg-white/80 p-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-semibold text-foreground">
-              {activeChecklist.name}
-            </p>
-            <Badge variant="outline">{activeChecklist.propertyType}</Badge>
-            <Badge variant={activeChecklist.status === "ACTIVE" ? "default" : "outline"}>
-              {activeChecklist.status.toLowerCase()}
-            </Badge>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="checklist-name">Update name</Label>
-              <Input id="checklist-name" defaultValue={activeChecklist.name} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="checklist-property">Property type</Label>
-              <Input
-                id="checklist-property"
-                value={activeChecklist.propertyType}
-                disabled
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm">Save Checklist</Button>
-            <Button size="sm" variant="outline">
-              Duplicate Template
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Select a checklist template to review its details.
-        </p>
-      )}
-    </div>
-  )
-}
+    const name = newPropertyName.trim()
+    const rawCode = newPropertyCode.trim()
+    if (!name || !rawCode) {
+      setPropertyFeedback('Display name and code are required')
+      return
+    }
 
-function PermissionForm({ users }: { users: UserSummary[] }) {
-  const [roleDrafts, setRoleDrafts] = useState<Record<string, Role>>(() =>
-    users.reduce<Record<string, Role>>((acc, user) => {
-      acc[user.id] = user.role
-      return acc
-    }, {})
-  )
+    const code = normalizedCode(rawCode)
+    if (!code) {
+      setPropertyFeedback('Code must contain letters or numbers')
+      return
+    }
 
-  const availableRoles = useMemo(() => {
-    const roles = new Set<Role>(users.map((user) => user.role))
-    // Ensure ADMIN is always present while schema evolves
-    roles.add("ADMIN")
-    return Array.from(roles)
-  }, [users])
+    setPropertyFeedback(null)
 
-  if (!users.length) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Role assignments will appear here once users are added.
-      </p>
-    )
+    startPropertyTransition(async () => {
+      try {
+        const response = await fetch('/api/properties', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, code })
+        })
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          setPropertyFeedback(data.error || 'Failed to add property type')
+          return
+        }
+
+        const created: PropertySummary = await response.json()
+        const enriched: PropertySummary = { ...created, sizes: [] }
+
+        setPropertyList((prev) =>
+          [...prev, enriched].sort((a, b) => a.name.localeCompare(b.name))
+        )
+        setSelectedPropertyId(enriched.id)
+        setNewPropertyName('')
+        setNewPropertyCode('')
+        setPropertyFeedback('Property type added')
+        router.refresh()
+      } catch (error) {
+        console.error('Failed to add property type', error)
+        setPropertyFeedback('Failed to add property type')
+      }
+    })
+  }
+
+  const handleDeleteProperty = (propertyId: string) => {
+    if (propertyPending) return
+    const confirmed = typeof window === 'undefined' ? true : window.confirm('Delete this property type? Related size options will be archived.')
+    if (!confirmed) return
+    setPropertyFeedback(null)
+
+    startPropertyTransition(async () => {
+      try {
+        const response = await fetch(`/api/properties/${propertyId}`, {
+          method: 'DELETE'
+        })
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          setPropertyFeedback(data.error || 'Failed to remove property type')
+          return
+        }
+
+        let nextSelected = selectedPropertyId
+        setPropertyList((prev) => {
+          const next = prev.filter((property) => property.id !== propertyId)
+          if (!next.some((property) => property.id === selectedPropertyId)) {
+            nextSelected = next[0]?.id ?? ''
+          }
+          return next
+        })
+        if (nextSelected !== selectedPropertyId) {
+          setSelectedPropertyId(nextSelected)
+        }
+        setPropertyFeedback('Property type removed')
+        router.refresh()
+      } catch (error) {
+        console.error('Failed to remove property type', error)
+        setPropertyFeedback('Failed to remove property type')
+      }
+    })
+  }
+
+  const handleAddSize = () => {
+    if (!activeProperty || sizePending) return
+    const label = newSizeLabel.trim()
+    if (!label) {
+      setSizeFeedback('Size label is required')
+      return
+    }
+
+    const code = normalizedCode(label)
+    if (!code) {
+      setSizeFeedback('Size label must contain letters or numbers')
+      return
+    }
+
+    setSizeFeedback(null)
+    startSizeTransition(async () => {
+      try {
+        const response = await fetch('/api/property-sizes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            propertyCode: activeProperty.code,
+            code,
+            name: label,
+          }),
+        })
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          setSizeFeedback(data.error || 'Failed to add size option')
+          return
+        }
+
+        const created = await response.json()
+        setPropertyList((prev) =>
+          prev.map((property) =>
+            property.id === activeProperty.id
+              ? {
+                  ...property,
+                  sizes: [...property.sizes, created].sort((a, b) => a.name.localeCompare(b.name)),
+                }
+              : property
+          )
+        )
+        setNewSizeLabel('')
+        setSizeFeedback('Size option added')
+        router.refresh()
+      } catch (error) {
+        console.error('Failed to add size option', error)
+        setSizeFeedback('Failed to add size option')
+      }
+    })
+  }
+
+  const handleRemoveSize = (sizeId: string) => {
+    if (!activeProperty || sizePending) return
+    const confirmed = typeof window === 'undefined' ? true : window.confirm('Remove this size option?')
+    if (!confirmed) return
+    setSizeFeedback(null)
+
+    startSizeTransition(async () => {
+      try {
+        const response = await fetch(`/api/property-sizes/${sizeId}`, {
+          method: 'DELETE',
+        })
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          setSizeFeedback(data.error || 'Failed to remove size option')
+          return
+        }
+
+        setPropertyList((prev) =>
+          prev.map((property) =>
+            property.id === activeProperty.id
+              ? {
+                  ...property,
+                  sizes: property.sizes.filter((size) => size.id !== sizeId),
+                }
+              : property
+          )
+        )
+        setSizeFeedback('Size option removed')
+        router.refresh()
+      } catch (error) {
+        console.error('Failed to remove size option', error)
+        setSizeFeedback('Failed to remove size option')
+      }
+    })
   }
 
   return (
-    <div className="space-y-4">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>User</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead className="w-[160px]">Role</TableHead>
-            <TableHead className="w-[120px] text-right">Status</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {users.map((user) => (
-            <TableRow key={user.id}>
-              <TableCell>{user.username}</TableCell>
-              <TableCell>{user.email}</TableCell>
-              <TableCell>
-                <Select
-                  value={roleDrafts[user.id]}
-                  onValueChange={(value) =>
-                    setRoleDrafts((draft) => ({
-                      ...draft,
-                      [user.id]: value as Role,
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableRoles.map((role) => (
-                      <SelectItem key={role} value={role}>
-                        {role}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </TableCell>
-              <TableCell className="text-right">
-                <Badge variant={user.confirmed ? "default" : "outline"}>
-                  {user.confirmed ? "Active" : "Pending"}
-                </Badge>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="outline">
-          Discard Draft
-        </Button>
-        <Button size="sm">Apply Roles</Button>
-      </div>
+    <div className="space-y-6">
+      <Card className="shadow-sm">
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle>Property Catalogue</CardTitle>
+              <CardDescription>Review existing property types and their status.</CardDescription>
+            </div>
+            <Badge variant="outline" className="font-medium">
+              {propertyCount} type{propertyCount === 1 ? "" : "s"}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-6 lg:grid-cols-[260px_1fr]">
+          <div className="space-y-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Property Types</p>
+            {hasProperties ? (
+              <ScrollArea className="h-[280px] rounded-lg border bg-muted/10 p-2">
+                <div className="space-y-2">
+                  {propertyList.map((property) => {
+                    const isActive = selectedPropertyId === property.id
+                    return (
+                      <button
+                        key={property.id}
+                        type="button"
+                        onClick={() => setSelectedPropertyId(property.id)}
+                        className={cn(
+                          "w-full rounded-md border bg-white p-3 text-left transition hover:border-primary hover:bg-primary/5",
+                          isActive && "border-primary bg-primary/10"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="truncate">
+                            <p className="text-sm font-medium text-foreground truncate">
+                              {property.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground uppercase">{property.code}</p>
+                          </div>
+                          <Badge variant={statusVariantMap[property.status]} className="uppercase">
+                            {property.status.toLowerCase()}
+                          </Badge>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </ScrollArea>
+            ) : (
+              <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                No property types configured yet. Add one below to get started.
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Select a property type to update its size options or remove it from the catalogue.
+            </p>
+          </div>
+          <div className="space-y-5">
+            {activeProperty ? (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-foreground">
+                      {activeProperty.name}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Code · <span className="font-medium">{activeProperty.code}</span>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={statusVariantMap[activeProperty.status]} className="uppercase">
+                      {activeProperty.status.toLowerCase()}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      onClick={() => handleDeleteProperty(activeProperty.id)}
+                      disabled={propertyPending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Size Options
+                  </p>
+                  {activeProperty.sizes.length === 0 ? (
+                    <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                      No size options configured for this property type yet.
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {activeProperty.sizes.map((size) => (
+                        <div
+                          key={size.id}
+                          className="flex items-center justify-between gap-3 rounded-lg border bg-white p-3 shadow-sm"
+                        >
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{size.name}</p>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide">{size.code}</p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => handleRemoveSize(size.id)}
+                            disabled={sizePending}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3 rounded-lg border border-dashed bg-muted/10 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <Plus className="h-4 w-4" />
+                    Add Size Option
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[2fr_minmax(0,1fr)]">
+                    <div className="space-y-2">
+                      <Label htmlFor="new-size-label">Label</Label>
+                      <Input
+                        id="new-size-label"
+                        placeholder="e.g. 1200 sqft"
+                        value={newSizeLabel}
+                        onChange={(event) => setNewSizeLabel(event.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <Button size="sm" onClick={handleAddSize} disabled={sizePending}>
+                        {sizePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        <span className="sr-only">Add size option</span>
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setNewSizeLabel("")} disabled={sizePending}>
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+                  {sizeFeedback && (
+                    <p className={cn('text-xs', sizeFeedback.includes('Failed') ? 'text-destructive' : 'text-green-600')}>
+                      {sizeFeedback}
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                Add a property type to begin managing its size options.
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle>Add Property Type</CardTitle>
+          <CardDescription>Create a new property type with a unique display name and code.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form className="space-y-4" onSubmit={handleAddPropertyType}>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="new-property-name">Display Name</Label>
+                <Input
+                  id="new-property-name"
+                  placeholder="e.g. Industrial Warehouse"
+                  value={newPropertyName}
+                  onChange={(event) => setNewPropertyName(event.target.value)}
+                  disabled={propertyPending}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-property-code">Code</Label>
+                <Input
+                  id="new-property-code"
+                  placeholder="IW-01"
+                  value={newPropertyCode}
+                  onChange={(event) => setNewPropertyCode(event.target.value)}
+                  disabled={propertyPending}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-property-notes">Internal Notes</Label>
+              <Textarea
+                id="new-property-notes"
+                placeholder="Optional context or instructions for this property type."
+                rows={3}
+                disabled={propertyPending}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" className="gap-2" type="submit" disabled={propertyPending}>
+                {propertyPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add Property Type
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  setNewPropertyName("")
+                  setNewPropertyCode("")
+                  setPropertyFeedback(null)
+                }}
+                disabled={propertyPending}
+              >
+                Clear
+              </Button>
+            </div>
+            {propertyFeedback && (
+              <p className={cn('text-xs', propertyFeedback.includes('Failed') ? 'text-destructive' : 'text-green-600')}>
+                {propertyFeedback}
+              </p>
+            )}
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }
 
 export default function MasterSettingsPanel({
   sections,
-  users,
+  currentUser,
   properties,
-  checklists,
 }: MasterSettingsPanelProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
 
@@ -390,19 +662,14 @@ export default function MasterSettingsPanel({
     }))
   }
 
-  const renderSectionContent = (key: string) => {
+  const renderSectionContent = (key: MasterSettingsSectionKey) => {
     switch (key) {
       case "user-settings":
-        return <UserSettingsForm users={users} />
-      case "master-data":
-        return (
-          <MasterDataForm
-            properties={properties}
-            checklists={checklists}
-          />
-        )
-      case "permission":
-        return <PermissionForm users={users} />
+        return <UserAccountForm user={currentUser} />
+      case "data-settings":
+        return <DataSettingsPanel properties={properties} />
+      case "documentation":
+        return <DocumentationPanel />
       default:
         return null
     }
