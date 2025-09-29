@@ -91,7 +91,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               const workOrder = await prisma.workOrder.findUnique({ where: { id: workOrderId }, include: { contract: { include: { contractChecklist: { include: { items: { where: { name: location } } } } } } } })
               if ((workOrder as any)?.contract?.contractChecklist?.items[0]) await prisma.contractChecklistItem.update({ where: { id: (workOrder as any).contract.contractChecklist.items[0].id }, data: { remarks: notes } })
             }
-            return JSON.stringify({ success: true, message: `All tasks for ${location} have been marked complete!`, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'Please select the condition for this location: [1] Good, [2] Fair, [3] Unsatisfactory, [4] Not Applicable, [5] Un-Observable. Reply with the number.' })
+            return JSON.stringify({ success: true, message: `All tasks for ${location} have been marked complete!`, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'Please select the condition for this location: [1] Good, [2] Fair, [3] Un-Satisfactory, [4] Not Applicable, [5] Un-Observable. Reply with the number.' })
           }
           return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
         }

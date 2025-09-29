@@ -19,9 +19,9 @@ const CONDITION_OPTIONS = [
   { value: "", label: "Select condition" },
   { value: "GOOD", label: "Good" },
   { value: "FAIR", label: "Fair" },
-  { value: "UNSATISFACTORY", label: "Unsatisfactory" },
+  { value: "UNSATISFACTORY", label: "Un-Satisfactory" },
   { value: "NOT_APPLICABLE", label: "Not Applicable" },
-  { value: "UN_OBSERVABLE", label: "Un-observable" }
+  { value: "UN_OBSERVABLE", label: "Un-Observable" }
 ]
 
 type Task = {

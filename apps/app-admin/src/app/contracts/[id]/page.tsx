@@ -390,10 +390,12 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                         </Badge>
                       </div>
                     </div>
-                    <Button variant="outline" size="sm">
-                      <FileText className="h-4 w-4 mr-2" />
-                      View
-                    </Button>
+                    <Link href={`/contracts/${contract.id}/checklist`}>
+                      <Button variant="outline" size="sm">
+                        <FileText className="h-4 w-4 mr-2" />
+                        View
+                      </Button>
+                    </Link>
                   </div>
                 </div>
               )}
