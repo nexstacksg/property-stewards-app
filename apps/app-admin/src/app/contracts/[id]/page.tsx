@@ -5,9 +5,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AddChecklistButton } from "@/components/add-checklist-button"
-import { 
-  ArrowLeft, 
-  Edit, 
+import {
+  ArrowLeft,
+  Edit,
   User,
   MapPin,
   Calendar,
@@ -20,7 +20,8 @@ import {
   AlertCircle
 } from "lucide-react"
 import prisma from "@/lib/prisma"
-import { GeneratePdfButton } from "@/components/generate-pdf-button"
+import { PreviewPdfButton } from "@/components/preview-pdf-button"
+import { GenerateContractReportButton } from "@/components/generate-contract-report-button"
 import { buildContractReportFilename } from "@/lib/filename"
 
 async function getContract(id: string) {
@@ -111,6 +112,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
     contract.address?.postalCode,
     contract.id
   )
+  const defaultReportTitle = `${contractTypeLabel} Report`
 
   return (
     <div className="p-6 space-y-6">
@@ -137,21 +139,21 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         </div>
         <div className="flex gap-2">
           <Link href={`/contracts/${contract.id}/edit`}>
-            <Button>
+            <Button variant="outline">
               <Edit className="h-4 w-4 mr-2" />
               Edit Contract
             </Button>
           </Link>
-          <Link href={`/work-orders/new?contractId=${contract.id}`}>
-            <Button variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Work Order
-            </Button>
-          </Link>
-          <GeneratePdfButton
+          
+          <PreviewPdfButton
             href={`/api/contracts/${contract.id}/report`}
             fileName={contractReportFileName}
-            label="Generate PDF"
+            label="Preview PDF"
+          />
+          <GenerateContractReportButton
+            contractId={contract.id}
+            defaultTitle={defaultReportTitle}
+            defaultFileName={contractReportFileName}
           />
         </div>
       </div>
@@ -446,6 +448,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               </CardContent>
             </Card>
           </div>
+
         </div>
       </div>
     </div>

@@ -16,6 +16,7 @@ model User {
   role         Role     @default(ADMIN)
   confirmed    Boolean  @default(false)
   itemEntries  ItemEntry[]
+  reports      ContractReport[]
 }
 
 model Customer {
@@ -131,6 +132,7 @@ model Contract {
   customer           Customer           @relation(fields: [customerId], references: [id])
   contractChecklist  ContractChecklist?
   workOrders         WorkOrder[]
+  reports            ContractReport[]
 
   @@index([customerId])
   @@index([addressId])
@@ -240,6 +242,22 @@ model WorkOrder {
   @@index([scheduledStartDateTime])
 }
 
+model ContractReport {
+  id               String   @id @default(cuid())
+  contractId       String
+  title            String
+  version          Decimal  @db.Decimal(4, 1)
+  generatedOn      DateTime @default(now())
+  generatedById    String?
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  generatedBy User?    @relation(fields: [generatedById], references: [id], onDelete: SetNull)
+
+  @@unique([contractId, version])
+  @@index([contractId])
+  @@index([generatedOn])
+}
+
 // New Property table to manage available property types dynamically
 model Property {
   id        String   @id @default(cuid())
@@ -252,6 +270,7 @@ model Property {
 
   @@index([status])
 }
+
 
 // Property size options linked to Property (type)
 model PropertySizeOption {
@@ -327,7 +346,6 @@ enum Condition {
   FAIR
   UNSATISFACTORY
   NOT_APPLICABLE
-  UN_OBSERVABLE
 }
 
 enum InspectorType {

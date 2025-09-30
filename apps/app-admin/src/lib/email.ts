@@ -1,10 +1,17 @@
 import nodemailer from 'nodemailer'
 
+type EmailAttachment = {
+  filename: string
+  content: Buffer | string
+  contentType?: string
+}
+
 type SendEmailOptions = {
   to: string
   subject: string
   html: string
   text?: string
+  attachments?: EmailAttachment[]
 }
 
 let transporter: nodemailer.Transporter | null
@@ -32,7 +39,7 @@ function resolveTransporter(): nodemailer.Transporter | null {
   return transporter
 }
 
-export async function sendEmail({ to, subject, html, text }: SendEmailOptions): Promise<void> {
+export async function sendEmail({ to, subject, html, text, attachments }: SendEmailOptions): Promise<void> {
   const from = process.env.EMAIL_FROM
   if (!from) {
     console.warn('EMAIL_FROM is not configured. Skipping email send.')
@@ -42,7 +49,7 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
   const transport = resolveTransporter()
   if (!transport) {
     console.warn(`Pretending to send email to ${to}. Configure SMTP to enable email delivery.`)
-    console.info('[Email preview]', { to, subject, html, text })
+    console.info('[Email preview]', { to, subject, html, text, attachments: attachments?.map((file) => file.filename) })
     return
   }
 
@@ -52,5 +59,8 @@ export async function sendEmail({ to, subject, html, text }: SendEmailOptions): 
     subject,
     text,
     html,
+    attachments,
   })
 }
+
+export type { EmailAttachment, SendEmailOptions }

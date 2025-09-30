@@ -3,7 +3,7 @@ import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import prisma from '@/lib/prisma'
 import { s3Client, BUCKET_NAME, PUBLIC_URL } from '@/lib/s3-client'
 
-const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE', 'UN_OBSERVABLE']
+const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE']
 
 function normalizeCondition(value: unknown) {
   if (typeof value !== 'string') return undefined

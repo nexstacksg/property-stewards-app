@@ -50,7 +50,7 @@ async function getContractWithWorkOrders(id: string) {
                           username: true,
                           email: true
                         }
-                      } 
+                      }
                     },
                     orderBy: { createdOn: "asc" }
                   }
@@ -72,23 +72,8 @@ async function getContractWithWorkOrders(id: string) {
   }) as any
 }
 
-export async function GET(_: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const { id } = await context.params
-  const contract = await getContractWithWorkOrders(id)
-
-  if (!contract) {
-    return new Response("Contract not found", { status: 404 })
-  }
-
+async function writeContractReport(doc: any, contract: any, customTitle?: string | null) {
   const workOrders = contract.workOrders || []
-  if (workOrders.length === 0) {
-    return new Response("No work orders linked to this contract", { status: 404 })
-  }
-
-  const PDFDocument = await getPDFDocumentCtor()
-  const doc: any = new PDFDocument({ size: "A4", margin: TABLE_MARGIN })
-  const stream = new PassThrough()
-  doc.pipe(stream)
 
   const logoBuffer = getLogoBuffer()
   if (logoBuffer) {
@@ -101,7 +86,10 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
   }
 
   const contractTypeLabel = formatEnum(contract.contractType) || "Inspection"
-  doc.font("Helvetica-Bold").fontSize(18).text(`Title: ${contractTypeLabel} Report`, { align: "center" })
+  const headingTitle = customTitle && customTitle.trim().length > 0
+    ? customTitle.trim()
+    : `${contractTypeLabel} Report`
+  doc.font("Helvetica-Bold").fontSize(18).text(` ${headingTitle}`, { align: "center" })
   doc.moveDown()
 
   doc.font("Helvetica").fontSize(12)
@@ -125,30 +113,30 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
 
   const imageCache = new Map<string, Buffer>()
 
-  const workOrderLabels = workOrders.map((wo:any) => wo.id.slice(-8).toUpperCase())
+  const workOrderLabels = workOrders.map((wo: any) => wo.id.slice(-8).toUpperCase())
   const combinedHeading = `Work Orders: ${workOrderLabels.join(' -- ')}`
   const scheduleStart = workOrders
-    .map((wo:any) => (wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime).getTime() : undefined))
-    .filter((value:any): value is number => typeof value === 'number')
+    .map((wo: any) => (wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime).getTime() : undefined))
+    .filter((value: any): value is number => typeof value === 'number')
   const scheduleEnd = workOrders
-    .map((wo:any) => (wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime).getTime() : undefined))
-    .filter((value : any): value is number => typeof value === 'number')
+    .map((wo: any) => (wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime).getTime() : undefined))
+    .filter((value: any): value is number => typeof value === 'number')
 
   const minScheduledStart = scheduleStart.length ? new Date(Math.min(...scheduleStart)).toISOString() : null
   const maxScheduledEnd = scheduleEnd.length ? new Date(Math.max(...scheduleEnd)).toISOString() : null
 
   const actualStarts = workOrders
-    .map((wo:any) => (wo.actualStart ? new Date(wo.actualStart).getTime() : undefined))
-    .filter((value:any): value is number => typeof value === 'number')
+    .map((wo: any) => (wo.actualStart ? new Date(wo.actualStart).getTime() : undefined))
+    .filter((value: any): value is number => typeof value === 'number')
   const actualEnds = workOrders
-    .map((wo:any) => (wo.actualEnd ? new Date(wo.actualEnd).getTime() : undefined))
-    .filter((value : any): value is number => typeof value === 'number')
+    .map((wo: any) => (wo.actualEnd ? new Date(wo.actualEnd).getTime() : undefined))
+    .filter((value: any): value is number => typeof value === 'number')
 
   const minActualStart = actualStarts.length ? new Date(Math.min(...actualStarts)).toISOString() : null
   const maxActualEnd = actualEnds.length ? new Date(Math.max(...actualEnds)).toISOString() : null
 
   const inspectorsMap = new Map<string, any>()
-  workOrders.forEach((wo:any) => {
+  workOrders.forEach((wo: any) => {
     (wo.inspectors || []).forEach((ins: any) => {
       if (!inspectorsMap.has(ins.id)) {
         inspectorsMap.set(ins.id, ins)
@@ -167,7 +155,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
     doc.text(`Actual: ${actualRange}`)
   }
   const workOrderStatusSummary = workOrders
-    .map((wo:any) => `${wo.id.slice(-8).toUpperCase()}: ${formatEnum(wo.status) || wo.status}`)
+    .map((wo: any) => `${wo.id.slice(-8).toUpperCase()}: ${formatEnum(wo.status) || wo.status}`)
     .join(' | ')
   if (workOrderStatusSummary) {
     doc.text(`Statuses: ${workOrderStatusSummary}`)
@@ -200,6 +188,30 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
     includeMeta: false,
     filterByWorkOrderId: null
   })
+}
+
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params
+  const contract = await getContractWithWorkOrders(id)
+
+  if (!contract) {
+    return new Response("Contract not found", { status: 404 })
+  }
+
+  const workOrders = contract.workOrders || []
+  if (workOrders.length === 0) {
+    return new Response("No work orders linked to this contract", { status: 404 })
+  }
+
+  const PDFDocument = await getPDFDocumentCtor()
+  const doc: any = new PDFDocument({ size: "A4", margin: TABLE_MARGIN })
+  const stream = new PassThrough()
+  doc.pipe(stream)
+
+  const { searchParams } = new URL(request.url)
+  const customTitle = searchParams.get("title")
+
+  await writeContractReport(doc, contract, customTitle)
 
   doc.end()
 

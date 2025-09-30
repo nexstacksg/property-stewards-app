@@ -1,4 +1,4 @@
-function sanitizeSegment(value: string | null | undefined): string {
+export function sanitizeSegment(value: string | null | undefined): string {
   if (!value) return ""
   return value
     .toString()
