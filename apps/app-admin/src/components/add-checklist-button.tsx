@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { Plus, Loader2 } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { showToast } from "@/lib/toast"
 
 interface ChecklistTemplate {
   id: string
@@ -75,13 +76,14 @@ export function AddChecklistButton({ contractId, propertyType }: AddChecklistBut
       if (response.ok) {
         setOpen(false)
         router.refresh()
+        showToast({ title: "Checklist assigned", variant: "success" })
       } else {
         const error = await response.json()
-        alert(error.error || 'Failed to add checklist')
+        showToast({ title: "Failed to add checklist", description: error.error, variant: "error" })
       }
     } catch (error) {
       console.error('Error adding checklist:', error)
-      alert('Failed to add checklist')
+      showToast({ title: 'Failed to add checklist', variant: 'error' })
     } finally {
       setCreating(false)
     }

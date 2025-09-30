@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { showToast } from '@/lib/toast'
 
 type Property = { id: string; code: string; name: string }
 
@@ -105,9 +106,10 @@ export default function PropertyTypeSelect({ value, onChange, placeholder }: Pro
       setOptions((prev) => [...prev, data])
       onChange(data.code)
       setAddOpen(false)
+      showToast({ title: 'Property type added', variant: 'success' })
     } catch (e) {
       console.error(e)
-      alert((e as Error).message)
+      showToast({ title: 'Failed to add property type', description: (e as Error).message, variant: 'error' })
     } finally {
       setSaving(false)
     }

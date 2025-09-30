@@ -152,24 +152,33 @@ async function loadImages(urls: string[], cache: Map<string, Buffer>): Promise<B
 }
 
 function formatEntryLine(entry: EntryLike) {
-  const reporterLabels: string[] = []
+  const metaParts: string[] = []
 
   if (entry.inspector?.name) {
-    reporterLabels.push(`Inspector: ${entry.inspector.name}`)
+    metaParts.push(`Inspector: ${entry.inspector.name}`)
   }
 
   const userName = entry.user?.username || entry.user?.email
   if (userName) {
-    reporterLabels.push(`Admin: ${userName}`)
+    metaParts.push(`Admin: ${userName}`)
   }
 
-  if (reporterLabels.length === 0) {
-    reporterLabels.push("Team member")
+  const recordedAt = formatDateTime(entry.createdOn)
+  if (recordedAt) {
+    metaParts.push(`Recorded: ${recordedAt}`)
   }
 
-  const reporter = reporterLabels.join(" ")
+  if (metaParts.length === 0) {
+    metaParts.push("Inspector: Team member")
+  }
+
+  const lines = [metaParts.join(" • ")]
   const remarkText = entry.remarks?.trim()
-  return remarkText && remarkText.length > 0 ? `${reporter} - ${remarkText}` : `${reporter}`
+  if (remarkText && remarkText.length > 0) {
+    lines.push(`Remarks: ${remarkText}`)
+  }
+
+  return lines.join("\n")
 }
 
 function truncateUrl(url: string, maxLength = 80) {
@@ -204,6 +213,16 @@ function buildVideoItems(urls: string[]) {
         ? [`• +${overflowCount} more video link(s)`]
         : []
   }
+}
+
+function buildInspectorMeta(inspectorName?: string | null, recordedOn?: Date | string | null) {
+  const parts: string[] = []
+  parts.push(`Inspector: ${inspectorName || "Team member"}`)
+  const recorded = formatDateTime(recordedOn)
+  if (recorded) {
+    parts.push(`Recorded: ${recorded}`)
+  }
+  return parts.join(' • ')
 }
 
 async function buildRemarkSegment({
@@ -292,9 +311,16 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
     const seenItemPhotos = new Set<string>()
     const seenItemVideos = new Set<string>()
 
+    const itemMetaLine = buildInspectorMeta(item.enteredBy?.name, item.enteredOn)
+
     if (typeof item.remarks === "string" && item.remarks.trim().length > 0) {
+      const summaryLines: string[] = []
+      if (itemMetaLine && !itemMetaLine.startsWith('Inspector: Team member')) {
+        summaryLines.push(itemMetaLine)
+      }
+      summaryLines.push(`Summary - ${item.remarks.trim()}`)
       const summarySegment = await buildRemarkSegment({
-        text: `Summary - ${item.remarks.trim()}`,
+        text: summaryLines.join("\n"),
         photoUrls: Array.isArray(item.photos) ? item.photos : [],
         videoUrls: Array.isArray(item.videos) ? item.videos : [],
         imageCache,
@@ -309,7 +335,7 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
       (Array.isArray(item.videos) && item.videos.length > 0)
     ) {
       const mediaOnlySegment = await buildRemarkSegment({
-        text: undefined,
+        text: itemMetaLine || undefined,
         photoUrls: Array.isArray(item.photos) ? item.photos : [],
         videoUrls: Array.isArray(item.videos) ? item.videos : [],
         imageCache,
@@ -360,8 +386,9 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
         (Array.isArray(task.photos) && task.photos.length > 0) ||
         (Array.isArray(task.videos) && task.videos.length > 0)
       ) {
+        const taskMetaLine = buildInspectorMeta(task.inspector?.name, task.createdOn)
         const taskMediaSegment = await buildRemarkSegment({
-          text: undefined,
+          text: taskMetaLine,
           photoUrls: Array.isArray(task.photos) ? task.photos : [],
           videoUrls: Array.isArray(task.videos) ? task.videos : [],
           imageCache,

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { Loader2, FilePlus } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { showToast } from "@/lib/toast"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -26,6 +28,7 @@ export function GenerateContractReportButton({
   defaultTitle,
   defaultFileName,
 }: GenerateContractReportButtonProps) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState(defaultTitle)
   const [submitting, setSubmitting] = useState(false)
@@ -36,47 +39,40 @@ export function GenerateContractReportButton({
     }
   }, [open, defaultTitle])
 
-  const buildDownloadName = () => {
-    const base = title.trim().length > 0
-      ? title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-      : ""
-    if (base) {
-      return `${base}.pdf`
-    }
-    return defaultFileName.endsWith(".pdf") ? defaultFileName : `${defaultFileName}.pdf`
-  }
-
   const handleSubmit = async () => {
     if (submitting) return
     setSubmitting(true)
     try {
-      const url = new URL(`/api/contracts/${contractId}/report`, window.location.origin)
-      if (title.trim().length > 0) {
-        url.searchParams.set("title", title.trim())
-      }
-
-      const response = await fetch(url.toString(), {
-        cache: "no-store",
+      const response = await fetch(`/api/contracts/${contractId}/reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
       })
 
       if (!response.ok) {
         throw new Error(`Failed to generate PDF (${response.status})`)
       }
 
-      const blob = await response.blob()
-      const blobUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement("a")
-      link.href = blobUrl
-      link.download = buildDownloadName()
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(blobUrl)
+      const data = await response.json()
+      const downloadUrl: string | undefined = data?.fileUrl
+      if (downloadUrl) {
+        const link = document.createElement("a")
+        link.href = downloadUrl
+        link.target = "_blank"
+        link.download = downloadUrl.split("/").pop() || defaultFileName
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        showToast({ title: "Report generated", description: "PDF downloaded and saved.", variant: "success" })
+      } else {
+        showToast({ title: "Report generated", description: "Stored in history.", variant: "success" })
+      }
 
       setOpen(false)
+      router.refresh()
     } catch (error) {
       console.error("Failed to generate PDF", error)
-      alert(error instanceof Error ? error.message : "Failed to generate PDF")
+      showToast({ title: "Failed to generate PDF", description: error instanceof Error ? error.message : undefined, variant: "error" })
     } finally {
       setSubmitting(false)
     }

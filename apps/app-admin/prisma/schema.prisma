@@ -249,6 +249,9 @@ model ContractReport {
   version          Decimal  @db.Decimal(4, 1)
   generatedOn      DateTime @default(now())
   generatedById    String?
+  storageKey       String
+  fileUrl          String
+  fileSizeBytes    Int
 
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   generatedBy User?    @relation(fields: [generatedById], references: [id], onDelete: SetNull)

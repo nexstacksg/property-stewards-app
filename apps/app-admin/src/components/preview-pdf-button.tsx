@@ -4,6 +4,7 @@ import { useState } from "react"
 import { FileDown, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { showToast } from "@/lib/toast"
 
 interface PreviewPdfButtonProps {
   href: string
@@ -36,7 +37,7 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF" }: Prev
       window.URL.revokeObjectURL(blobUrl)
     } catch (error) {
       console.error("Failed to generate PDF", error)
-      alert("Unable to generate PDF. Please try again.")
+      showToast({ title: "Failed to generate PDF", description: "Please try again.", variant: "error" })
     } finally {
       setIsLoading(false)
     }
