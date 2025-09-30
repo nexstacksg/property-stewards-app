@@ -57,7 +57,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   const headingTitle = options.titleOverride && options.titleOverride.trim().length > 0
     ? options.titleOverride.trim()
     : `${contractTypeLabel} Report`
-  doc.font("Helvetica-Bold").fontSize(18).text(`Title: ${headingTitle}`, { align: "center" })
+  doc.font("Helvetica-Bold").fontSize(18).text(`${headingTitle}`, { align: "center" })
   doc.moveDown()
 
   doc.font("Helvetica").fontSize(12)

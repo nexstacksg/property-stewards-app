@@ -467,6 +467,9 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                                 fileUrl: report.fileUrl,
                                 version: versionValue
                               }}
+                              customerEmail={contract.customer?.email}
+                              customerPhone={contract.customer?.phone}
+                              customerName={contract.customer?.name}
                             />
                           </TableCell>
                         </TableRow>

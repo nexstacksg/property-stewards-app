@@ -21,11 +21,18 @@ async function fetchReport(contractId: string, reportId: string) {
 
 function buildWhatsAppMessage(customerName: string | null | undefined, versionLabel: string, fileUrl: string) {
   const greeting = customerName ? `Hi ${customerName},` : "Hi there,";
-  return `${greeting}\n\nWe've prepared your contract report (Version ${versionLabel}). You can download it here: ${fileUrl}\n\nLet us know if you have any questions.\n\n— Property Stewards`
+  return [
+    `${greeting}`,
+    `We've prepared your contract report (Version ${versionLabel}) for your review and records.`,
+    `Download: ${fileUrl}`,
+    `If you have any questions or would like to discuss any details, please let us know—happy to help.`,
+    `\u2014 Property Stewards`
+  ].join('\n\n')
 }
 
-export async function POST(_: NextRequest, context: { params: Promise<{ id: string; reportId: string }> }) {
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string; reportId: string }> }) {
   const { id, reportId } = await context.params
+  const body = await request.json().catch(() => ({})) as { phone?: string; message?: string }
 
   const report = await fetchReport(id, reportId)
   if (!report) {
@@ -36,13 +43,17 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     return new Response(JSON.stringify({ error: "Report file unavailable" }), { status: 400 })
   }
 
-  const phone = report.contract?.customer?.phone
+  const fallbackPhone = report.contract?.customer?.phone || '+959767210712'
+  const phone = body.phone && body.phone.trim().length ? body.phone.trim() : fallbackPhone
+
   if (!phone) {
     return new Response(JSON.stringify({ error: "Customer phone not available" }), { status: 400 })
   }
 
   const versionLabel = `v${Number(report.version).toFixed(1)}`
-  const message = buildWhatsAppMessage(report.contract?.customer?.name, versionLabel, report.fileUrl)
+  const message = body.message && body.message.trim().length
+    ? body.message
+    : buildWhatsAppMessage(report.contract?.customer?.name, versionLabel, report.fileUrl)
 
   await sendWhatsAppResponse(phone, message)
 

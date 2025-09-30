@@ -35,8 +35,9 @@ function buildEmailBody(customerName: string | null | undefined, versionLabel: s
   }
 }
 
-export async function POST(_: NextRequest, context: { params: Promise<{ id: string; reportId: string }> }) {
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string; reportId: string }> }) {
   const { id, reportId } = await context.params
+  const body = await request.json().catch(() => ({})) as { to?: string[]; cc?: string[] }
 
   const report = await fetchReport(id, reportId)
   if (!report) {
@@ -47,7 +48,18 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     return new Response(JSON.stringify({ error: "Report file unavailable" }), { status: 400 })
   }
 
-  const customerEmail = 'hein@nexbe.sg'
+  const fallbackEmail = report.contract?.customer?.email || "hein@nexbe.sg"
+  const primaryRecipients = Array.isArray(body.to) && body.to.length
+    ? body.to
+    : fallbackEmail
+      ? [fallbackEmail]
+      : []
+
+  if (primaryRecipients.length === 0) {
+    return new Response(JSON.stringify({ error: "No recipient email provided" }), { status: 400 })
+  }
+
+  const ccRecipients = Array.isArray(body.cc) ? body.cc.filter((email) => email && email.trim().length > 0) : []
 
   const versionLabel = `v${Number(report.version).toFixed(1)}`
   const { text, html } = buildEmailBody(report.contract?.customer?.name, versionLabel, report.fileUrl)
@@ -64,7 +76,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
   }
 
   await sendEmail({
-    to: customerEmail,
+    to: primaryRecipients.join(","),
     subject: `${report.title} (${versionLabel})`,
     text,
     html,
@@ -76,7 +88,8 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
             contentType: "application/pdf"
           }
         ]
-      : undefined
+      : undefined,
+    cc: ccRecipients.length ? ccRecipients.join(",") : undefined
   })
 
   return new Response(JSON.stringify({ success: true }))
