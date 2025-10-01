@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
-import type { Contract } from "../types"
+import type { Contract } from "./types"
 
 interface WorkOrderSummaryProps {
   selectedContract: Contract | null

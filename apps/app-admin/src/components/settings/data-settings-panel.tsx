@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
-import type { PropertySummary } from "../types"
+import type { PropertySummary } from "./types"
 
 const statusVariantMap: Record<PropertySummary["status"], "default" | "outline"> = {
   ACTIVE: "default",

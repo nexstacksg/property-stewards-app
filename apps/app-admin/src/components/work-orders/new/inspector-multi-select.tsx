@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import type { Inspector } from "../types"
+import type { Inspector } from "./types"
 
 interface InspectorMultiSelectProps {
   inspectors: Inspector[]

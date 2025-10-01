@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import type { Contract } from "../types"
+import type { Contract } from "./types"
 
 interface ContractSelectionProps {
   contracts: Contract[]

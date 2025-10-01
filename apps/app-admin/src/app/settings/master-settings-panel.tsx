@@ -6,13 +6,13 @@ import type { LucideIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
-import { DocumentationPanel } from "./components/documentation-panel"
-import { DataSettingsPanel } from "./components/data-settings-panel"
-import { UserAccountForm } from "./components/user-account-form"
+import { DocumentationPanel } from "@/components/settings/documentation-panel"
+import { DataSettingsPanel } from "@/components/settings/data-settings-panel"
+import { UserAccountForm } from "@/components/settings/user-account-form"
 import type {
   MasterSettingsPanelProps,
   MasterSettingsSectionKey,
-} from "./types"
+} from "@/components/settings/types"
 
 const SECTION_METADATA: Record<MasterSettingsSectionKey, {
   title: string
