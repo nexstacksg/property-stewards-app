@@ -16,6 +16,8 @@ model User {
   role         Role     @default(ADMIN)
   confirmed    Boolean  @default(false)
   itemEntries  ItemEntry[]
+  reports      ContractReport[]
+  contractRemarks ContractRemark[]
 }
 
 model Customer {
@@ -49,6 +51,8 @@ model CustomerAddress {
   postalCode   String
   propertyType PropertyType
   propertySize PropertySize
+  propertySizeRange PropertySizeRange?
+  relationship PropertyRelationship?
   remarks      String?
   createdOn    DateTime     @default(now())
   updatedOn    DateTime     @updatedAt
@@ -123,6 +127,8 @@ model Contract {
   contractType       ContractType       @default(INSPECTION)
   customerComments   String?
   customerRating     Int?
+  marketingSource    MarketingSource?
+  referenceIds       String[]           @default([])
   createdOn          DateTime           @default(now())
   updatedOn          DateTime           @updatedAt
   status             ContractStatus     @default(DRAFT)
@@ -131,11 +137,28 @@ model Contract {
   customer           Customer           @relation(fields: [customerId], references: [id])
   contractChecklist  ContractChecklist?
   workOrders         WorkOrder[]
+  reports            ContractReport[]
+  contactPersons     ContractContactPerson[]
+  followUpRemarks    ContractRemark[]
 
   @@index([customerId])
   @@index([addressId])
   @@index([status])
   @@index([scheduledStartDate])
+}
+
+model ContractRemark {
+  id          String   @id @default(cuid())
+  contractId  String
+  body        String
+  createdOn   DateTime @default(now())
+  createdById String?
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdBy  User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([contractId])
+  @@index([createdOn])
 }
 
 model ContractChecklist {
@@ -170,6 +193,19 @@ model ContractChecklistItem {
   @@unique([contractChecklistId, order])
   @@index([contractChecklistId])
   @@index([workOrderId])
+}
+
+model ContractContactPerson {
+  id          String   @id @default(cuid())
+  contractId  String
+  name        String
+  phone       String?
+  email       String?
+  relation    String?
+
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
 }
 
 // Per-inspector contribution to a checklist item (remarks/media/selection)
@@ -240,6 +276,34 @@ model WorkOrder {
   @@index([scheduledStartDateTime])
 }
 
+model ContractReport {
+  id               String   @id @default(cuid())
+  contractId       String
+  title            String
+  version          Decimal  @db.Decimal(4, 1)
+  generatedOn      DateTime @default(now())
+  generatedById    String?
+  storageKey       String
+  fileUrl          String
+  fileSizeBytes    Int
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  generatedBy User?    @relation(fields: [generatedById], references: [id], onDelete: SetNull)
+
+  @@unique([contractId, version])
+  @@index([contractId])
+  @@index([generatedOn])
+}
+
+model ChecklistTag {
+  id        String   @id @default(cuid())
+  label     String   @unique
+  createdOn DateTime @default(now())
+  updatedOn DateTime @updatedAt
+
+  @@index([label])
+}
+
 // New Property table to manage available property types dynamically
 model Property {
   id        String   @id @default(cuid())
@@ -252,6 +316,7 @@ model Property {
 
   @@index([status])
 }
+
 
 // Property size options linked to Property (type)
 model PropertySizeOption {
@@ -289,6 +354,12 @@ enum PropertyType {
   LANDED
 }
 
+enum PropertyRelationship {
+  AGENT
+  OWNER
+  TENANT
+}
+
 enum PropertySize {
   HDB_1_ROOM
   HDB_2_ROOM
@@ -310,6 +381,17 @@ enum PropertySize {
   GOOD_CLASS_BUNGALOW
 }
 
+enum PropertySizeRange {
+  RANGE_50_399
+  RANGE_400_699
+  RANGE_700_899
+  RANGE_900_1200
+  RANGE_1201_1399
+  RANGE_1400_1599
+  RANGE_1600_1999
+  RANGE_2000_PLUS
+}
+
 // Status for contract checklist items
 enum ChecklistItemStatus {
   PENDING
@@ -327,7 +409,6 @@ enum Condition {
   FAIR
   UNSATISFACTORY
   NOT_APPLICABLE
-  UN_OBSERVABLE
 }
 
 enum InspectorType {
@@ -345,13 +426,19 @@ enum ContractStatus {
   CONFIRMED
   SCHEDULED
   COMPLETED
-  CLOSED
+  TERMINATED
   CANCELLED
 }
 
 enum ContractType {
   INSPECTION
   REPAIR
+}
+
+enum MarketingSource {
+  GOOGLE
+  REFERRAL
+  OTHERS
 }
 
 enum WorkOrderStatus {

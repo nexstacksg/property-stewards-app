@@ -20,8 +20,7 @@ const CONDITION_OPTIONS = [
   { value: "GOOD", label: "Good" },
   { value: "FAIR", label: "Fair" },
   { value: "UNSATISFACTORY", label: "Un-Satisfactory" },
-  { value: "NOT_APPLICABLE", label: "Not Applicable" },
-  { value: "UN_OBSERVABLE", label: "Un-Observable" }
+  { value: "NOT_APPLICABLE", label: "Not Applicable" }
 ]
 
 type Task = {
@@ -120,6 +119,7 @@ export default function ItemEntriesDialog({
         ? prev
         : availableTasks[0]?.id || ""
     )
+    setSelectedCondition((prev) => (prev ? prev : 'GOOD'))
   }, [addingRemark, availableTasks])
 
   const resetForm = () => {
@@ -180,6 +180,27 @@ export default function ItemEntriesDialog({
       return
     }
 
+    const trimmedRemark = remarkText.trim()
+    const normalizedCondition = selectedCondition.trim().toUpperCase()
+
+    if (!normalizedCondition) {
+      setFormError('Please select a status for this remark.')
+      return
+    }
+    const requiresRemark = normalizedCondition && normalizedCondition !== 'GOOD'
+    const requiresPhoto = normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE'
+    const hasPhotos = photoFiles.length > 0
+
+    if (!trimmedRemark && (requiresRemark || hasPhotos)) {
+      setFormError('Remarks are required for this status and whenever photos are attached.')
+      return
+    }
+
+    if (requiresPhoto && !hasPhotos) {
+      setFormError('Please attach at least one photo for this status.')
+      return
+    }
+
     setSubmitting(true)
     setFormError(null)
     try {
@@ -189,7 +210,6 @@ export default function ItemEntriesDialog({
       if (selectedCondition) {
         formData.set("condition", selectedCondition)
       }
-      const trimmedRemark = remarkText.trim()
       if (trimmedRemark.length > 0) {
         formData.set("remark", trimmedRemark)
       }
@@ -387,7 +407,7 @@ export default function ItemEntriesDialog({
                   className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
                   value={remarkText}
                   onChange={(event) => setRemarkText(event.target.value)}
-                  placeholder="Add context for this subtask (optional)"
+                  placeholder="Add context for this subtask"
                   disabled={submitting}
                 />
               </div>

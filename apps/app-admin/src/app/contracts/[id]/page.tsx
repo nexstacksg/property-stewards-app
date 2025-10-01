@@ -5,9 +5,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AddChecklistButton } from "@/components/add-checklist-button"
-import { 
-  ArrowLeft, 
-  Edit, 
+import { ReportActions } from "@/components/report-actions"
+import {
+  ArrowLeft,
+  Edit,
   User,
   MapPin,
   Calendar,
@@ -20,7 +21,9 @@ import {
   AlertCircle
 } from "lucide-react"
 import prisma from "@/lib/prisma"
-import { GeneratePdfButton } from "@/components/generate-pdf-button"
+import { PreviewPdfButton } from "@/components/preview-pdf-button"
+import { GenerateContractReportButton } from "@/components/generate-contract-report-button"
+import { ContractFollowUpRemarks } from "@/components/contract-follow-up-remarks"
 import { buildContractReportFilename } from "@/lib/filename"
 
 async function getContract(id: string) {
@@ -29,6 +32,7 @@ async function getContract(id: string) {
     include: {
       customer: true,
       address: true,
+      contactPersons: true,
       contractChecklist: {
         include: {
           items: true
@@ -39,6 +43,18 @@ async function getContract(id: string) {
           inspectors: true
         },
         orderBy: { scheduledStartDateTime: 'asc' }
+      },
+      reports: {
+        include: {
+          generatedBy: {
+            select: {
+              id: true,
+              username: true,
+              email: true
+            }
+          }
+        },
+        orderBy: { generatedOn: 'desc' }
       }
     }
   })
@@ -64,13 +80,21 @@ function formatCurrency(amount: number) {
   }).format(amount)
 }
 
+function formatDateTime(date: Date | string | null) {
+  if (!date) return 'N/A'
+  return new Date(date).toLocaleString('en-SG', {
+    dateStyle: 'medium',
+    timeStyle: 'short'
+  })
+}
+
 function getContractStatusVariant(status: string): any {
   switch (status) {
     case 'DRAFT': return 'outline'
     case 'CONFIRMED': return 'secondary'
     case 'SCHEDULED': return 'info'
     case 'COMPLETED': return 'success'
-    case 'CLOSED': return 'default'
+    case 'TERMINATED': return 'default'
     case 'CANCELLED': return 'destructive'
     default: return 'default'
   }
@@ -97,6 +121,26 @@ function getWorkOrderStatusIcon(status: string) {
   }
 }
 
+const formatEnumLabel = (value?: string | null) => {
+  if (!value) return '—'
+  if (value.startsWith('RANGE_')) {
+    const range = value.replace('RANGE_', '').replace(/_/g, ' ')
+    if (range.toLowerCase().includes('plus')) {
+      return `${range.replace(/plus/i, 'Plus')} sqft`
+    }
+    const parts = range.split(' ')
+    if (parts.length === 2) {
+      return `${parts[0]} - ${parts[1]} sqft`
+    }
+    return `${range} sqft`
+  }
+  return value
+    .toLowerCase()
+    .split('_')
+    .map(token => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ')
+}
+
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params
   const contract = await getContract(resolvedParams.id) as any
@@ -111,6 +155,13 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
     contract.address?.postalCode,
     contract.id
   )
+  const defaultReportTitle = `${contractTypeLabel} Report`
+  const reports = Array.isArray(contract.reports) ? contract.reports : []
+  const referenceContracts = Array.isArray(contract.referenceIds) ? contract.referenceIds : []
+  const contactPersons = Array.isArray(contract.contactPersons) ? contract.contactPersons : []
+  const remarkEntries = Array.isArray(contract.followUpRemarks) ? contract.followUpRemarks : []
+  const marketingSourceLabel = contract.marketingSource ? formatEnumLabel(contract.marketingSource) : null
+  const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
 
   return (
     <div className="p-6 space-y-6">
@@ -137,22 +188,25 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         </div>
         <div className="flex gap-2">
           <Link href={`/contracts/${contract.id}/edit`}>
-            <Button>
+            <Button variant="outline">
               <Edit className="h-4 w-4 mr-2" />
               Edit Contract
             </Button>
           </Link>
-          <Link href={`/work-orders/new?contractId=${contract.id}`}>
-            <Button variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Work Order
-            </Button>
-          </Link>
-          <GeneratePdfButton
-            href={`/api/contracts/${contract.id}/report`}
-            fileName={contractReportFileName}
-            label="Generate PDF"
-          />
+          {showPdfActions && (
+            <>
+              <PreviewPdfButton
+                href={`/api/contracts/${contract.id}/report`}
+                fileName={contractReportFileName}
+                label="Preview PDF"
+              />
+              <GenerateContractReportButton
+                contractId={contract.id}
+                defaultTitle={defaultReportTitle}
+                defaultFileName={contractReportFileName}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -187,6 +241,12 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                     <div className="flex gap-2 mt-1">
                       <Badge variant="outline">{contract.address.propertyType}</Badge>
                       <Badge variant="secondary">{contract.address.propertySize.replace(/_/g, ' ')}</Badge>
+                      {contract.address.propertySizeRange && (
+                        <Badge variant="secondary">{formatEnumLabel(contract.address.propertySizeRange)}</Badge>
+                      )}
+                      {contract.address.relationship && (
+                        <Badge variant="outline">{formatEnumLabel(contract.address.relationship)}</Badge>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -223,6 +283,13 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                 </div>
               )}
 
+              {marketingSourceLabel && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Source of Marketing</p>
+                  <Badge variant="outline">{marketingSourceLabel}</Badge>
+                </div>
+              )}
+
               <div>
                 <p className="text-sm text-muted-foreground">Scheduled Start</p>
                 <p className="font-medium">{formatDate(contract.scheduledStartDate)}</p>
@@ -239,6 +306,19 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                 <div>
                   <p className="text-sm text-muted-foreground">Remarks</p>
                   <p className="text-sm">{contract.remarks}</p>
+                </div>
+              )}
+
+              {referenceContracts.length > 0 && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Reference Contracts</p>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {referenceContracts.map((refId: string) => (
+                      <Link key={refId} href={`/contracts/${refId}`} className="font-mono text-xs text-primary hover:underline">
+                        #{refId.slice(-8).toUpperCase()}
+                      </Link>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -267,6 +347,8 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               </div>
             </CardContent>
           </Card>
+
+          <ContractFollowUpRemarks contractId={contract.id} initialRemarks={remarkEntries} />
         </div>
 
         {/* Work Orders and Checklists */}
@@ -399,6 +481,95 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                   </div>
                 </div>
               )}
+          </CardContent>
+        </Card>
+
+        {/* Contact Persons */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Contact Persons</CardTitle>
+            <CardDescription>Key people linked to this contract</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {contactPersons.length === 0 ? (
+              <p className="text-muted-foreground text-center py-4">No contact persons added</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Relation</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Email</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {contactPersons.map((person: any) => (
+                    <TableRow key={person.id}>
+                      <TableCell className="font-medium">{person.name}</TableCell>
+                      <TableCell>{person.relation || '—'}</TableCell>
+                      <TableCell>{person.phone || '—'}</TableCell>
+                      <TableCell>{person.email || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Generated Reports */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Generated Reports</CardTitle>
+            <CardDescription>Versioned PDF history for this contract</CardDescription>
+          </CardHeader>
+          <CardContent>
+              {reports.length === 0 ? (
+                <p className="text-muted-foreground text-center py-4">No reports generated yet</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Version</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Generated</TableHead>
+                      <TableHead>Prepared By</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {reports.map((report: any) => {
+                      const versionValue = typeof report.version === 'number' ? report.version : Number(report.version)
+                      const versionLabel = Number.isNaN(versionValue) ? '—' : versionValue.toFixed(1)
+                      const generatedLabel = formatDateTime(report.generatedOn)
+                      const preparedBy = report.generatedBy?.username || report.generatedBy?.email || '—'
+
+                      return (
+                        <TableRow key={report.id}>
+                          <TableCell className="font-medium">v{versionLabel}</TableCell>
+                          <TableCell>{report.title}</TableCell>
+                          <TableCell>{generatedLabel}</TableCell>
+                          <TableCell>{preparedBy}</TableCell>
+                          <TableCell>
+                            <ReportActions
+                              contractId={contract.id}
+                              report={{
+                                id: report.id,
+                                fileUrl: report.fileUrl,
+                                version: versionValue
+                              }}
+                              customerEmail={contract.customer?.email}
+                              customerPhone={contract.customer?.phone}
+                              customerName={contract.customer?.name}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
 
@@ -446,6 +617,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               </CardContent>
             </Card>
           </div>
+
         </div>
       </div>
     </div>

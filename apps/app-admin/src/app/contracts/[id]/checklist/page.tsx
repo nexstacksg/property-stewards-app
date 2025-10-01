@@ -59,6 +59,26 @@ function formatCurrency(amount: number | string | null | undefined) {
   }).format(numeric)
 }
 
+const formatEnumLabel = (value?: string | null) => {
+  if (!value) return ""
+  if (value.startsWith("RANGE_")) {
+    const range = value.replace("RANGE_", "").replace(/_/g, " ")
+    if (range.toLowerCase().includes("plus")) {
+      return `${range.replace(/plus/i, "Plus")} sqft`
+    }
+    const parts = range.split(" ")
+    if (parts.length === 2) {
+      return `${parts[0]} - ${parts[1]} sqft`
+    }
+    return `${range} sqft`
+  }
+  return value
+    .toLowerCase()
+    .split("_")
+    .map(token => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(" ")
+}
+
 function getStatusVariant(status: string): any {
   switch (status) {
     case "DRAFT":
@@ -69,7 +89,7 @@ function getStatusVariant(status: string): any {
       return "info"
     case "COMPLETED":
       return "success"
-    case "CLOSED":
+    case "TERMINATED":
       return "default"
     case "CANCELLED":
       return "destructive"
@@ -167,6 +187,12 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                       )}
                       {contract.address?.propertySize && (
                         <Badge variant="secondary">{contract.address.propertySize.replace(/_/g, " ")}</Badge>
+                      )}
+                      {contract.address?.propertySizeRange && (
+                        <Badge variant="secondary">{formatEnumLabel(contract.address.propertySizeRange)}</Badge>
+                      )}
+                      {contract.address?.relationship && (
+                        <Badge variant="outline">{formatEnumLabel(contract.address.relationship)}</Badge>
                       )}
                     </div>
                   </div>

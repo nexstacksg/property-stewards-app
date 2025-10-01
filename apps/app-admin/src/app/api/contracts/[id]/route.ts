@@ -27,11 +27,24 @@ export async function GET(
             }
           }
         },
+        contactPersons: true,
         workOrders: {
           include: {
             inspectors: true
           },
           orderBy: { scheduledStartDateTime: 'desc' }
+        },
+        followUpRemarks: {
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                username: true,
+                email: true
+              }
+            }
+          },
+          orderBy: { createdOn: 'desc' }
         }
       }
     })
@@ -75,11 +88,34 @@ export async function PATCH(
       contractType,
       customerComments,
       customerRating,
-      status
+      status,
+      marketingSource,
+      referenceIds,
+      contactPersons
     } = body
 
     const normalizedContractType = contractType === 'INSPECTION' || contractType === 'REPAIR'
       ? contractType
+      : undefined
+
+    const normalizedMarketingSource = marketingSource && ['GOOGLE', 'REFERRAL', 'OTHERS'].includes(marketingSource)
+      ? marketingSource
+      : marketingSource === null
+        ? null
+        : undefined
+
+    const sanitizedReferenceIds = Array.isArray(referenceIds)
+      ? referenceIds.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
+      : undefined
+
+    const sanitizedContactPersons = Array.isArray(contactPersons)
+      ? contactPersons.filter((person: any) => person && typeof person.name === 'string' && person.name.trim().length > 0)
+        .map((person: any) => ({
+          name: person.name.trim(),
+          phone: typeof person.phone === 'string' && person.phone.trim().length > 0 ? person.phone.trim() : undefined,
+          email: typeof person.email === 'string' && person.email.trim().length > 0 ? person.email.trim() : undefined,
+          relation: typeof person.relation === 'string' && person.relation.trim().length > 0 ? person.relation.trim() : undefined
+        }))
       : undefined
 
     const contract = await prisma.contract.update({
@@ -97,16 +133,69 @@ export async function PATCH(
         contractType: normalizedContractType,
         customerComments,
         customerRating,
-        status
+        status,
+        marketingSource: normalizedMarketingSource,
+        referenceIds: sanitizedReferenceIds,
       },
       include: {
         customer: true,
         address: true,
+        contactPersons: true,
         workOrders: true
       }
     })
 
-    return NextResponse.json(contract)
+    if (sanitizedContactPersons) {
+      await prisma.contractContactPerson.deleteMany({ where: { contractId: id } })
+      if (sanitizedContactPersons.length > 0) {
+        await prisma.contractContactPerson.createMany({
+          data: sanitizedContactPersons.map(person => ({ ...person, contractId: id }))
+        })
+      }
+    }
+
+    const refreshedContract = await prisma.contract.findUnique({
+      where: { id },
+      include: {
+        customer: true,
+        address: true,
+        contactPersons: true,
+        basedOnChecklist: {
+          include: { items: true }
+        },
+        contractChecklist: {
+          include: {
+            items: {
+              include: {
+                enteredBy: true,
+                workOrder: true
+              },
+              orderBy: { order: 'asc' }
+            }
+          }
+        },
+        workOrders: {
+          include: {
+            inspectors: true
+          },
+          orderBy: { scheduledStartDateTime: 'desc' }
+        },
+        followUpRemarks: {
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                username: true,
+                email: true
+              }
+            }
+          },
+          orderBy: { createdOn: 'desc' }
+        }
+      }
+    })
+
+    return NextResponse.json(refreshedContract)
   } catch (error) {
     console.error('Error updating contract:', error)
     return NextResponse.json(

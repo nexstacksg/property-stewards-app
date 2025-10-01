@@ -4,14 +4,15 @@ import { useState } from "react"
 import { FileDown, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { showToast } from "@/lib/toast"
 
-interface GeneratePdfButtonProps {
+interface PreviewPdfButtonProps {
   href: string
   fileName: string
   label?: string
 }
 
-export function GeneratePdfButton({ href, fileName, label = "Generate PDF" }: GeneratePdfButtonProps) {
+export function PreviewPdfButton({ href, fileName, label = "Preview PDF" }: PreviewPdfButtonProps) {
   const [isLoading, setIsLoading] = useState(false)
 
   const handleGenerate = async () => {
@@ -36,7 +37,7 @@ export function GeneratePdfButton({ href, fileName, label = "Generate PDF" }: Ge
       window.URL.revokeObjectURL(blobUrl)
     } catch (error) {
       console.error("Failed to generate PDF", error)
-      alert("Unable to generate PDF. Please try again.")
+      showToast({ title: "Failed to generate PDF", description: "Please try again.", variant: "error" })
     } finally {
       setIsLoading(false)
     }

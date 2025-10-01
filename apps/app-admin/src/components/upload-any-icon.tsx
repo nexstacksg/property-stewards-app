@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Loader2, Upload } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { showToast } from '@/lib/toast'
 
 interface Props {
   itemId: string
@@ -41,9 +42,10 @@ export default function UploadAnyIcon({ itemId, workOrderId, title = 'Upload med
         throw new Error(data.error || 'Upload failed')
       }
       router.refresh()
+      showToast({ title: isVideo ? 'Video uploaded' : 'Photo uploaded', variant: 'success' })
     } catch (err) {
       console.error(err)
-      alert((err as Error).message)
+      showToast({ title: 'Upload failed', description: (err as Error).message, variant: 'error' })
     } finally {
       setUploading(false)
       if (inputRef.current) inputRef.current.value = ''

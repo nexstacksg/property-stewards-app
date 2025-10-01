@@ -104,6 +104,8 @@ export async function POST(request: NextRequest) {
           postalCode: addr.postalCode,
           propertyType: addr.propertyType,
           propertySize: normalizePropertySize(addr.propertyType, addr.propertySize),
+          propertySizeRange: addr.propertySizeRange || null,
+          relationship: addr.relationship || null,
           remarks: addr.remarks
         }
       })

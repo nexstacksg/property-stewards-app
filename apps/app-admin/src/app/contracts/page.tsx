@@ -1,11 +1,12 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { Plus, FileText, DollarSign, Calendar, MapPin, ChevronLeft, ChevronRight, Filter } from "lucide-react"
 
 interface Contract {
@@ -21,6 +22,8 @@ interface Contract {
   contractType: string
   customerRating?: number
   status: string
+  marketingSource?: 'GOOGLE' | 'REFERRAL' | 'OTHERS'
+  referenceIds?: string[]
   customer: {
     id: string
     name: string
@@ -30,39 +33,79 @@ interface Contract {
     address: string
     postalCode: string
     propertyType: string
+    propertySizeRange?: string | null
+    relationship?: 'AGENT' | 'OWNER' | 'TENANT' | null
   }
   workOrders: any[]
 }
 
 export default function ContractsPage() {
-  const [contracts, setContracts] = useState<Contract[]>([])
+  const [allContracts, setAllContracts] = useState<Contract[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const limit = 10
 
   useEffect(() => {
     fetchContracts()
-  }, [page, statusFilter])
+  }, [])
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchTerm.trim())
+    }, 300)
+    return () => clearTimeout(handler)
+  }, [searchTerm])
+
+  useEffect(() => {
+    setPage(1)
+  }, [statusFilter, debouncedSearch])
+
+  const filteredContracts = useMemo(() => {
+    let data = [...allContracts]
+    if (statusFilter) {
+      data = data.filter((contract) => contract.status === statusFilter)
+    }
+    if (debouncedSearch) {
+      const token = debouncedSearch.toLowerCase()
+      data = data.filter((contract) => {
+        const idMatch = contract.id?.toLowerCase().includes(token)
+        const customerMatch = contract.customer?.name?.toLowerCase().includes(token)
+        const addressMatch = contract.address?.address?.toLowerCase().includes(token)
+        const serviceMatch = contract.servicePackage?.toLowerCase().includes(token)
+        return idMatch || customerMatch || addressMatch || serviceMatch
+      })
+    }
+    return data
+  }, [allContracts, statusFilter, debouncedSearch])
+
+  useEffect(() => {
+    const newTotal = Math.max(1, Math.ceil(filteredContracts.length / limit))
+    setTotalPages(newTotal)
+    setPage((prev) => Math.min(prev, newTotal))
+  }, [filteredContracts, limit])
+
+  const currentContracts = useMemo(() => {
+    const start = (page - 1) * limit
+    return filteredContracts.slice(start, start + limit)
+  }, [filteredContracts, page, limit])
 
   const fetchContracts = async () => {
     try {
       setLoading(true)
       const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
+        page: '1',
+        limit: '200',
       })
-      
-      if (statusFilter) {
-        params.append('status', statusFilter)
-      }
 
       const response = await fetch(`/api/contracts?${params}`)
       const data = await response.json()
-      
-      setContracts(data.contracts)
-      setTotalPages(data.pagination.totalPages)
+      setAllContracts(Array.isArray(data.contracts) ? data.contracts : [])
+      setPage(1)
+      setTotalPages(Math.max(1, Math.ceil((data.contracts?.length || 0) / limit)))
     } catch (error) {
       console.error('Error fetching contracts:', error)
     } finally {
@@ -80,7 +123,7 @@ export default function ContractsPage() {
         return 'info'
       case 'COMPLETED':
         return 'success'
-      case 'CLOSED':
+      case 'TERMINATED':
         return 'default'
       case 'CANCELLED':
         return 'destructive'
@@ -102,10 +145,30 @@ export default function ContractsPage() {
     }).format(amount)
   }
 
+  const formatEnumLabel = (value?: string | null) => {
+    if (!value) return ''
+    if (value.startsWith('RANGE_')) {
+      const range = value.replace('RANGE_', '').replace(/_/g, ' ')
+      if (range.toLowerCase().includes('plus')) {
+        return `${range.replace(/plus/i, 'Plus')} sqft`
+      }
+      const parts = range.split(' ')
+      if (parts.length === 2) {
+        return `${parts[0]} - ${parts[1]} sqft`
+      }
+      return `${range} sqft`
+    }
+    return value
+      .toLowerCase()
+      .split('_')
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(' ')
+  }
+
   // Calculate statistics
-  const totalValue = contracts.reduce((sum, c) => sum + Number(c.value), 0)
-  const activeContracts = contracts.filter(c => ['CONFIRMED', 'SCHEDULED'].includes(c.status)).length
-  const completedContracts = contracts.filter(c => c.status === 'COMPLETED').length
+  const totalValue = filteredContracts.reduce((sum, contract) => sum + Number(contract.value), 0)
+  const activeContracts = filteredContracts.filter(contract => ['CONFIRMED', 'SCHEDULED'].includes(contract.status)).length
+  const completedContracts = filteredContracts.filter(contract => contract.status === 'COMPLETED').length
 
   return (
     <div className="p-6 space-y-6">
@@ -132,7 +195,7 @@ export default function ContractsPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{contracts.length}</div>
+            <div className="text-2xl font-bold">{filteredContracts.length}</div>
             <p className="text-xs text-muted-foreground">
               All time
             </p>
@@ -187,35 +250,41 @@ export default function ContractsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
-            <div>
-              <CardTitle>Contract List</CardTitle>
-              <CardDescription>
-                {statusFilter ? `Showing ${statusFilter.toLowerCase()} contracts` : 'All contracts'}
-              </CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border rounded-md"
-              >
-                <option value="">All Status</option>
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle>Contract List</CardTitle>
+                <CardDescription>
+                  {statusFilter ? `Showing ${statusFilter.toLowerCase()} contracts` : 'All contracts'}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2 justify-end">
+                <Input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Search contracts"
+                  className="w-full md:w-56"
+                />
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  className="px-3 py-2 border rounded-md"
+                >
+                  <option value="">All Status</option>
                 <option value="DRAFT">Draft</option>
                 <option value="CONFIRMED">Confirmed</option>
                 <option value="SCHEDULED">Scheduled</option>
                 <option value="COMPLETED">Completed</option>
-                <option value="CLOSED">Closed</option>
+                <option value="TERMINATED">Terminated</option>
                 <option value="CANCELLED">Cancelled</option>
-              </select>
-              {statusFilter && (
-                <Button variant="outline" size="sm" onClick={() => setStatusFilter('')}>
-                  <Filter className="h-4 w-4 mr-2" />
-                  Clear
-                </Button>
-              )}
+                </select>
+                {statusFilter && (
+                  <Button variant="outline" size="sm" onClick={() => setStatusFilter('')}>
+                    <Filter className="h-4 w-4 mr-2" />
+                    Clear
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -237,7 +306,7 @@ export default function ContractsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {contracts.map((contract) => (
+                  {currentContracts.map((contract) => (
                     <TableRow key={contract.id}>
                       <TableCell className="font-medium">
                         #{contract.id.slice(-8).toUpperCase()}
@@ -263,6 +332,17 @@ export default function ContractsPage() {
                             <div className="text-xs text-muted-foreground">
                               {contract.address.postalCode} • {contract.address.propertyType}
                             </div>
+                            {(contract.address.relationship || contract.address.propertySizeRange) && (
+                              <div className="text-xs text-muted-foreground">
+                                {contract.address.relationship && (
+                                  <span>Rel: {formatEnumLabel(contract.address.relationship)}</span>
+                                )}
+                                {contract.address.relationship && contract.address.propertySizeRange && ' • '}
+                                {contract.address.propertySizeRange && (
+                                  <span>Size: {formatEnumLabel(contract.address.propertySizeRange)}</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </TableCell>
@@ -325,7 +405,7 @@ export default function ContractsPage() {
                 </TableBody>
               </Table>
 
-              {contracts.length === 0 && (
+              {filteredContracts.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
                   No contracts found
                 </div>

@@ -6,7 +6,7 @@ import { s3Client, BUCKET_NAME, PUBLIC_URL, SPACE_DIRECTORY } from '@/lib/s3-cli
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { randomUUID } from 'crypto'
 
-const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE', 'UN_OBSERVABLE']
+const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE']
 
 function toStringValue(value: FormDataEntryValue | null | undefined): string | undefined {
   if (typeof value === 'string') {
@@ -102,6 +102,23 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid condition value' }, { status: 400 })
     }
 
+    const trimmedRemark = remark ? remark.trim() : ''
+    const requiresRemark = normalizedCondition && normalizedCondition !== 'GOOD'
+    const requiresPhoto = normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE'
+    const hasPhotos = photoFiles.length > 0
+
+    if (requiresRemark && trimmedRemark.length === 0) {
+      return NextResponse.json({ error: 'Remarks are required for this status.' }, { status: 400 })
+    }
+
+    if (hasPhotos && trimmedRemark.length === 0) {
+      return NextResponse.json({ error: 'Please provide remarks when uploading photos.' }, { status: 400 })
+    }
+
+    if (requiresPhoto && !hasPhotos) {
+      return NextResponse.json({ error: 'Please attach at least one photo for this status.' }, { status: 400 })
+    }
+
     const invalidPhoto = photoFiles.find((file) => !(file.type || '').startsWith('image/'))
     if (invalidPhoto) {
       return NextResponse.json({ error: 'Only image files can be attached as photos' }, { status: 400 })
@@ -152,7 +169,7 @@ export async function POST(
     const entryData: any = {
       itemId: id,
       taskId: targetTask.id,
-      remarks: remark && remark.length > 0 ? remark : null,
+      remarks: trimmedRemark.length > 0 ? trimmedRemark : null,
     }
 
     if (typeof normalizedCondition !== 'undefined') {

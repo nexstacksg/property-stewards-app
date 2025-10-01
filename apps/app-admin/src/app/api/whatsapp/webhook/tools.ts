@@ -24,7 +24,7 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'confirmJobSelection', description: 'Confirm job selection and show job details', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'startJob', description: 'Start the job', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'getJobLocations', description: 'Get locations for inspection', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
-  { type: 'function' as const, function: { name: 'setLocationCondition', description: 'Set condition for the current location by number (1=Good,2=Fair,3=Un-Satisfactory,4=Not Applicable,5=Un-Observable)', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, conditionNumber: { type: 'number' } }, required: ['workOrderId', 'conditionNumber'] } } },
+  { type: 'function' as const, function: { name: 'setLocationCondition', description: 'Set condition for the current location by number (1=Good,2=Fair,3=Un-Satisfactory,4=Not Applicable)', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, conditionNumber: { type: 'number' } }, required: ['workOrderId', 'conditionNumber'] } } },
   { type: 'function' as const, function: { name: 'addLocationRemarks', description: 'Save remarks for current location and create/update an ItemEntry for the inspector', parameters: { type: 'object', properties: { remarks: { type: 'string' } }, required: ['remarks'] } } },
   { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
   {
@@ -128,7 +128,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const { jobId } = args
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId) as any[]
         const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
-        return JSON.stringify({ success: true, locations: locationsWithStatus.map((loc, index) => ({ number: index + 1, name: loc.name, displayName: loc.displayName, contractChecklistItemId: loc.contractChecklistItemId, status: loc.isCompleted ? 'completed' : (loc.completedTasks > 0 ? 'in_progress' : 'pending'), tasks: loc.totalTasks, completed: loc.completedTasks, pending: loc.totalTasks - loc.completedTasks })), locationsFormatted })
+        const nextPrompt = 'Reply with the number of the location you want to inspect next.'
+        return JSON.stringify({ success: true, locations: locationsWithStatus.map((loc, index) => ({ number: index + 1, name: loc.name, displayName: loc.displayName, contractChecklistItemId: loc.contractChecklistItemId, status: loc.isCompleted ? 'completed' : (loc.completedTasks > 0 ? 'in_progress' : 'pending'), tasks: loc.totalTasks, completed: loc.completedTasks, pending: loc.totalTasks - loc.completedTasks })), locationsFormatted, nextPrompt })
       }
       case 'getTasksForLocation': {
         const { workOrderId, location, contractChecklistItemId } = args
@@ -146,7 +147,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const formattedTasks = tasks.map((task: any, index: number) => ({ id: task.id, number: index + 1, description: task.action || `Check ${location.toLowerCase()} condition`, status: task.status, displayStatus: task.status === 'completed' ? 'done' : 'pending', notes: task.notes || null }))
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
-        return JSON.stringify({ success: true, location, allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0, tasks: formattedTasks, locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation }, locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null, locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending' })
+        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to mark them all done) when you're ready.`
+        return JSON.stringify({ success: true, location, allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0, tasks: formattedTasks, locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation }, locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null, locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending', nextPrompt })
       }
       case 'completeTask': {
         const phase = (args.phase as string | undefined) || 'start'
@@ -155,7 +157,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const session = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
 
         const mapCondition = (num?: number) => {
-          const lookup: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UN_OBSERVABLE' }
+          const lookup: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE' }
           return num ? lookup[num] : undefined
         }
 
@@ -359,7 +361,29 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             })
           }
 
+          let entryRecord: { photos?: string[]; remarks?: string | null } | null = null
+          if (entryId) {
+            try {
+              entryRecord = await prisma.itemEntry.findUnique({ where: { id: entryId }, select: { photos: true, remarks: true } })
+            } catch (error) {
+              console.error('Failed to load entry for validation', error)
+            }
+          }
+
           if (completed) {
+            const requiresPhoto = condition !== 'NOT_APPLICABLE'
+            const requiresRemark = condition !== 'GOOD'
+            const photoCount = entryRecord?.photos?.length ?? 0
+            const remarkText = entryRecord?.remarks?.trim() ?? ''
+
+            if (requiresPhoto && photoCount === 0) {
+              return JSON.stringify({ success: false, error: 'Please send at least one photo for this status before marking the task complete.' })
+            }
+
+            if (requiresRemark && !remarkText) {
+              return JSON.stringify({ success: false, error: 'Please add a remark for this status before marking the task complete.' })
+            }
+
             const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
             await prisma.contractChecklistItem.update({
               where: { id: targetItemId },
@@ -407,14 +431,14 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
         const loc = args.location || (s.currentLocation as string) || ''
         if (!loc) return JSON.stringify({ success: false, error: 'No location in context' })
-        const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UN_OBSERVABLE' }
+        const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE' }
         const condition = map[Number(args.conditionNumber)]
         if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number' })
         let itemId = (s as any).currentItemId as string
         if (!itemId) itemId = (await getContractChecklistItemIdByLocation(args.workOrderId, loc)) as any
         if (!itemId) return JSON.stringify({ success: false, error: 'Unable to resolve checklist item' })
         await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { condition: condition as any, status: 'COMPLETED' } })
-        const mediaRequired = !(condition === 'GOOD' || condition === 'UN_OBSERVABLE')
+        const mediaRequired = condition !== 'GOOD'
         const locs2 = await getLocationsWithCompletionStatus(args.workOrderId) as any[]
         const locationsFormatted = locs2.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, condition, mediaRequired, locationsFormatted })
