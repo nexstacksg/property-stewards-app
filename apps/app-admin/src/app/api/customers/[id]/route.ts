@@ -188,6 +188,8 @@ export async function PUT(
                 postalCode: address.postalCode,
                 propertyType: address.propertyType,
                 propertySize: address.normalizedSize,
+                propertySizeRange: address.propertySizeRange || null,
+                relationship: address.relationship || null,
                 remarks: address.remarks,
                 status: address.status || 'ACTIVE'
               }
@@ -201,6 +203,8 @@ export async function PUT(
                 postalCode: address.postalCode,
                 propertyType: address.propertyType,
                 propertySize: address.normalizedSize,
+                propertySizeRange: address.propertySizeRange || null,
+                relationship: address.relationship || null,
                 remarks: address.remarks,
                 status: 'ACTIVE'
               }

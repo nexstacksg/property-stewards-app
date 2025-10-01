@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Search, Plus, X, GripVertical, Pencil } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
+import { PhoneInput } from "@/components/ui/phone-input"
 
 interface Customer {
   id: string
@@ -61,6 +62,22 @@ function NewContractPageContent() {
   const [checklistItems, setChecklistItems] = useState<ChecklistDraftItem[]>([])
   const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
   const [rowEditItem, setRowEditItem] = useState<ChecklistDraftItem | null>(null)
+  type ContractReferenceOption = { id: string; label: string }
+  type ContactPersonDraft = {
+    id?: string
+    name: string
+    phone: string
+    email: string
+    relation: string
+    isNew?: boolean
+  }
+  const [availableReferences, setAvailableReferences] = useState<ContractReferenceOption[]>([])
+  const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([])
+  const [marketingSource, setMarketingSource] = useState<'GOOGLE' | 'REFERRAL' | 'OTHERS' | 'NONE'>('NONE')
+  const [contactPersons, setContactPersons] = useState<ContactPersonDraft[]>([])
+  const [contactEditIndex, setContactEditIndex] = useState<number | null>(null)
+  const [contactDraft, setContactDraft] = useState<ContactPersonDraft | null>(null)
+  const [contactError, setContactError] = useState("")
 
   useEffect(() => {
     // Preload all templates so user can choose without selecting address/customer first
@@ -77,6 +94,10 @@ function NewContractPageContent() {
       
       const customer: Customer = await response.json()
       setSelectedCustomer(customer)
+      setContactPersons([])
+      setContactEditIndex(null)
+      setContactDraft(null)
+      setContactError('')
       
       // Select first active address if available
       const activeAddress = customer.addresses.find(addr => addr.status === 'ACTIVE')
@@ -87,6 +108,9 @@ function NewContractPageContent() {
       } else {
         fetchTemplates()
       }
+
+      fetchCustomerContracts(customer.id)
+      setSelectedReferenceIds([])
     } catch (err) {
       console.error('Error fetching customer:', err)
     }
@@ -103,6 +127,25 @@ function NewContractPageContent() {
       const data = await res.json()
       setTemplates(data.templates || [])
     } catch { setTemplates([]) }
+  }
+
+  const fetchCustomerContracts = async (customerId: string) => {
+    try {
+      const res = await fetch(`/api/contracts?customerId=${customerId}&limit=100`)
+      if (!res.ok) { setAvailableReferences([]); return }
+      const data = await res.json()
+      const options: ContractReferenceOption[] = Array.isArray(data.contracts)
+        ? data.contracts
+            .filter((contract: any) => contract && typeof contract.id === 'string')
+            .map((contract: any) => ({
+              id: contract.id,
+              label: `#${contract.id.slice(-8).toUpperCase()} • ${contract.status}`
+            }))
+        : []
+      setAvailableReferences(options)
+    } catch {
+      setAvailableReferences([])
+    }
   }
 
   // Load chosen template items
@@ -173,6 +216,95 @@ function NewContractPageContent() {
     setRowEditIndex(null); setRowEditItem(null)
   }
 
+  // Contact person helpers
+  const beginAddContactPerson = () => {
+    if (contactEditIndex !== null) {
+      setContactError('Finish editing the current contact before adding a new one.')
+      return
+    }
+    const newContact: ContactPersonDraft = {
+      name: '',
+      phone: '',
+      email: '',
+      relation: '',
+      isNew: true
+    }
+    const newIndex = contactPersons.length
+    setContactPersons(prev => [...prev, newContact])
+    setContactEditIndex(newIndex)
+    setContactDraft({ ...newContact })
+    setContactError('')
+  }
+
+  const beginEditContactPerson = (index: number) => {
+    if (contactEditIndex !== null) {
+      setContactError('Finish editing the current contact before editing another.')
+      return
+    }
+    const person = contactPersons[index]
+    if (!person) return
+    setContactEditIndex(index)
+    setContactDraft({ ...person })
+    setContactError('')
+  }
+
+  const handleContactDraftChange = (field: keyof ContactPersonDraft, value: string) => {
+    setContactDraft(prev => (prev ? { ...prev, [field]: value } : prev))
+  }
+
+  const handleCancelContact = () => {
+    if (contactEditIndex === null) return
+    setContactPersons(prev => {
+      const person = prev[contactEditIndex]
+      if (person && person.isNew && !person.id) {
+        return prev.filter((_, idx) => idx !== contactEditIndex)
+      }
+      return prev
+    })
+    setContactEditIndex(null)
+    setContactDraft(null)
+    setContactError('')
+  }
+
+  const handleSaveContact = () => {
+    if (contactEditIndex === null || !contactDraft) return
+    const name = contactDraft.name.trim()
+    if (!name) {
+      setContactError('Contact name is required.')
+      return
+    }
+
+    const sanitized: ContactPersonDraft = {
+      id: contactDraft.id,
+      name,
+      phone: contactDraft.phone.trim(),
+      email: contactDraft.email.trim(),
+      relation: contactDraft.relation.trim()
+    }
+
+    setContactPersons(prev => prev.map((person, idx) => (idx === contactEditIndex ? sanitized : person)))
+    setContactEditIndex(null)
+    setContactDraft(null)
+    setContactError('')
+  }
+
+  const handleRemoveContact = (index: number) => {
+    if (contactEditIndex !== null && contactEditIndex !== index) {
+      setContactError('Finish editing the current contact before removing another.')
+      return
+    }
+    setContactPersons(prev => prev.filter((_, idx) => idx !== index))
+    if (contactEditIndex !== null) {
+      if (index === contactEditIndex) {
+        setContactEditIndex(null)
+        setContactDraft(null)
+      } else if (index < contactEditIndex) {
+        setContactEditIndex(contactEditIndex - 1)
+      }
+    }
+    setContactError('')
+  }
+
   const searchCustomers = async (term: string) => {
     if (!term) {
       setCustomers([])
@@ -216,6 +348,8 @@ function NewContractPageContent() {
     if (activeAddress) {
       setAddressId(activeAddress.id)
     }
+    fetchCustomerContracts(customer.id)
+    setSelectedReferenceIds([])
     // Try to preload templates for the customer's first active address (does not clear current selection)
     // if (activeAddress) {
     //   fetchTemplates(activeAddress.propertyType)
@@ -230,11 +364,38 @@ function NewContractPageContent() {
       setError("Please select a customer and address")
       return
     }
-    
+
+    if (contactEditIndex !== null) {
+      setContactError('Save or cancel the contact person you are editing before submitting.')
+      return
+    }
+
+    setContactError('')
     setError("")
     setLoading(true)
 
     try {
+      const normalizedContactPersons = contactPersons
+        .map((person) => {
+          const name = person.name.trim()
+          if (!name) return null
+          const phone = person.phone.trim()
+          const email = person.email.trim()
+          const relation = person.relation.trim()
+          return {
+            name,
+            phone: phone || undefined,
+            email: email || undefined,
+            relation: relation || undefined
+          }
+        })
+        .filter((person): person is {
+          name: string
+          phone: string | undefined
+          email: string | undefined
+          relation: string | undefined
+        } => Boolean(person))
+
       const response = await fetch("/api/contracts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -247,7 +408,10 @@ function NewContractPageContent() {
           scheduledEndDate: scheduledEndDate || scheduledStartDate,
           firstPaymentOn: firstPaymentOn || scheduledStartDate,
           remarks,
-          contractType
+          contractType,
+          marketingSource: marketingSource !== 'NONE' ? marketingSource : undefined,
+          referenceIds: selectedReferenceIds,
+          contactPersons: normalizedContactPersons
         })
       })
 
@@ -358,8 +522,8 @@ function NewContractPageContent() {
                     )}
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    {/* Selected Customer */}
+                    <div className="space-y-4">
+                      {/* Selected Customer */}
                     <div className="border rounded-lg p-4 bg-accent/50">
                       <div className="flex justify-between items-start">
                         <div>
@@ -376,6 +540,12 @@ function NewContractPageContent() {
                           onClick={() => {
                             setSelectedCustomer(null)
                             setAddressId("")
+                            setContactPersons([])
+                            setContactEditIndex(null)
+                            setContactDraft(null)
+                            setContactError('')
+                            setAvailableReferences([])
+                            setSelectedReferenceIds([])
                           }}
                         >
                           Change
@@ -415,26 +585,41 @@ function NewContractPageContent() {
                     />
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="contractType">Contract Type</Label>
-                    <Select
-                      value={contractType}
-                      onValueChange={(value) => setContractType(value as 'INSPECTION' | 'REPAIR')}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="INSPECTION">Inspection</SelectItem>
-                        <SelectItem value="REPAIR">Repair</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="contractType">Contract Type</Label>
+                  <Select
+                    value={contractType}
+                    onValueChange={(value) => setContractType(value as 'INSPECTION' | 'REPAIR')}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="INSPECTION">Inspection</SelectItem>
+                      <SelectItem value="REPAIR">Repair</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="value">Contract Value (SGD) *</Label>
-                    <Input
-                      id="value"
+                <div className="space-y-2">
+                  <Label>Source of Marketing</Label>
+                  <Select value={marketingSource} onValueChange={(value) => setMarketingSource(value as 'GOOGLE' | 'REFERRAL' | 'OTHERS' | 'NONE')}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NONE">Not specified</SelectItem>
+                      <SelectItem value="GOOGLE">Google</SelectItem>
+                      <SelectItem value="REFERRAL">Referral</SelectItem>
+                      <SelectItem value="OTHERS">Others</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="value">Contract Value (SGD) *</Label>
+                  <Input
+                    id="value"
                       type="number"
                       step="0.01"
                       value={value}
@@ -483,6 +668,34 @@ function NewContractPageContent() {
                     placeholder="Optional notes about this contract"
                   />
                 </div>
+
+                {selectedCustomer && (
+                  <div className="space-y-2">
+                    <Label>Reference Contracts</Label>
+                    {availableReferences.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No existing contracts for this customer yet.</p>
+                    ) : (
+                      <>
+                        <select
+                          multiple
+                          value={selectedReferenceIds}
+                          onChange={(event) => {
+                            const options = Array.from(event.target.selectedOptions)
+                            setSelectedReferenceIds(options.map(option => option.value))
+                          }}
+                          className="w-full min-h-[120px] border rounded-md px-3 py-2"
+                        >
+                          {availableReferences.map((contract) => (
+                            <option key={contract.id} value={contract.id}>
+                              {contract.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">Hold Ctrl/Cmd to select multiple contracts.</p>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Checklist (under Contract Information) */}
                 <div className="pt-6">
@@ -558,6 +771,7 @@ function NewContractPageContent() {
                     )}
                   </div>
                 </div>
+
               </CardContent>
             </Card>
           </div>
@@ -593,6 +807,13 @@ function NewContractPageContent() {
                   </div>
                 )}
 
+                {marketingSource !== 'NONE' && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Source of Marketing</p>
+                    <Badge variant="outline">{marketingSource === 'GOOGLE' ? 'Google' : marketingSource === 'REFERRAL' ? 'Referral' : 'Others'}</Badge>
+                  </div>
+                )}
+
                 <div className="pt-4 space-y-2">
                   <Button
                     type="submit"
@@ -607,6 +828,125 @@ function NewContractPageContent() {
                       Cancel
                     </Button>
                   </Link>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle className="text-sm">Contact Persons</CardTitle>
+                <CardDescription>Keep track of stakeholders linked to this contract.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {contactPersons.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No contact persons added.</p>
+                )}
+
+                {contactPersons.map((person, index) => {
+                  const isEditing = contactEditIndex === index && contactDraft
+                  const editingAnother = contactEditIndex !== null && contactEditIndex !== index
+                  return (
+                    <div key={index} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <h4 className="font-medium">Contact #{index + 1}</h4>
+                        {!isEditing && !editingAnother && (
+                          <div className="flex gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => beginEditContactPerson(index)}>
+                              Edit
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleRemoveContact(index)}>
+                              Remove
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isEditing ? (
+                        <div className="space-y-3">
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact-name-${index}`}>Name *</Label>
+                            <Input
+                              id={`contact-name-${index}`}
+                              value={contactDraft?.name || ''}
+                              onChange={(e) => handleContactDraftChange('name', e.target.value)}
+                              placeholder="Full name"
+                              autoFocus
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact-relation-${index}`}>Relation</Label>
+                            <Input
+                              id={`contact-relation-${index}`}
+                              value={contactDraft?.relation || ''}
+                              onChange={(e) => handleContactDraftChange('relation', e.target.value)}
+                              placeholder="e.g., Owner"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact-phone-${index}`}>Phone</Label>
+                            <PhoneInput
+                              value={contactDraft?.phone || ''}
+                              onChange={(value) => handleContactDraftChange('phone', value)}
+                              placeholder="Contact number"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`contact-email-${index}`}>Email</Label>
+                            <Input
+                              id={`contact-email-${index}`}
+                              value={contactDraft?.email || ''}
+                              onChange={(e) => handleContactDraftChange('email', e.target.value)}
+                              placeholder="Email address"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={handleCancelContact}>
+                              Cancel
+                            </Button>
+                            <Button type="button" size="sm" onClick={handleSaveContact}>
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2 text-sm">
+                          <div className="font-medium">{person.name}</div>
+                          <div className="text-muted-foreground">
+                            {person.relation ? person.relation : 'Relation not specified'}
+                          </div>
+                          <div>
+                            {person.phone ? (
+                              <p>Phone: {person.phone}</p>
+                            ) : (
+                              <p className="text-muted-foreground">Phone not provided</p>
+                            )}
+                          </div>
+                          <div>
+                            {person.email ? (
+                              <p>Email: {person.email}</p>
+                            ) : (
+                              <p className="text-muted-foreground">Email not provided</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={beginAddContactPerson}
+                    disabled={contactEditIndex !== null}
+                  >
+                    <Plus className="h-4 w-4 mr-2" /> Add Contact Person
+                  </Button>
+                  {contactError && (
+                    <p className="text-sm text-destructive text-left">{contactError}</p>
+                  )}
                 </div>
               </CardContent>
             </Card>

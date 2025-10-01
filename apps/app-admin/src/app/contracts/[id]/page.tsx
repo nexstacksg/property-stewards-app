@@ -31,6 +31,7 @@ async function getContract(id: string) {
     include: {
       customer: true,
       address: true,
+      contactPersons: true,
       contractChecklist: {
         include: {
           items: true
@@ -92,7 +93,7 @@ function getContractStatusVariant(status: string): any {
     case 'CONFIRMED': return 'secondary'
     case 'SCHEDULED': return 'info'
     case 'COMPLETED': return 'success'
-    case 'CLOSED': return 'default'
+    case 'TERMINATED': return 'default'
     case 'CANCELLED': return 'destructive'
     default: return 'default'
   }
@@ -119,6 +120,26 @@ function getWorkOrderStatusIcon(status: string) {
   }
 }
 
+const formatEnumLabel = (value?: string | null) => {
+  if (!value) return '—'
+  if (value.startsWith('RANGE_')) {
+    const range = value.replace('RANGE_', '').replace(/_/g, ' ')
+    if (range.toLowerCase().includes('plus')) {
+      return `${range.replace(/plus/i, 'Plus')} sqft`
+    }
+    const parts = range.split(' ')
+    if (parts.length === 2) {
+      return `${parts[0]} - ${parts[1]} sqft`
+    }
+    return `${range} sqft`
+  }
+  return value
+    .toLowerCase()
+    .split('_')
+    .map(token => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ')
+}
+
 export default async function ContractDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params
   const contract = await getContract(resolvedParams.id) as any
@@ -135,6 +156,10 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   )
   const defaultReportTitle = `${contractTypeLabel} Report`
   const reports = Array.isArray(contract.reports) ? contract.reports : []
+  const referenceContracts = Array.isArray(contract.referenceIds) ? contract.referenceIds : []
+  const contactPersons = Array.isArray(contract.contactPersons) ? contract.contactPersons : []
+  const marketingSourceLabel = contract.marketingSource ? formatEnumLabel(contract.marketingSource) : null
+  const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
 
   return (
     <div className="p-6 space-y-6">
@@ -166,17 +191,20 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               Edit Contract
             </Button>
           </Link>
-          
-          <PreviewPdfButton
-            href={`/api/contracts/${contract.id}/report`}
-            fileName={contractReportFileName}
-            label="Preview PDF"
-          />
-          <GenerateContractReportButton
-            contractId={contract.id}
-            defaultTitle={defaultReportTitle}
-            defaultFileName={contractReportFileName}
-          />
+          {showPdfActions && (
+            <>
+              <PreviewPdfButton
+                href={`/api/contracts/${contract.id}/report`}
+                fileName={contractReportFileName}
+                label="Preview PDF"
+              />
+              <GenerateContractReportButton
+                contractId={contract.id}
+                defaultTitle={defaultReportTitle}
+                defaultFileName={contractReportFileName}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -211,6 +239,12 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                     <div className="flex gap-2 mt-1">
                       <Badge variant="outline">{contract.address.propertyType}</Badge>
                       <Badge variant="secondary">{contract.address.propertySize.replace(/_/g, ' ')}</Badge>
+                      {contract.address.propertySizeRange && (
+                        <Badge variant="secondary">{formatEnumLabel(contract.address.propertySizeRange)}</Badge>
+                      )}
+                      {contract.address.relationship && (
+                        <Badge variant="outline">{formatEnumLabel(contract.address.relationship)}</Badge>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -247,6 +281,13 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                 </div>
               )}
 
+              {marketingSourceLabel && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Source of Marketing</p>
+                  <Badge variant="outline">{marketingSourceLabel}</Badge>
+                </div>
+              )}
+
               <div>
                 <p className="text-sm text-muted-foreground">Scheduled Start</p>
                 <p className="font-medium">{formatDate(contract.scheduledStartDate)}</p>
@@ -263,6 +304,19 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                 <div>
                   <p className="text-sm text-muted-foreground">Remarks</p>
                   <p className="text-sm">{contract.remarks}</p>
+                </div>
+              )}
+
+              {referenceContracts.length > 0 && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Reference Contracts</p>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {referenceContracts.map((refId: string) => (
+                      <Link key={refId} href={`/contracts/${refId}`} className="font-mono text-xs text-primary hover:underline">
+                        #{refId.slice(-8).toUpperCase()}
+                      </Link>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -423,16 +477,50 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
+          </CardContent>
+        </Card>
 
-          {/* Generated Reports */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Generated Reports</CardTitle>
-              <CardDescription>Versioned PDF history for this contract</CardDescription>
-            </CardHeader>
-            <CardContent>
+        {/* Contact Persons */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Contact Persons</CardTitle>
+            <CardDescription>Key people linked to this contract</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {contactPersons.length === 0 ? (
+              <p className="text-muted-foreground text-center py-4">No contact persons added</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Relation</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Email</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {contactPersons.map((person: any) => (
+                    <TableRow key={person.id}>
+                      <TableCell className="font-medium">{person.name}</TableCell>
+                      <TableCell>{person.relation || '—'}</TableCell>
+                      <TableCell>{person.phone || '—'}</TableCell>
+                      <TableCell>{person.email || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Generated Reports */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Generated Reports</CardTitle>
+            <CardDescription>Versioned PDF history for this contract</CardDescription>
+          </CardHeader>
+          <CardContent>
               {reports.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No reports generated yet</p>
               ) : (
@@ -525,6 +613,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               </CardContent>
             </Card>
           </div>
+
         </div>
       </div>
     </div>

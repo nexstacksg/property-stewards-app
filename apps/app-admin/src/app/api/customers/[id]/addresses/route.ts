@@ -35,6 +35,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         postalCode: body.postalCode,
         propertyType: body.propertyType,
         propertySize: normalizedSize,
+        propertySizeRange: body.propertySizeRange || null,
+        relationship: body.relationship || null,
         remarks: body.remarks || null,
         status: "ACTIVE"
       }

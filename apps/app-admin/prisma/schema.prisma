@@ -50,6 +50,8 @@ model CustomerAddress {
   postalCode   String
   propertyType PropertyType
   propertySize PropertySize
+  propertySizeRange PropertySizeRange?
+  relationship PropertyRelationship?
   remarks      String?
   createdOn    DateTime     @default(now())
   updatedOn    DateTime     @updatedAt
@@ -124,6 +126,8 @@ model Contract {
   contractType       ContractType       @default(INSPECTION)
   customerComments   String?
   customerRating     Int?
+  marketingSource    MarketingSource?
+  referenceIds       String[]           @default([])
   createdOn          DateTime           @default(now())
   updatedOn          DateTime           @updatedAt
   status             ContractStatus     @default(DRAFT)
@@ -133,6 +137,7 @@ model Contract {
   contractChecklist  ContractChecklist?
   workOrders         WorkOrder[]
   reports            ContractReport[]
+  contactPersons     ContractContactPerson[]
 
   @@index([customerId])
   @@index([addressId])
@@ -172,6 +177,19 @@ model ContractChecklistItem {
   @@unique([contractChecklistId, order])
   @@index([contractChecklistId])
   @@index([workOrderId])
+}
+
+model ContractContactPerson {
+  id          String   @id @default(cuid())
+  contractId  String
+  name        String
+  phone       String?
+  email       String?
+  relation    String?
+
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
 }
 
 // Per-inspector contribution to a checklist item (remarks/media/selection)
@@ -311,6 +329,12 @@ enum PropertyType {
   LANDED
 }
 
+enum PropertyRelationship {
+  AGENT
+  OWNER
+  TENANT
+}
+
 enum PropertySize {
   HDB_1_ROOM
   HDB_2_ROOM
@@ -330,6 +354,17 @@ enum PropertySize {
   DETACHED
   BUNGALOW
   GOOD_CLASS_BUNGALOW
+}
+
+enum PropertySizeRange {
+  RANGE_50_399
+  RANGE_400_699
+  RANGE_700_899
+  RANGE_900_1200
+  RANGE_1201_1399
+  RANGE_1400_1599
+  RANGE_1600_1999
+  RANGE_2000_PLUS
 }
 
 // Status for contract checklist items
@@ -366,13 +401,19 @@ enum ContractStatus {
   CONFIRMED
   SCHEDULED
   COMPLETED
-  CLOSED
+  TERMINATED
   CANCELLED
 }
 
 enum ContractType {
   INSPECTION
   REPAIR
+}
+
+enum MarketingSource {
+  GOOGLE
+  REFERRAL
+  OTHERS
 }
 
 enum WorkOrderStatus {

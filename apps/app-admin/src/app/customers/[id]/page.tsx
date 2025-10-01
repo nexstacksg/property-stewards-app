@@ -12,6 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import PropertyTypeSelect from '@/components/property-type-select'
 import { PhoneInput } from "@/components/ui/phone-input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  DEFAULT_PROPERTY_RELATIONSHIP,
+  DEFAULT_PROPERTY_SIZE_RANGE,
+  PROPERTY_RELATIONSHIP_OPTIONS,
+  PROPERTY_SIZE_RANGE_OPTIONS,
+  formatPropertyRelationship,
+  formatPropertySizeRange
+} from '@/lib/property-address'
 import { 
   ArrowLeft, 
   Edit, 
@@ -35,6 +43,8 @@ interface Address {
   postalCode: string
   propertyType: string
   propertySize: string
+  propertySizeRange?: string | null
+  relationship?: string | null
   remarks?: string | null
   status: string
 }
@@ -44,6 +54,8 @@ interface NewAddress {
   postalCode: string
   propertyType: string
   propertySize: string
+  propertySizeRange?: string
+  relationship?: string
   remarks?: string
 }
 
@@ -99,7 +111,7 @@ function getContractStatusVariant(status: string): any {
     case 'CONFIRMED': return 'secondary'
     case 'SCHEDULED': return 'info'
     case 'COMPLETED': return 'success'
-    case 'CLOSED': return 'default'
+    case 'TERMINATED': return 'default'
     case 'CANCELLED': return 'destructive'
     default: return 'default'
   }
@@ -163,6 +175,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     postalCode: "",
     propertyType: "HDB",
     propertySize: "",
+    propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+    relationship: DEFAULT_PROPERTY_RELATIONSHIP,
     remarks: ""
   })
   const [propertyOptions, setPropertyOptions] = useState<PropertyOption[]>([])
@@ -205,7 +219,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       }
     }
     loadSizes()
-  }, [newAddress.propertyType])
+  }, [newAddress.propertyType, showAddressForm])
 
   useEffect(() => {
     if (customerId) {
@@ -230,7 +244,15 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const addAddress = async () => {
-    if (!newAddress.address || !newAddress.postalCode) return
+    if (
+      !newAddress.address ||
+      !newAddress.postalCode ||
+      !newAddress.propertySize ||
+      !newAddress.propertySizeRange ||
+      !newAddress.relationship
+    ) {
+      return
+    }
 
     setAddingAddress(true)
     try {
@@ -251,6 +273,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         postalCode: "",
         propertyType: "HDB",
         propertySize: "HDB_3_ROOM",
+        propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+        relationship: DEFAULT_PROPERTY_RELATIONSHIP,
         remarks: ""
       })
       setShowAddressForm(false)
@@ -454,7 +478,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           setNewAddress({
                             ...newAddress,
                             propertyType: value,
-                            propertySize: ''
+                            propertySize: '',
+                            propertySizeRange: newAddress.propertySizeRange || DEFAULT_PROPERTY_SIZE_RANGE,
+                            relationship: newAddress.relationship || DEFAULT_PROPERTY_RELATIONSHIP
                           })
                         }}
                       />
@@ -473,6 +499,44 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           {sizeOptions.map(option => (
                             <SelectItem key={option.code} value={option.code}>
                               {option.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Property Size Range</Label>
+                      <Select
+                        value={newAddress.propertySizeRange || undefined}
+                        onValueChange={(value) => setNewAddress({ ...newAddress, propertySizeRange: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select size range" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROPERTY_SIZE_RANGE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Relationship</Label>
+                      <Select
+                        value={newAddress.relationship || undefined}
+                        onValueChange={(value) => setNewAddress({ ...newAddress, relationship: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select relationship" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROPERTY_RELATIONSHIP_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -500,6 +564,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           postalCode: "",
                           propertyType: "HDB",
                           propertySize: "",
+                          propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+                          relationship: DEFAULT_PROPERTY_RELATIONSHIP,
                           remarks: ""
                         })
                       }}
@@ -509,7 +575,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     <Button
                       size="sm"
                       onClick={addAddress}
-                      disabled={!newAddress.address || !newAddress.postalCode || !newAddress.propertySize || addingAddress}
+                      disabled={
+                        !newAddress.address ||
+                        !newAddress.postalCode ||
+                        !newAddress.propertySize ||
+                        !newAddress.propertySizeRange ||
+                        !newAddress.relationship ||
+                        addingAddress
+                      }
                     >
                       {addingAddress && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                       Add Address
@@ -540,6 +613,12 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                             {getPropertyTypeIcon(address.propertyType)}
                             <Badge variant="outline">{address.propertyType}</Badge>
                             <Badge variant="secondary">{address.propertySize.replace(/_/g, ' ')}</Badge>
+                            {address.propertySizeRange && (
+                              <Badge variant="outline">{formatPropertySizeRange(address.propertySizeRange)}</Badge>
+                            )}
+                            {address.relationship && (
+                              <Badge variant="secondary">{formatPropertyRelationship(address.relationship)}</Badge>
+                            )}
                           </div>
                           {address.remarks && (
                             <p className="text-sm text-muted-foreground">{address.remarks}</p>
