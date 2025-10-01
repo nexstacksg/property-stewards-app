@@ -33,6 +33,18 @@ export async function GET(
             inspectors: true
           },
           orderBy: { scheduledStartDateTime: 'desc' }
+        },
+        followUpRemarks: {
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                username: true,
+                email: true
+              }
+            }
+          },
+          orderBy: { createdOn: 'desc' }
         }
       }
     })
@@ -167,6 +179,18 @@ export async function PATCH(
             inspectors: true
           },
           orderBy: { scheduledStartDateTime: 'desc' }
+        },
+        followUpRemarks: {
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                username: true,
+                email: true
+              }
+            }
+          },
+          orderBy: { createdOn: 'desc' }
         }
       }
     })

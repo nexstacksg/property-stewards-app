@@ -16,6 +16,7 @@
     "db:seed:properties": "tsx prisma/seed-properties.ts",
     "db:seed:property-sizes": "tsx prisma/seed-property-sizes.ts",
     "db:seed:item-entries": "tsx prisma/seed-item-entries.ts",
+    "db:seed:checklist-tags": "tsx prisma/seed-checklist-tags.ts",
     "db:studio": "prisma studio",
     "cache:warm": "tsx scripts/warm-cache.ts",
     "cache:warm:ci": "pnpm cache:warm || true",

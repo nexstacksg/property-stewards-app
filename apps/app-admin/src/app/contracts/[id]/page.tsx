@@ -23,6 +23,7 @@ import {
 import prisma from "@/lib/prisma"
 import { PreviewPdfButton } from "@/components/preview-pdf-button"
 import { GenerateContractReportButton } from "@/components/generate-contract-report-button"
+import { ContractFollowUpRemarks } from "@/components/contract-follow-up-remarks"
 import { buildContractReportFilename } from "@/lib/filename"
 
 async function getContract(id: string) {
@@ -158,6 +159,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   const reports = Array.isArray(contract.reports) ? contract.reports : []
   const referenceContracts = Array.isArray(contract.referenceIds) ? contract.referenceIds : []
   const contactPersons = Array.isArray(contract.contactPersons) ? contract.contactPersons : []
+  const remarkEntries = Array.isArray(contract.followUpRemarks) ? contract.followUpRemarks : []
   const marketingSourceLabel = contract.marketingSource ? formatEnumLabel(contract.marketingSource) : null
   const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
 
@@ -345,6 +347,8 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               </div>
             </CardContent>
           </Card>
+
+          <ContractFollowUpRemarks contractId={contract.id} initialRemarks={remarkEntries} />
         </div>
 
         {/* Work Orders and Checklists */}

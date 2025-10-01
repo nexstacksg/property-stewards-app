@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Save, Plus, X, GripVertical, Pencil } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
 import { PhoneInput } from "@/components/ui/phone-input"
+import { ChecklistTagLibrary } from "@/components/checklists/checklist-tag-library"
 
 interface Contract {
   id: string
@@ -219,10 +220,12 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
   }
 
   const addBlankChecklistItem = () => {
-    const i = checklistItems.length
-    const newItem: ChecklistDraftItem = { item: '', description: '', order: i + 1, isRequired: true }
-    setChecklistItems([...checklistItems, newItem])
-    setRowEditIndex(i)
+    const newItem: ChecklistDraftItem = { item: '', description: '', order: 1, isRequired: true }
+    setChecklistItems((prev) => {
+      const updated = [newItem, ...prev.map((item) => ({ ...item }))]
+      return updated.map((item, index) => ({ ...item, order: index + 1 }))
+    })
+    setRowEditIndex(0)
     setRowEditItem({ ...newItem })
   }
 
@@ -249,6 +252,29 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
     arr[rowEditIndex] = { ...rowEditItem, order: rowEditIndex + 1 }
     setChecklistItems(arr)
     setRowEditIndex(null); setRowEditItem(null)
+  }
+
+  const applyTagToChecklist = (label: string) => {
+    const trimmed = label.trim()
+    if (!trimmed) return
+
+    if (rowEditIndex !== null) {
+      setRowEditItem(prev => prev ? { ...prev, item: trimmed } : { item: trimmed, description: '', order: rowEditIndex + 1, isRequired: true })
+      return
+    }
+
+    const newItem: ChecklistDraftItem = {
+      item: trimmed,
+      description: '',
+      order: 1,
+      isRequired: true
+    }
+    setChecklistItems((prev) => {
+      const updated = [newItem, ...prev.map((item) => ({ ...item }))]
+      return updated.map((item, index) => ({ ...item, order: index + 1 }))
+    })
+    setRowEditIndex(0)
+    setRowEditItem({ ...newItem })
   }
 
   // Contact person helpers
@@ -680,6 +706,8 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                         </Button>
                       </div>
                     </div>
+
+                    <ChecklistTagLibrary onApplyTag={applyTagToChecklist} />
 
                     {checklistItems.length > 0 ? (
                       <div className="space-y-2">

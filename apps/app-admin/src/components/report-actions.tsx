@@ -1,13 +1,13 @@
 "use client"
 
 import { useState } from "react"
-import { Download, Mail, MessageCircle, Loader2 } from "lucide-react"
+import { Download, Mail, MessageCircle, Loader2, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { PhoneInput } from "@/components/ui/phone-input"
 import { showToast } from "@/lib/toast"
 
 interface ReportActionsProps {
@@ -23,14 +23,47 @@ interface ReportActionsProps {
 }
 
 export function ReportActions({ contractId, report, customerEmail, customerName, customerPhone }: ReportActionsProps) {
+  const normalizeToE164 = (raw?: string | null) => {
+    if (!raw) return null
+    const trimmed = raw.trim()
+    if (!trimmed) return null
+    if (trimmed.startsWith('+')) {
+      const compact = trimmed.replace(/\s+/g, '')
+      return compact.length > 1 ? compact : null
+    }
+
+    const digits = trimmed.replace(/[^0-9]/g, '')
+    if (!digits) return null
+
+    if (digits.startsWith('65') && digits.length > 2) {
+      return `+${digits}`
+    }
+
+    if (digits.length === 8) {
+      return `+65${digits}`
+    }
+
+    return `+${digits}`
+  }
+
+  const createRecipient = (name = '', phone = '') => ({
+    id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+    name,
+    phone
+  })
+
   const [isEmailing, setIsEmailing] = useState(false)
   const [isMessaging, setIsMessaging] = useState(false)
   const [emailDialogOpen, setEmailDialogOpen] = useState(false)
-  const [whatsappDialogOpen, setWhatsappDialogOpen] = useState(false)
+  const [whatsAppDialogOpen, setWhatsAppDialogOpen] = useState(false)
   const [emailTo, setEmailTo] = useState(customerEmail ?? "")
   const [emailCc, setEmailCc] = useState("")
-  const [whatsAppNumber, setWhatsAppNumber] = useState(customerPhone ?? "")
-  const [customMessage, setCustomMessage] = useState("")
+  const buildDefaultRecipients = () => {
+    const normalizedPhone = normalizeToE164(customerPhone)
+    return [createRecipient(customerName?.trim() || '', normalizedPhone || '')]
+  }
+
+  const [whatsAppRecipients, setWhatsAppRecipients] = useState<Array<{ id: string; name: string; phone: string }>>(buildDefaultRecipients)
 
   const parseEmails = (value: string) =>
     value
@@ -38,7 +71,11 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0)
 
-  const handleSend = async (channel: "email" | "whatsapp") => {
+  const handleSend = async (
+    channel: "email" | "whatsapp",
+    overrides?: { phone?: string; message?: string },
+    options?: { silentSuccess?: boolean }
+  ) => {
     if (!report.fileUrl) {
       showToast({ title: "Report file unavailable", variant: "error" })
       return
@@ -58,9 +95,13 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
             cc: parseEmails(emailCc)
           }
         : {
-            phone: whatsAppNumber,
-            message: customMessage || undefined
+            phone: overrides?.phone,
+            message: overrides?.message
           }
+
+      if (channel === "whatsapp" && !payload.phone) {
+        throw new Error('Phone number is required to send WhatsApp messages.')
+      }
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -73,24 +114,24 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
         throw new Error(error.error || `Failed to send ${channel}`)
       }
 
-      showToast({
-        title: channel === "email" ? "Email sent" : "WhatsApp message sent",
-        description: `Report ${channel === "email" ? "emailed" : "shared"} successfully.`,
-        variant: "success"
-      })
+      if (!options?.silentSuccess) {
+        showToast({
+          title: channel === "email" ? "Email sent" : "WhatsApp message sent",
+          description: `Report ${channel === "email" ? "emailed" : "shared"} successfully.`,
+          variant: "success"
+        })
+      }
 
       if (channel === "email") {
         setEmailDialogOpen(false)
-      } else {
-        setWhatsappDialogOpen(false)
       }
     } catch (error) {
       console.error(`Failed to send report via ${channel}`, error)
-      showToast({
-        title: `Failed to send via ${channel}`,
-        description: error instanceof Error ? error.message : undefined,
-        variant: "error"
-      })
+        showToast({
+          title: `Failed to send via ${channel}`,
+          description: error instanceof Error ? error.message : undefined,
+          variant: "error"
+        })
     } finally {
       if (channel === "email") {
         setIsEmailing(false)
@@ -114,7 +155,74 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
   }
 
   const hasPrimaryEmail = parseEmails(emailTo).length > 0 || (!!customerEmail && !emailTo.trim())
-  const hasWhatsAppNumber = whatsAppNumber.trim().length > 0
+
+  const addRecipient = () => {
+    setWhatsAppRecipients((prev) => [...prev, createRecipient()])
+  }
+
+  const updateRecipient = (id: string, field: 'name' | 'phone', value: string) => {
+    setWhatsAppRecipients((prev) =>
+      prev.map((recipient) =>
+        recipient.id === id ? { ...recipient, [field]: field === 'phone' ? value : value } : recipient
+      )
+    )
+  }
+
+  const removeRecipient = (id: string) => {
+    setWhatsAppRecipients((prev) => (prev.length <= 1 ? prev : prev.filter((recipient) => recipient.id !== id)))
+  }
+
+  const handleSendWhatsApp = async () => {
+    const validRecipients = whatsAppRecipients
+      .map((recipient) => ({
+        ...recipient,
+        normalizedPhone: normalizeToE164(recipient.phone) ?? null
+      }))
+      .filter((recipient) => recipient.normalizedPhone)
+
+    if (validRecipients.length === 0) {
+      showToast({
+        title: 'Phone numbers missing',
+        description: 'Please provide at least one valid WhatsApp number.',
+        variant: 'error'
+      })
+      return
+    }
+
+    try {
+      setIsMessaging(true)
+      for (const recipient of validRecipients) {
+        const personalizedMessage = (() => {
+          const nameLine = recipient.name?.trim().length
+            ? `Hi ${recipient.name.trim()},`
+            : `Hi there,`
+          const baseMessage = defaultWhatsAppMessage()
+          const [, ...rest] = baseMessage.split('\n\n')
+          return [nameLine, ...rest].join('\n\n')
+        })()
+
+        await handleSend(
+          'whatsapp',
+          {
+            phone: recipient.normalizedPhone!,
+            message: personalizedMessage
+          },
+          { silentSuccess: true }
+        )
+      }
+
+      showToast({
+        title: 'WhatsApp message sent',
+        description: `${validRecipients.length} recipient${validRecipients.length > 1 ? 's' : ''} notified.`,
+        variant: 'success'
+      })
+
+      setWhatsAppRecipients(buildDefaultRecipients())
+      setWhatsAppDialogOpen(false)
+    } finally {
+      setIsMessaging(false)
+    }
+  }
 
   return (
     <div className="flex items-center gap-2">
@@ -140,11 +248,7 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
         size="icon"
         variant="outline"
         disabled={!report.fileUrl}
-        onClick={() => {
-          setWhatsAppNumber(customerPhone ?? "")
-          setCustomMessage(defaultWhatsAppMessage())
-          setWhatsappDialogOpen(true)
-        }}
+        onClick={() => setWhatsAppDialogOpen(true)}
         aria-label="Send report via WhatsApp"
       >
         <MessageCircle className="h-4 w-4" />
@@ -183,39 +287,73 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
         </DialogContent>
       </Dialog>
 
-      <Dialog open={whatsappDialogOpen} onOpenChange={setWhatsappDialogOpen}>
+      <Dialog open={whatsAppDialogOpen} onOpenChange={setWhatsAppDialogOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Send report via WhatsApp</DialogTitle>
             <DialogDescription>Version {versionLabel}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">WhatsApp number</label>
-              <Input
-                value={whatsAppNumber}
-                onChange={(event) => setWhatsAppNumber(event.target.value)}
-                placeholder="+65..."
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Message (optional)</label>
-              <Textarea
-                value={customMessage}
-                onChange={(event) => setCustomMessage(event.target.value)}
-                placeholder={`Hi ${customerName ?? "there"},...`}
-                rows={4}
-              />
-            </div>
+            {whatsAppRecipients.map((recipient, index) => {
+              const disableRemove = whatsAppRecipients.length === 1
+              return (
+                <div key={recipient.id} className="border rounded-md p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Contact #{index + 1}</p>
+                    <div className="flex gap-2">
+                      {!disableRemove && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeRecipient(recipient.id)}
+                          aria-label="Remove contact"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Name</label>
+                    <Input
+                      value={recipient.name}
+                      onChange={(event) => updateRecipient(recipient.id, 'name', event.target.value)}
+                      placeholder="Contact name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Phone</label>
+                    <PhoneInput
+                      value={recipient.phone}
+                      onChange={(value) => updateRecipient(recipient.id, 'phone', value)}
+                      placeholder="Enter phone number"
+                    />
+                  </div>
+                </div>
+              )
+            })}
+            <Button type="button" variant="outline" onClick={addRecipient} className="w-full">
+              <Plus className="h-4 w-4 mr-2" /> Add recipient
+            </Button>
           </div>
           <DialogFooter className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => setWhatsappDialogOpen(false)} disabled={isMessaging}>Cancel</Button>
-            <Button onClick={() => handleSend("whatsapp")} disabled={isMessaging || !hasWhatsAppNumber}>
-              {isMessaging ? <LoaderIcon /> : "Send"}
+            <Button variant="outline" onClick={() => setWhatsAppDialogOpen(false)} disabled={isMessaging}>
+              Cancel
+            </Button>
+            <Button onClick={handleSendWhatsApp} disabled={isMessaging}>
+              {isMessaging ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Sending...
+                </span>
+              ) : (
+                'Send messages'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   )
 }
