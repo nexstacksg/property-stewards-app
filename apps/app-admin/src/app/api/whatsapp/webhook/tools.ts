@@ -128,7 +128,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const { jobId } = args
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId) as any[]
         const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
-        return JSON.stringify({ success: true, locations: locationsWithStatus.map((loc, index) => ({ number: index + 1, name: loc.name, displayName: loc.displayName, contractChecklistItemId: loc.contractChecklistItemId, status: loc.isCompleted ? 'completed' : (loc.completedTasks > 0 ? 'in_progress' : 'pending'), tasks: loc.totalTasks, completed: loc.completedTasks, pending: loc.totalTasks - loc.completedTasks })), locationsFormatted })
+        const nextPrompt = 'Reply with the number of the location you want to inspect next.'
+        return JSON.stringify({ success: true, locations: locationsWithStatus.map((loc, index) => ({ number: index + 1, name: loc.name, displayName: loc.displayName, contractChecklistItemId: loc.contractChecklistItemId, status: loc.isCompleted ? 'completed' : (loc.completedTasks > 0 ? 'in_progress' : 'pending'), tasks: loc.totalTasks, completed: loc.completedTasks, pending: loc.totalTasks - loc.completedTasks })), locationsFormatted, nextPrompt })
       }
       case 'getTasksForLocation': {
         const { workOrderId, location, contractChecklistItemId } = args
@@ -146,7 +147,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const formattedTasks = tasks.map((task: any, index: number) => ({ id: task.id, number: index + 1, description: task.action || `Check ${location.toLowerCase()} condition`, status: task.status, displayStatus: task.status === 'completed' ? 'done' : 'pending', notes: task.notes || null }))
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
-        return JSON.stringify({ success: true, location, allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0, tasks: formattedTasks, locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation }, locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null, locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending' })
+        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to mark them all done) when you're ready.`
+        return JSON.stringify({ success: true, location, allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0, tasks: formattedTasks, locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation }, locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null, locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending', nextPrompt })
       }
       case 'completeTask': {
         const phase = (args.phase as string | undefined) || 'start'
@@ -359,7 +361,29 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             })
           }
 
+          let entryRecord: { photos?: string[]; remarks?: string | null } | null = null
+          if (entryId) {
+            try {
+              entryRecord = await prisma.itemEntry.findUnique({ where: { id: entryId }, select: { photos: true, remarks: true } })
+            } catch (error) {
+              console.error('Failed to load entry for validation', error)
+            }
+          }
+
           if (completed) {
+            const requiresPhoto = condition !== 'NOT_APPLICABLE'
+            const requiresRemark = condition !== 'GOOD'
+            const photoCount = entryRecord?.photos?.length ?? 0
+            const remarkText = entryRecord?.remarks?.trim() ?? ''
+
+            if (requiresPhoto && photoCount === 0) {
+              return JSON.stringify({ success: false, error: 'Please send at least one photo for this status before marking the task complete.' })
+            }
+
+            if (requiresRemark && !remarkText) {
+              return JSON.stringify({ success: false, error: 'Please add a remark for this status before marking the task complete.' })
+            }
+
             const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
             await prisma.contractChecklistItem.update({
               where: { id: targetItemId },

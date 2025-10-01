@@ -90,6 +90,9 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const uint8Array = new Uint8Array(buffer)
     debugLog('📦 Downloaded media buffer size:', buffer.byteLength, 'bytes')
 
+    const normalizedCondition = (metadata.currentTaskCondition || metadata.currentLocationCondition || '').toUpperCase()
+    const requiresRemarkForPhoto = mediaType === 'photo' && normalizedCondition !== 'GOOD'
+
     // Generate storage key
     let customerName = (metadata.customerName || 'unknown').toLowerCase().replace(/[^a-z0-9\s-]/gi, '').replace(/\s+/g, '-').substring(0, 50)
     const postalCode = metadata.postalCode || 'unknown'
@@ -118,6 +121,15 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     ]
     const mediaRemarkRaw = rawRemarkCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
     const mediaRemark = mediaRemarkRaw.trim()
+
+    if (mediaType === 'photo') {
+      if (requiresRemarkForPhoto && !mediaRemark) {
+        return 'Please add a quick remark describing this photo so I can log it properly.'
+      }
+      if (requiresPhotoForStatus && !mediaRemark && normalizedCondition && normalizedCondition !== 'GOOD') {
+        // Already covered but keep for clarity
+      }
+    }
 
     // Save to DB
     let handledByTaskFlow = false
@@ -151,10 +163,10 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
           handledByTaskFlow = true
           if (mediaRemark) {
             await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: mediaRemark })
-            return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nIs this task complete now? Reply [1] Yes or [2] No.`
+            return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
           }
           await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: undefined })
-          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nReply [1] Yes if this task is complete or [2] No to keep it pending. If you need to add a note, send it before choosing.`
+          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if you’re done with this task, or [2] if you need to keep it pending. Add a note first if needed.`
         }
       } catch (error) {
         console.error('❌ Failed to save media to task entry, falling back to item storage', error)
@@ -176,10 +188,13 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       }
 
       const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
-      return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nYou can continue with your inspection or upload more media.`
+      if (mediaType === 'photo' && requiresRemarkForPhoto && !mediaRemark) {
+        return `📸 Photo saved for ${locationName}. Please reply with a short remark so I can record what you found. Afterwards, choose the next task or location.`
+      }
+      return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nNext: continue with the current location or pick another one from the list when you’re ready.`
     }
 
-    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.`
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.\n\nNext: continue with this task or let me know if it’s complete.`
   } catch (error) {
     console.error('❌ Error handling WhatsApp media:', error)
     return 'Failed to upload media. Please try again.'
