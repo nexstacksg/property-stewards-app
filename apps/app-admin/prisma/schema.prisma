@@ -17,6 +17,7 @@ model User {
   confirmed    Boolean  @default(false)
   itemEntries  ItemEntry[]
   reports      ContractReport[]
+  contractRemarks ContractRemark[]
 }
 
 model Customer {
@@ -138,11 +139,26 @@ model Contract {
   workOrders         WorkOrder[]
   reports            ContractReport[]
   contactPersons     ContractContactPerson[]
+  followUpRemarks    ContractRemark[]
 
   @@index([customerId])
   @@index([addressId])
   @@index([status])
   @@index([scheduledStartDate])
+}
+
+model ContractRemark {
+  id          String   @id @default(cuid())
+  contractId  String
+  body        String
+  createdOn   DateTime @default(now())
+  createdById String?
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdBy  User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([contractId])
+  @@index([createdOn])
 }
 
 model ContractChecklist {
@@ -277,6 +293,15 @@ model ContractReport {
   @@unique([contractId, version])
   @@index([contractId])
   @@index([generatedOn])
+}
+
+model ChecklistTag {
+  id        String   @id @default(cuid())
+  label     String   @unique
+  createdOn DateTime @default(now())
+  updatedOn DateTime @updatedAt
+
+  @@index([label])
 }
 
 // New Property table to manage available property types dynamically

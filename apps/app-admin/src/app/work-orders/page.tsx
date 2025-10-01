@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
 import { 
   Plus, 
   Calendar, 
@@ -48,34 +49,71 @@ interface WorkOrder {
 }
 
 export default function WorkOrdersPage() {
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([])
+  const [allWorkOrders, setAllWorkOrders] = useState<WorkOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>("")
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const limit = 10
 
   useEffect(() => {
     fetchWorkOrders()
-  }, [page, statusFilter])
+  }, [])
+
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 300)
+    return () => clearTimeout(handler)
+  }, [searchTerm])
+
+  useEffect(() => {
+    setPage(1)
+  }, [statusFilter, debouncedSearch])
+
+  const filteredWorkOrders = useMemo(() => {
+    let data = [...allWorkOrders]
+    if (statusFilter) {
+      data = data.filter((order) => order.status === statusFilter)
+    }
+    if (debouncedSearch) {
+      const token = debouncedSearch.toLowerCase()
+      data = data.filter((order) => {
+        const idMatch = order.id?.toLowerCase().includes(token)
+        const customerMatch = order.contract?.customer?.name?.toLowerCase().includes(token)
+        const addressMatch = order.contract?.address?.address?.toLowerCase().includes(token)
+        const inspectorMatch = order.inspectors?.some((inspector) => inspector.name.toLowerCase().includes(token))
+        return idMatch || customerMatch || addressMatch || inspectorMatch
+      })
+    }
+    return data
+  }, [allWorkOrders, statusFilter, debouncedSearch])
+
+  useEffect(() => {
+    const newTotal = Math.max(1, Math.ceil(filteredWorkOrders.length / limit))
+    setTotalPages(newTotal)
+    setPage((prev) => Math.min(prev, newTotal))
+  }, [filteredWorkOrders, limit])
+
+  const currentWorkOrders = useMemo(() => {
+    const start = (page - 1) * limit
+    return filteredWorkOrders.slice(start, start + limit)
+  }, [filteredWorkOrders, page, limit])
 
   const fetchWorkOrders = async () => {
     try {
       setLoading(true)
       const params = new URLSearchParams({
-        page: page.toString(),
-        limit: limit.toString(),
+        page: '1',
+        limit: '200',
       })
       
-      if (statusFilter) {
-        params.append('status', statusFilter)
-      }
-
       const response = await fetch(`/api/work-orders?${params}`)
       const data = await response.json()
-      
-      setWorkOrders(data.workOrders)
-      setTotalPages(data.pagination.totalPages)
+      const items = Array.isArray(data.workOrders) ? data.workOrders : []
+      setAllWorkOrders(items)
+      setPage(1)
+      setTotalPages(Math.max(1, Math.ceil(items.length / limit)))
     } catch (error) {
       console.error('Error fetching work orders:', error)
     } finally {
@@ -148,7 +186,7 @@ export default function WorkOrdersPage() {
   }
 
   // Group work orders by date
-  const groupedWorkOrders = workOrders.reduce((groups: any, workOrder) => {
+  const groupedWorkOrders = currentWorkOrders.reduce((groups: any, workOrder) => {
     const date = formatDate(workOrder.scheduledStartDateTime)
     if (!groups[date]) {
       groups[date] = []
@@ -186,7 +224,7 @@ export default function WorkOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-500">
-              {workOrders.filter(w => w.status === 'SCHEDULED').length}
+              {filteredWorkOrders.filter(w => w.status === 'SCHEDULED').length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Upcoming inspections</p>
           </CardContent>
@@ -204,7 +242,7 @@ export default function WorkOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-500">
-              {workOrders.filter(w => w.status === 'STARTED').length}
+              {filteredWorkOrders.filter(w => w.status === 'STARTED').length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Currently active</p>
           </CardContent>
@@ -222,7 +260,7 @@ export default function WorkOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-500">
-              {workOrders.filter(w => w.status === 'COMPLETED').length}
+              {filteredWorkOrders.filter(w => w.status === 'COMPLETED').length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Finished today</p>
           </CardContent>
@@ -240,7 +278,7 @@ export default function WorkOrdersPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-500">
-              {workOrders.filter(w => w.status === 'CANCELLED').length}
+              {filteredWorkOrders.filter(w => w.status === 'CANCELLED').length}
             </div>
             <p className="text-xs text-muted-foreground mt-1">Cancelled orders</p>
           </CardContent>
@@ -257,18 +295,37 @@ export default function WorkOrdersPage() {
                 {statusFilter ? `Showing ${statusFilter.toLowerCase()} work orders` : 'All work orders'}
               </CardDescription>
             </div>
-            {statusFilter && (
-              <Button variant="outline" size="sm" onClick={() => setStatusFilter('')}>
-                <Filter className="h-4 w-4 mr-2" />
-                Clear Filter
-              </Button>
-            )}
+            <div className="flex flex-wrap gap-2 justify-end">
+              <Input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search work orders"
+                className="w-full md:w-56"
+              />
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="px-3 py-2 border rounded-md"
+              >
+                <option value="">All Status</option>
+                <option value="SCHEDULED">Scheduled</option>
+                <option value="STARTED">Started</option>
+                <option value="COMPLETED">Completed</option>
+                <option value="CANCELLED">Cancelled</option>
+              </select>
+              {statusFilter && (
+                <Button variant="outline" size="sm" onClick={() => setStatusFilter('')}>
+                  <Filter className="h-4 w-4 mr-2" />
+                  Clear Filter
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
             <div className="text-center py-12 text-muted-foreground">Loading work orders...</div>
-          ) : workOrders.length === 0 ? (
+          ) : filteredWorkOrders.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <Calendar className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
               <p>No work orders found</p>

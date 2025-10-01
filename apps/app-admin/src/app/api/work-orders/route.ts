@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
     const contractId = searchParams.get('contractId')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
+    const search = searchParams.get('search')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '10')
     const skip = (page - 1) * limit
@@ -73,6 +74,17 @@ export async function GET(request: NextRequest) {
       if (endDate) {
         where.scheduledStartDateTime.lte = new Date(endDate)
       }
+    }
+
+    const trimmedSearch = search?.trim()
+    if (trimmedSearch) {
+      const like = { contains: trimmedSearch, mode: 'insensitive' as const }
+      where.OR = [
+        { id: like },
+        { contract: { customer: { name: like } } },
+        { contract: { address: { address: like } } },
+        { inspectors: { some: { name: like } } }
+      ]
     }
 
     const [workOrders, total] = await Promise.all([
