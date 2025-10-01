@@ -1,246 +1,98 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import Link from "next/link"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import PropertyTypeSelect from '@/components/property-type-select'
-import { PhoneInput } from "@/components/ui/phone-input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  DEFAULT_PROPERTY_RELATIONSHIP,
-  DEFAULT_PROPERTY_SIZE_RANGE,
-  PROPERTY_RELATIONSHIP_OPTIONS,
-  PROPERTY_SIZE_RANGE_OPTIONS,
-  formatPropertyRelationship,
-  formatPropertySizeRange
-} from '@/lib/property-address'
-import { 
-  ArrowLeft, 
-  Edit, 
-  MapPin, 
-  Mail, 
-  Phone, 
-  Building2, 
-  User, 
-  Calendar,
-  DollarSign,
-  FileText,
-  Crown,
-  Plus,
-  Home,
-  Loader2
-} from "lucide-react"
+import { Loader2 } from "lucide-react"
 
-interface Address {
-  id: string
-  address: string
-  postalCode: string
-  propertyType: string
-  propertySize: string
-  propertySizeRange?: string | null
-  relationship?: string | null
-  remarks?: string | null
-  status: string
-}
+import { DEFAULT_PROPERTY_RELATIONSHIP, DEFAULT_PROPERTY_SIZE_RANGE } from "@/lib/property-address"
+import { CustomerAddressSection } from "@/components/customers/customer-address-section"
+import { CustomerContractsCard } from "@/components/customers/customer-contracts-card"
+import { CustomerHeader } from "@/components/customers/customer-header"
+import { CustomerInfoCard } from "@/components/customers/customer-info-card"
+import { CustomerMembershipCard } from "@/components/customers/customer-membership-card"
+import { CustomerStatsRow } from "@/components/customers/customer-stats-row"
+import { CustomerRecord, NewCustomerAddress } from "@/types/customer"
 
-interface NewAddress {
-  address: string
-  postalCode: string
-  propertyType: string
-  propertySize: string
-  propertySizeRange?: string
-  relationship?: string
-  remarks?: string
-}
-
-type PropertyOption = { id: string; code: string; name: string }
-
-interface Customer {
-  id: string
-  name: string
-  type: string
-  personInCharge: string
-  email: string
-  phone: string
-  billingAddress: string
-  status: string
-  isMember: boolean
-  memberTier?: string | null
-  memberSince?: string | null
-  memberExpiredOn?: string | null
-  remarks?: string | null
-  createdOn: string
-  addresses: Address[]
-  contracts: any[]
-}
-
-function formatDate(date: Date | string | null) {
-  if (!date) return 'N/A'
-  
-  // Parse the date and adjust for Singapore timezone
-  const d = new Date(date)
-  
-  // If the date appears to be at midnight UTC, it's likely a date-only value
-  // Add 12 hours to ensure we're displaying the correct date in Singapore
-  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
-    d.setUTCHours(12)
-  }
-  
-  return d.toLocaleDateString('en-SG', {
-    dateStyle: 'medium',
-    timeZone: 'Asia/Singapore'
-  })
-}
-
-function formatCurrency(amount: number) {
-  return new Intl.NumberFormat('en-SG', {
-    style: 'currency',
-    currency: 'SGD'
-  }).format(amount)
-}
-
-function getContractStatusVariant(status: string): any {
-  switch (status) {
-    case 'DRAFT': return 'outline'
-    case 'CONFIRMED': return 'secondary'
-    case 'SCHEDULED': return 'info'
-    case 'COMPLETED': return 'success'
-    case 'TERMINATED': return 'default'
-    case 'CANCELLED': return 'destructive'
-    default: return 'default'
-  }
-}
-
-function getPropertyTypeIcon(type: string) {
-  switch (type) {
-    case 'HDB': return <Home className="h-4 w-4" />
-    case 'CONDO':
-    case 'EC':
-    case 'APARTMENT': return <Building2 className="h-4 w-4" />
-    default: return <Home className="h-4 w-4" />
-  }
-}
-
-const getPropertySizeOptions = (propertyType: string) => {
-  switch (propertyType) {
-    case "HDB":
-      return [
-        { value: "HDB_1_ROOM", label: "1 Room" },
-        { value: "HDB_2_ROOM", label: "2 Room" },
-        { value: "HDB_3_ROOM", label: "3 Room" },
-        { value: "HDB_4_ROOM", label: "4 Room" },
-        { value: "HDB_5_ROOM", label: "5 Room" },
-        { value: "HDB_EXECUTIVE", label: "Executive" },
-        { value: "HDB_JUMBO", label: "Jumbo" }
-      ]
-    case "CONDO":
-    case "EC":
-    case "APARTMENT":
-      return [
-        { value: "STUDIO", label: "Studio" },
-        { value: "ONE_BEDROOM", label: "1 Bedroom" },
-        { value: "TWO_BEDROOM", label: "2 Bedroom" },
-        { value: "THREE_BEDROOM", label: "3 Bedroom" },
-        { value: "FOUR_BEDROOM", label: "4 Bedroom" },
-        { value: "PENTHOUSE", label: "Penthouse" }
-      ]
-    case "LANDED":
-      return [
-        { value: "TERRACE", label: "Terrace" },
-        { value: "SEMI_DETACHED", label: "Semi-Detached" },
-        { value: "DETACHED", label: "Detached" },
-        { value: "BUNGALOW", label: "Bungalow" },
-        { value: "GOOD_CLASS_BUNGALOW", label: "Good Class Bungalow" }
-      ]
-    default:
-      return []
-  }
+const INITIAL_ADDRESS: NewCustomerAddress = {
+  address: "",
+  postalCode: "",
+  propertyType: "HDB",
+  propertySize: "HDB_3_ROOM",
+  propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+  relationship: DEFAULT_PROPERTY_RELATIONSHIP,
+  remarks: "",
 }
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter()
-  const [customerId, setCustomerId] = useState<string>('')
-  const [customer, setCustomer] = useState<Customer | null>(null)
+  const [customerId, setCustomerId] = useState<string>("")
+  const [customer, setCustomer] = useState<CustomerRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [showAddressForm, setShowAddressForm] = useState(false)
   const [addingAddress, setAddingAddress] = useState(false)
-  const [newAddress, setNewAddress] = useState<NewAddress>({
-    address: "",
-    postalCode: "",
-    propertyType: "HDB",
-    propertySize: "",
-    propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
-    relationship: DEFAULT_PROPERTY_RELATIONSHIP,
-    remarks: ""
-  })
-  const [propertyOptions, setPropertyOptions] = useState<PropertyOption[]>([])
-  const [sizeOptions, setSizeOptions] = useState<Array<{ id: string; code: string; name: string }>>([])
+  const [newAddress, setNewAddress] = useState<NewCustomerAddress>(INITIAL_ADDRESS)
+  const [sizeOptions, setSizeOptions] = useState<Array<{ code: string; name: string }>>([])
 
   useEffect(() => {
-    params.then(p => setCustomerId(p.id))
+    params.then((p) => setCustomerId(p.id))
   }, [params])
 
   useEffect(() => {
-    const loadProps = async () => {
-      try {
-        const res = await fetch('/api/properties')
-        if (!res.ok) return
-        const data = await res.json()
-        setPropertyOptions(data)
-      } catch (e) {
-        console.error('Failed to load property types', e)
-      }
-    }
-    loadProps()
-  }, [])
-
-  // Load sizes when new address propertyType changes
-  useEffect(() => {
     const loadSizes = async () => {
       try {
-        if (!newAddress.propertyType) { setSizeOptions([]); return }
+        if (!newAddress.propertyType) {
+          setSizeOptions([])
+          return
+        }
         const res = await fetch(`/api/property-sizes?type=${encodeURIComponent(newAddress.propertyType)}`)
         if (!res.ok) return
         const data = await res.json()
-        setSizeOptions(data)
-        if (data.length > 0) {
-          setNewAddress((prev) => ({ ...prev, propertySize: data[0].code }))
+        const mapped = Array.isArray(data) ? data.map((item: any) => ({ code: item.code, name: item.name })) : []
+        setSizeOptions(mapped)
+        if (mapped.length > 0) {
+          setNewAddress((prev) => ({ ...prev, propertySize: mapped[0].code }))
         } else {
-          setNewAddress((prev) => ({ ...prev, propertySize: '' }))
+          setNewAddress((prev) => ({ ...prev, propertySize: "" }))
         }
-      } catch (e) {
-        console.error('Failed to load sizes', e)
+      } catch (error) {
+        console.error("Failed to load property sizes", error)
       }
     }
-    loadSizes()
+
+    if (showAddressForm) {
+      loadSizes()
+    }
   }, [newAddress.propertyType, showAddressForm])
 
   useEffect(() => {
-    if (customerId) {
-      fetchCustomer()
-    }
-  }, [customerId])
+    if (!customerId) return
 
-  const fetchCustomer = async () => {
-    try {
-      const response = await fetch(`/api/customers/${customerId}`)
-      if (!response.ok) {
-        throw new Error('Customer not found')
+    const fetchCustomer = async () => {
+      try {
+        const response = await fetch(`/api/customers/${customerId}`)
+        if (!response.ok) {
+          throw new Error("Customer not found")
+        }
+        const data: CustomerRecord = await response.json()
+        setCustomer(data)
+      } catch (error) {
+        console.error("Error fetching customer:", error)
+        router.push("/customers")
+      } finally {
+        setLoading(false)
       }
-      const data = await response.json()
-      setCustomer(data)
-    } catch (error) {
-      console.error('Error fetching customer:', error)
-      router.push('/customers')
-    } finally {
-      setLoading(false)
     }
+
+    fetchCustomer()
+  }, [customerId, router])
+
+  const handleAddressChange = (updates: Partial<NewCustomerAddress>) => {
+    setNewAddress((prev) => ({ ...prev, ...updates }))
+  }
+
+  const handleCancelAddressForm = () => {
+    setShowAddressForm(false)
+    setNewAddress(INITIAL_ADDRESS)
   }
 
   const addAddress = async () => {
@@ -259,7 +111,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       const response = await fetch(`/api/customers/${customerId}/addresses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newAddress)
+        body: JSON.stringify(newAddress),
       })
 
       if (!response.ok) {
@@ -267,22 +119,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         throw new Error(data.error || "Failed to add address")
       }
 
-      // Reset form
-      setNewAddress({
-        address: "",
-        postalCode: "",
-        propertyType: "HDB",
-        propertySize: "HDB_3_ROOM",
-        propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
-        relationship: DEFAULT_PROPERTY_RELATIONSHIP,
-        remarks: ""
-      })
+      setNewAddress(INITIAL_ADDRESS)
       setShowAddressForm(false)
-      
-      // Refresh customer data
-      await fetchCustomer()
-    } catch (err) {
-      console.error('Error adding address:', err)
+
+      const refreshed = await fetch(`/api/customers/${customerId}`)
+      if (refreshed.ok) {
+        const data: CustomerRecord = await refreshed.json()
+        setCustomer(data)
+      }
+    } catch (error) {
+      console.error("Error adding address:", error)
     } finally {
       setAddingAddress(false)
     }
@@ -306,452 +152,30 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-4">
-          <Link href="/customers">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-bold">{customer.name}</h1>
-              {customer.isMember && customer.memberTier && (
-                <Badge variant="warning">
-                  <Crown className="h-3 w-3 mr-1" />
-                  {customer.memberTier}
-                </Badge>
-              )}
-            </div>
-            <p className="text-muted-foreground mt-1">Customer Details</p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Link href={`/customers/${customer.id}/edit`}>
-            <Button>
-              <Edit className="h-4 w-4 mr-2" />
-              Edit Customer
-            </Button>
-          </Link>
-        </div>
-      </div>
+      <CustomerHeader customer={customer} />
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Customer Information */}
         <div className="lg:col-span-1 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Customer Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Type</p>
-                <div className="flex items-center gap-2 mt-1">
-                  {customer.type === 'COMPANY' ? 
-                    <Building2 className="h-4 w-4" /> : 
-                    <User className="h-4 w-4" />
-                  }
-                  <span className="font-medium">{customer.type}</span>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Person in Charge</p>
-                <p className="font-medium">{customer.personInCharge}</p>
-              </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Email</p>
-                <a href={`mailto:${customer.email}`} className="flex items-center gap-2 text-primary hover:underline">
-                  <Mail className="h-4 w-4" />
-                  {customer.email}
-                </a>
-              </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Phone</p>
-                <a href={`tel:${customer.phone}`} className="flex items-center gap-2 text-primary hover:underline">
-                  <Phone className="h-4 w-4" />
-                  {customer.phone}
-                </a>
-              </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Billing Address</p>
-                <p className="font-medium">{customer.billingAddress}</p>
-              </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Status</p>
-                <Badge variant={customer.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                  {customer.status}
-                </Badge>
-              </div>
-
-              {customer.remarks && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Remarks</p>
-                  <p className="text-sm">{customer.remarks}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Membership Information */}
-          {customer.isMember && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Membership Details</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Tier</p>
-                  <Badge variant="warning">
-                    <Crown className="h-3 w-3 mr-1" />
-                    {customer.memberTier}
-                  </Badge>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Member Since</p>
-                  <p className="font-medium">{formatDate(customer?.memberSince || "")}</p>
-                </div>
-                {customer.memberExpiredOn && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Expires On</p>
-                    <p className="font-medium">{formatDate(customer.memberExpiredOn)}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+          <CustomerInfoCard customer={customer} />
+          <CustomerMembershipCard customer={customer} />
         </div>
 
-        {/* Addresses and Contracts */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Property Addresses */}
-          <Card>
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <div>
-                  <CardTitle>Property Addresses</CardTitle>
-                  <CardDescription>{customer.addresses.length} registered properties</CardDescription>
-                </div>
-                {!showAddressForm && (
-                  <Button
-                    size="sm"
-                    onClick={() => setShowAddressForm(true)}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Address
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {showAddressForm && (
-                <div className="border rounded-lg p-4 mb-4 space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Address</Label>
-                      <Input
-                        value={newAddress.address}
-                        onChange={(e) => setNewAddress({ ...newAddress, address: e.target.value })}
-                        placeholder="Block 123, Street Name, #01-01"
-                      />
-                    </div>
+          <CustomerAddressSection
+            addresses={customer.addresses}
+            showForm={showAddressForm}
+            onShowForm={() => setShowAddressForm(true)}
+            onCancelForm={handleCancelAddressForm}
+            newAddress={newAddress}
+            onUpdateAddress={handleAddressChange}
+            sizeOptions={sizeOptions}
+            addingAddress={addingAddress}
+            onAddAddress={addAddress}
+          />
 
-                    <div className="space-y-2">
-                      <Label>Postal Code</Label>
-                      <Input
-                        value={newAddress.postalCode}
-                        onChange={(e) => setNewAddress({ ...newAddress, postalCode: e.target.value })}
-                        placeholder="123456"
-                      />
-                    </div>
+          <CustomerContractsCard contracts={customer.contracts} />
 
-                    <div className="space-y-2">
-                      <Label>Property Type</Label>
-                      <PropertyTypeSelect
-                        value={newAddress.propertyType}
-                        onChange={(value) => {
-                          setNewAddress({
-                            ...newAddress,
-                            propertyType: value,
-                            propertySize: '',
-                            propertySizeRange: newAddress.propertySizeRange || DEFAULT_PROPERTY_SIZE_RANGE,
-                            relationship: newAddress.relationship || DEFAULT_PROPERTY_RELATIONSHIP
-                          })
-                        }}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Property Size</Label>
-                      <Select
-                        value={newAddress.propertySize}
-                        onValueChange={(value) => setNewAddress({ ...newAddress, propertySize: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {sizeOptions.map(option => (
-                            <SelectItem key={option.code} value={option.code}>
-                              {option.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Property Size Range</Label>
-                      <Select
-                        value={newAddress.propertySizeRange || undefined}
-                        onValueChange={(value) => setNewAddress({ ...newAddress, propertySizeRange: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select size range" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROPERTY_SIZE_RANGE_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Relationship</Label>
-                      <Select
-                        value={newAddress.relationship || undefined}
-                        onValueChange={(value) => setNewAddress({ ...newAddress, relationship: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select relationship" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROPERTY_RELATIONSHIP_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Remarks</Label>
-                      <Input
-                        value={newAddress.remarks}
-                        onChange={(e) => setNewAddress({ ...newAddress, remarks: e.target.value })}
-                        placeholder="Optional notes about this property"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setShowAddressForm(false)
-                        setNewAddress({
-                          address: "",
-                          postalCode: "",
-                          propertyType: "HDB",
-                          propertySize: "",
-                          propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
-                          relationship: DEFAULT_PROPERTY_RELATIONSHIP,
-                          remarks: ""
-                        })
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={addAddress}
-                      disabled={
-                        !newAddress.address ||
-                        !newAddress.postalCode ||
-                        !newAddress.propertySize ||
-                        !newAddress.propertySizeRange ||
-                        !newAddress.relationship ||
-                        addingAddress
-                      }
-                    >
-                      {addingAddress && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                      Add Address
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {customer.addresses.length === 0 && !showAddressForm ? (
-                <p className="text-muted-foreground text-center py-4">No addresses registered</p>
-              ) : (
-                customer.addresses.length > 0 && (
-                  <div className="space-y-3">
-                    {customer.addresses.map((address) => (
-                    <div key={address.id} className="border rounded-lg p-4">
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-2">
-                          <div className="flex items-start gap-2">
-                            <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
-                            <div>
-                              <p className="font-medium">{address.address}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {address.postalCode}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {getPropertyTypeIcon(address.propertyType)}
-                            <Badge variant="outline">{address.propertyType}</Badge>
-                            <Badge variant="secondary">{address.propertySize.replace(/_/g, ' ')}</Badge>
-                            {address.propertySizeRange && (
-                              <Badge variant="outline">{formatPropertySizeRange(address.propertySizeRange)}</Badge>
-                            )}
-                            {address.relationship && (
-                              <Badge variant="secondary">{formatPropertyRelationship(address.relationship)}</Badge>
-                            )}
-                          </div>
-                          {address.remarks && (
-                            <p className="text-sm text-muted-foreground">{address.remarks}</p>
-                          )}
-                        </div>
-                        <Badge variant={address.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                          {address.status}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                  </div>
-                )
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Contracts */}
-          <Card>
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <div>
-                  <CardTitle>Contracts</CardTitle>
-                  <CardDescription>{customer.contracts.length} total contracts</CardDescription>
-                </div>
-                <Link href={`/contracts/new?customerId=${customer.id}`}>
-                  <Button size="sm">
-                    <Plus className="h-4 w-4 mr-2" />
-                    New Contract
-                  </Button>
-                </Link>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {customer.contracts.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No contracts yet</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Contract ID</TableHead>
-                      <TableHead>Property</TableHead>
-                      <TableHead>Value</TableHead>
-                      <TableHead>Schedule</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {customer.contracts.map((contract) => (
-                      <TableRow key={contract.id}>
-                        <TableCell className="font-medium">
-                          #{contract.id.slice(-8).toUpperCase()}
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="text-sm">{contract.address.address}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {contract.address.postalCode}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{formatCurrency(Number(contract.value))}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="text-sm">{formatDate(contract.scheduledStartDate)}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {contract.workOrders.length} work order(s)
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getContractStatusVariant(contract.status)}>
-                            {contract.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Link href={`/contracts/${contract.id}`}>
-                            <Button variant="outline" size="sm">View</Button>
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Statistics */}
-          <div className="grid gap-4 md:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">Total Contracts</CardTitle>
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{customer.contracts.length}</div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">Total Value</CardTitle>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {formatCurrency(
-                    customer.contracts.reduce((sum, c) => sum + Number(c.value), 0)
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">Member Since</CardTitle>
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-xl font-bold">
-                  {formatDate(customer.memberSince || "")}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <CustomerStatsRow customer={customer} />
         </div>
       </div>
     </div>

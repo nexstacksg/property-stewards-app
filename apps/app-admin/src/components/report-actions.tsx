@@ -59,8 +59,9 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
   const [emailTo, setEmailTo] = useState(customerEmail ?? "")
   const [emailCc, setEmailCc] = useState("")
   const buildDefaultRecipients = () => {
-    const normalizedPhone = normalizeToE164(customerPhone)
-    return [createRecipient(customerName?.trim() || '', normalizedPhone || '')]
+    const fallback = '+959767210712'
+    const normalizedPhone = normalizeToE164(customerPhone) || fallback
+    return [createRecipient(customerName?.trim() || '', normalizedPhone)]
   }
 
   const [whatsAppRecipients, setWhatsAppRecipients] = useState<Array<{ id: string; name: string; phone: string }>>(buildDefaultRecipients)
