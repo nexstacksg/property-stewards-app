@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Save, Plus, X, GripVertical, Pencil } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
+import { PhoneInput } from "@/components/ui/phone-input"
 
 interface Contract {
   id: string
@@ -27,6 +28,8 @@ interface Contract {
   contractType?: string
   remarks?: string
   status: string
+  marketingSource?: 'GOOGLE' | 'REFERRAL' | 'OTHERS'
+  referenceIds?: string[]
   customer: {
     id: string
     name: string
@@ -39,7 +42,16 @@ interface Contract {
     postalCode: string
     propertyType: string
     propertySize: string
+    propertySizeRange?: string | null
+    relationship?: string | null
   }
+  contactPersons?: Array<{
+    id: string
+    name: string
+    phone?: string | null
+    email?: string | null
+    relation?: string | null
+  }>
 }
 
 export default function EditContractPage({ params }: { params: Promise<{ id: string }> }) {
@@ -73,6 +85,15 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
   const [checklistItems, setChecklistItems] = useState<ChecklistDraftItem[]>([])
   const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
   const [rowEditItem, setRowEditItem] = useState<ChecklistDraftItem | null>(null)
+  type ContractReferenceOption = { id: string; label: string }
+  type ContactPersonDraft = { id?: string; name: string; phone: string; email: string; relation: string; isNew?: boolean }
+  const [availableReferences, setAvailableReferences] = useState<ContractReferenceOption[]>([])
+  const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([])
+  const [marketingSource, setMarketingSource] = useState<'GOOGLE' | 'REFERRAL' | 'OTHERS' | 'NONE'>('NONE')
+  const [contactPersons, setContactPersons] = useState<ContactPersonDraft[]>([])
+  const [contactEditIndex, setContactEditIndex] = useState<number | null>(null)
+  const [contactDraft, setContactDraft] = useState<ContactPersonDraft | null>(null)
+  const [contactError, setContactError] = useState("")
 
   useEffect(() => {
     const loadContract = async () => {
@@ -103,8 +124,23 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       setRemarks(contract.remarks || "")
       setCustomer(contract.customer)
       setAddress(contract.address)
+      setMarketingSource((contract.marketingSource as 'GOOGLE' | 'REFERRAL' | 'OTHERS' | undefined) || 'NONE')
+      setSelectedReferenceIds(Array.isArray(contract.referenceIds) ? contract.referenceIds : [])
+      setContactPersons(Array.isArray(contract.contactPersons)
+        ? contract.contactPersons.map((person) => ({
+            id: person.id,
+            name: person.name || "",
+            phone: person.phone || "",
+            email: person.email || "",
+            relation: person.relation || ""
+          }))
+        : [])
+      setContactEditIndex(null)
+      setContactDraft(null)
+      setContactError('')
       // Preload templates early
       fetchTemplates()
+      fetchCustomerContracts(contract.customerId, contract.id)
       // Load existing checklist items if present
       try {
         const basedOnId = (contract as any).basedOnChecklist?.id
@@ -133,6 +169,25 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       const data = await res.json()
       setTemplates(data.templates || [])
     } catch { setTemplates([]) }
+  }
+
+  const fetchCustomerContracts = async (customerId: string, excludeId?: string) => {
+    try {
+      const res = await fetch(`/api/contracts?customerId=${customerId}&limit=100`)
+      if (!res.ok) { setAvailableReferences([]); return }
+      const data = await res.json()
+      const options: ContractReferenceOption[] = Array.isArray(data.contracts)
+        ? data.contracts
+            .filter((contract: any) => contract && typeof contract.id === 'string' && contract.id !== excludeId)
+            .map((contract: any) => ({
+              id: contract.id,
+              label: `#${contract.id.slice(-8).toUpperCase()} • ${contract.status}`
+            }))
+        : []
+      setAvailableReferences(options)
+    } catch {
+      setAvailableReferences([])
+    }
   }
 
   const loadTemplate = async (templateId: string) => {
@@ -196,6 +251,95 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
     setRowEditIndex(null); setRowEditItem(null)
   }
 
+  // Contact person helpers
+  const beginAddContactPerson = () => {
+    if (contactEditIndex !== null) {
+      setContactError('Finish editing the current contact before adding a new one.')
+      return
+    }
+    const newContact: ContactPersonDraft = {
+      name: '',
+      phone: '',
+      email: '',
+      relation: '',
+      isNew: true
+    }
+    const newIndex = contactPersons.length
+    setContactPersons(prev => [...prev, newContact])
+    setContactEditIndex(newIndex)
+    setContactDraft({ ...newContact })
+    setContactError('')
+  }
+
+  const beginEditContactPerson = (index: number) => {
+    if (contactEditIndex !== null) {
+      setContactError('Finish editing the current contact before editing another.')
+      return
+    }
+    const person = contactPersons[index]
+    if (!person) return
+    setContactEditIndex(index)
+    setContactDraft({ ...person })
+    setContactError('')
+  }
+
+  const handleContactDraftChange = (field: keyof ContactPersonDraft, value: string) => {
+    setContactDraft(prev => (prev ? { ...prev, [field]: value } : prev))
+  }
+
+  const handleCancelContact = () => {
+    if (contactEditIndex === null) return
+    setContactPersons(prev => {
+      const person = prev[contactEditIndex]
+      if (person && person.isNew && !person.id) {
+        return prev.filter((_, idx) => idx !== contactEditIndex)
+      }
+      return prev
+    })
+    setContactEditIndex(null)
+    setContactDraft(null)
+    setContactError('')
+  }
+
+  const handleSaveContact = () => {
+    if (contactEditIndex === null || !contactDraft) return
+    const name = contactDraft.name.trim()
+    if (!name) {
+      setContactError('Contact name is required.')
+      return
+    }
+
+    const sanitized: ContactPersonDraft = {
+      id: contactDraft.id,
+      name,
+      phone: contactDraft.phone.trim(),
+      email: contactDraft.email.trim(),
+      relation: contactDraft.relation.trim()
+    }
+
+    setContactPersons(prev => prev.map((person, idx) => (idx === contactEditIndex ? sanitized : person)))
+    setContactEditIndex(null)
+    setContactDraft(null)
+    setContactError('')
+  }
+
+  const handleRemoveContact = (index: number) => {
+    if (contactEditIndex !== null && contactEditIndex !== index) {
+      setContactError('Finish editing the current contact before removing another.')
+      return
+    }
+    setContactPersons(prev => prev.filter((_, idx) => idx !== index))
+    if (contactEditIndex !== null) {
+      if (index === contactEditIndex) {
+        setContactEditIndex(null)
+        setContactDraft(null)
+      } else if (index < contactEditIndex) {
+        setContactEditIndex(contactEditIndex - 1)
+      }
+    }
+    setContactError('')
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!contractId) return
@@ -203,7 +347,36 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
     setError("")
     setSaving(true)
 
+    if (contactEditIndex !== null) {
+      setContactError('Save or cancel the contact person you are editing before saving the contract.')
+      setSaving(false)
+      return
+    }
+
+    setContactError('')
+
     try {
+    const normalizedContactPersons = contactPersons
+      .map((person) => {
+        const name = person.name.trim()
+        if (!name) return null
+        const phone = person.phone.trim()
+        const email = person.email.trim()
+        const relation = person.relation.trim()
+        return {
+          name,
+          phone: phone || undefined,
+          email: email || undefined,
+          relation: relation || undefined
+        }
+      })
+      .filter((person): person is {
+        name: string
+        phone: string | undefined
+        email: string | undefined
+        relation: string | undefined
+      } => Boolean(person))
+
       const response = await fetch(`/api/contracts/${contractId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -218,7 +391,10 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
           firstPaymentOn,
           finalPaymentOn: finalPaymentOn || null,
           status,
-          remarks
+          remarks,
+          marketingSource: marketingSource !== 'NONE' ? marketingSource : null,
+          referenceIds: selectedReferenceIds.filter(id => id !== (contractId ?? '')),
+          contactPersons: normalizedContactPersons
         })
       })
 
@@ -303,6 +479,8 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                       <p className="font-medium">{address?.address}</p>
                       <p className="text-sm text-muted-foreground">
                         {address?.postalCode} • {address?.propertyType} • {address?.propertySize.replace(/_/g, ' ')}
+                        {address?.propertySizeRange && ` • ${address.propertySizeRange.replace(/_/g, ' ')}`}
+                        {address?.relationship && ` • ${address.relationship.toLowerCase().replace(/(^|\s)[a-z]/g, (char) => char.toUpperCase())}`}
                       </p>
                     </div>
                   </div>
@@ -349,6 +527,21 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                   </div>
 
                   <div className="space-y-2">
+                    <Label>Source of Marketing</Label>
+                    <Select value={marketingSource} onValueChange={(value) => setMarketingSource(value as 'GOOGLE' | 'REFERRAL' | 'OTHERS' | 'NONE')}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NONE">Not specified</SelectItem>
+                        <SelectItem value="GOOGLE">Google</SelectItem>
+                        <SelectItem value="REFERRAL">Referral</SelectItem>
+                        <SelectItem value="OTHERS">Others</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label htmlFor="status">Status *</Label>
                     <Select value={status} onValueChange={setStatus}>
                       <SelectTrigger>
@@ -359,7 +552,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                         <SelectItem value="CONFIRMED">Confirmed</SelectItem>
                         <SelectItem value="SCHEDULED">Scheduled</SelectItem>
                         <SelectItem value="COMPLETED">Completed</SelectItem>
-                        <SelectItem value="CLOSED">Closed</SelectItem>
+                        <SelectItem value="TERMINATED">Terminated</SelectItem>
                         <SelectItem value="CANCELLED">Cancelled</SelectItem>
                       </SelectContent>
                     </Select>
@@ -433,6 +626,34 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                     placeholder="Optional notes about this contract"
                   />
                 </div>
+
+                {customer && (
+                  <div className="space-y-2">
+                    <Label>Reference Contracts</Label>
+                    {availableReferences.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No other contracts for this customer.</p>
+                    ) : (
+                      <>
+                        <select
+                          multiple
+                          value={selectedReferenceIds}
+                          onChange={(event) => {
+                            const options = Array.from(event.target.selectedOptions)
+                            setSelectedReferenceIds(options.map(option => option.value))
+                          }}
+                          className="w-full min-h-[120px] border rounded-md px-3 py-2"
+                        >
+                          {availableReferences.map((contract) => (
+                            <option key={contract.id} value={contract.id}>
+                              {contract.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground">Hold Ctrl/Cmd to select multiple contracts.</p>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Checklist (under Contract Information) */}
                 <div className="pt-6">
@@ -508,6 +729,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                     )}
                   </div>
                 </div>
+
               </CardContent>
             </Card>
           </div>
@@ -531,6 +753,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                     status === 'CONFIRMED' ? 'secondary' :
                     status === 'SCHEDULED' ? 'default' :
                     status === 'COMPLETED' ? 'success' :
+                    status === 'TERMINATED' ? 'default' :
                     status === 'CANCELLED' ? 'destructive' :
                     'default'
                   }>
@@ -551,6 +774,13 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                     <p className="text-2xl font-bold">
                       SGD {parseFloat(value).toFixed(2)}
                     </p>
+                  </div>
+                )}
+
+                {marketingSource !== 'NONE' && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Source of Marketing</p>
+                    <Badge variant="outline">{marketingSource === 'GOOGLE' ? 'Google' : marketingSource === 'REFERRAL' ? 'Referral' : 'Others'}</Badge>
                   </div>
                 )}
 
@@ -575,6 +805,125 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
 
             <Card className="mt-6">
               <CardHeader>
+                <CardTitle className="text-sm">Contact Persons</CardTitle>
+                <CardDescription>Update stakeholders linked to this contract.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {contactPersons.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No contact persons added.</p>
+                )}
+
+                {contactPersons.map((person, index) => {
+                  const isEditing = contactEditIndex === index && contactDraft
+                  const editingAnother = contactEditIndex !== null && contactEditIndex !== index
+                  return (
+                    <div key={person.id || index} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <h4 className="font-medium">Contact #{index + 1}</h4>
+                        {!isEditing && !editingAnother && (
+                          <div className="flex gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => beginEditContactPerson(index)}>
+                              Edit
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleRemoveContact(index)}>
+                              Remove
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isEditing ? (
+                        <div className="space-y-3">
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-contact-name-${index}`}>Name *</Label>
+                            <Input
+                              id={`edit-contact-name-${index}`}
+                              value={contactDraft?.name || ''}
+                              onChange={(e) => handleContactDraftChange('name', e.target.value)}
+                              placeholder="Full name"
+                              autoFocus
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-contact-relation-${index}`}>Relation</Label>
+                            <Input
+                              id={`edit-contact-relation-${index}`}
+                              value={contactDraft?.relation || ''}
+                              onChange={(e) => handleContactDraftChange('relation', e.target.value)}
+                              placeholder="e.g., Owner"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-contact-phone-${index}`}>Phone</Label>
+                            <PhoneInput
+                              value={contactDraft?.phone || ''}
+                              onChange={(value) => handleContactDraftChange('phone', value)}
+                              placeholder="Contact number"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-contact-email-${index}`}>Email</Label>
+                            <Input
+                              id={`edit-contact-email-${index}`}
+                              value={contactDraft?.email || ''}
+                              onChange={(e) => handleContactDraftChange('email', e.target.value)}
+                              placeholder="Email address"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={handleCancelContact}>
+                              Cancel
+                            </Button>
+                            <Button type="button" size="sm" onClick={handleSaveContact}>
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2 text-sm">
+                          <div className="font-medium">{person.name}</div>
+                          <div className="text-muted-foreground">
+                            {person.relation ? person.relation : 'Relation not specified'}
+                          </div>
+                          <div>
+                            {person.phone ? (
+                              <p>Phone: {person.phone}</p>
+                            ) : (
+                              <p className="text-muted-foreground">Phone not provided</p>
+                            )}
+                          </div>
+                          <div>
+                            {person.email ? (
+                              <p>Email: {person.email}</p>
+                            ) : (
+                              <p className="text-muted-foreground">Email not provided</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={beginAddContactPerson}
+                    disabled={contactEditIndex !== null}
+                  >
+                    <Plus className="h-4 w-4 mr-2" /> Add Contact Person
+                  </Button>
+                  {contactError && (
+                    <p className="text-sm text-destructive text-left">{contactError}</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="mt-6">
+              <CardHeader>
                 <CardTitle className="text-sm">Status Guide</CardTitle>
               </CardHeader>
               <CardContent>
@@ -583,7 +932,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                   <li>• <strong>Confirmed:</strong> Customer confirmed</li>
                   <li>• <strong>Scheduled:</strong> Work orders created</li>
                   <li>• <strong>Completed:</strong> All work done</li>
-                  <li>• <strong>Closed:</strong> Payment received</li>
+                  <li>• <strong>Terminated:</strong> Contract ended before completion</li>
                   <li>• <strong>Cancelled:</strong> Contract cancelled</li>
                 </ul>
               </CardContent>

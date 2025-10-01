@@ -21,6 +21,8 @@ interface Contract {
   contractType: string
   customerRating?: number
   status: string
+  marketingSource?: 'GOOGLE' | 'REFERRAL' | 'OTHERS'
+  referenceIds?: string[]
   customer: {
     id: string
     name: string
@@ -30,6 +32,8 @@ interface Contract {
     address: string
     postalCode: string
     propertyType: string
+    propertySizeRange?: string | null
+    relationship?: 'AGENT' | 'OWNER' | 'TENANT' | null
   }
   workOrders: any[]
 }
@@ -80,7 +84,7 @@ export default function ContractsPage() {
         return 'info'
       case 'COMPLETED':
         return 'success'
-      case 'CLOSED':
+      case 'TERMINATED':
         return 'default'
       case 'CANCELLED':
         return 'destructive'
@@ -100,6 +104,26 @@ export default function ContractsPage() {
       style: 'currency',
       currency: 'SGD'
     }).format(amount)
+  }
+
+  const formatEnumLabel = (value?: string | null) => {
+    if (!value) return ''
+    if (value.startsWith('RANGE_')) {
+      const range = value.replace('RANGE_', '').replace(/_/g, ' ')
+      if (range.toLowerCase().includes('plus')) {
+        return `${range.replace(/plus/i, 'Plus')} sqft`
+      }
+      const parts = range.split(' ')
+      if (parts.length === 2) {
+        return `${parts[0]} - ${parts[1]} sqft`
+      }
+      return `${range} sqft`
+    }
+    return value
+      .toLowerCase()
+      .split('_')
+      .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+      .join(' ')
   }
 
   // Calculate statistics
@@ -205,7 +229,7 @@ export default function ContractsPage() {
                 <option value="CONFIRMED">Confirmed</option>
                 <option value="SCHEDULED">Scheduled</option>
                 <option value="COMPLETED">Completed</option>
-                <option value="CLOSED">Closed</option>
+                <option value="TERMINATED">Terminated</option>
                 <option value="CANCELLED">Cancelled</option>
               </select>
               {statusFilter && (
@@ -263,6 +287,17 @@ export default function ContractsPage() {
                             <div className="text-xs text-muted-foreground">
                               {contract.address.postalCode} • {contract.address.propertyType}
                             </div>
+                            {(contract.address.relationship || contract.address.propertySizeRange) && (
+                              <div className="text-xs text-muted-foreground">
+                                {contract.address.relationship && (
+                                  <span>Rel: {formatEnumLabel(contract.address.relationship)}</span>
+                                )}
+                                {contract.address.relationship && contract.address.propertySizeRange && ' • '}
+                                {contract.address.propertySizeRange && (
+                                  <span>Size: {formatEnumLabel(contract.address.propertySizeRange)}</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </TableCell>

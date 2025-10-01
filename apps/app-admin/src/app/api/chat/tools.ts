@@ -91,7 +91,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               const workOrder = await prisma.workOrder.findUnique({ where: { id: workOrderId }, include: { contract: { include: { contractChecklist: { include: { items: { where: { name: location } } } } } } } })
               if ((workOrder as any)?.contract?.contractChecklist?.items[0]) await prisma.contractChecklistItem.update({ where: { id: (workOrder as any).contract.contractChecklist.items[0].id }, data: { remarks: notes } })
             }
-            return JSON.stringify({ success: true, message: `All tasks for ${location} have been marked complete!`, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'Please select the condition for this location: [1] Good, [2] Fair, [3] Un-Satisfactory, [4] Not Applicable, [5] Un-Observable. Reply with the number.' })
+            return JSON.stringify({ success: true, message: `All tasks for ${location} have been marked complete!`, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'Please select the condition for this location: [1] Good, [2] Fair, [3] Un-Satisfactory, [4] Not Applicable. Reply with the number.' })
           }
           return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
         }
@@ -105,7 +105,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const s = sessionId ? await getSessionState(sessionId) : {}
         const loc = location || (s as any).currentLocation || ''
         if (!loc) return JSON.stringify({ success: false, error: 'No location in context. Please select a location first.' })
-        const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UN_OBSERVABLE' }
+        const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE' }
         const condition = map[Number(conditionNumber)]
         if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number' })
         let itemId = (s as any).currentItemId as string
@@ -117,7 +117,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const locs = await getLocationsWithCompletionStatus(workOrderId) as any[]
           locationsFormatted = locs.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         }
-        const mediaRequired = !(condition === 'GOOD' || condition === 'UN_OBSERVABLE')
+        const mediaRequired = condition !== 'GOOD'
         return JSON.stringify({ success: true, itemId, condition, mediaRequired, locationsFormatted, message: mediaRequired ? 'Please provide remarks and upload photos/videos for this location.' : `Condition recorded. No media required.\n\nHere are the locations available for inspection:\n${locationsFormatted.join('\n')}` })
       }
       case 'addLocationRemarks': {

@@ -14,6 +14,10 @@ import { ArrowLeft, Plus, X, Loader2, Save, Pencil } from "lucide-react"
 import { PhoneInput } from "@/components/ui/phone-input"
 import { DatePicker } from "@/components/ui/date-picker"
 import { PropertyAddressesSection } from '@/components/customers/property-addresses-section'
+import {
+  DEFAULT_PROPERTY_RELATIONSHIP,
+  DEFAULT_PROPERTY_SIZE_RANGE
+} from '@/lib/property-address'
 
 interface Address {
   id?: string
@@ -21,6 +25,8 @@ interface Address {
   postalCode: string
   propertyType: string
   propertySize: string
+  propertySizeRange?: string
+  relationship?: string
   remarks?: string
   status?: string
 }
@@ -72,6 +78,8 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
     postalCode: "",
     propertyType: "HDB",
     propertySize: "",
+    propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+    relationship: DEFAULT_PROPERTY_RELATIONSHIP,
     remarks: ""
   })
   // Editing existing address
@@ -127,7 +135,7 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
     }
     loadSizes()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newAddress.propertyType])
+  }, [newAddress.propertyType, showAddressForm])
 
   // Load size options for edited address when its type changes
   useEffect(() => {
@@ -195,13 +203,21 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
   }
 
   const addAddress = () => {
-    if (newAddress.address && newAddress.postalCode && newAddress.propertySize) {
+    if (
+      newAddress.address &&
+      newAddress.postalCode &&
+      newAddress.propertySize &&
+      newAddress.propertySizeRange &&
+      newAddress.relationship
+    ) {
       setAddresses([...addresses, { ...newAddress, status: "ACTIVE" }])
       setNewAddress({
         address: "",
         postalCode: "",
         propertyType: "HDB",
         propertySize: "",
+        propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+        relationship: DEFAULT_PROPERTY_RELATIONSHIP,
         remarks: ""
       })
       setShowAddressForm(false)

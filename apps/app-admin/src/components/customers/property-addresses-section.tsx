@@ -7,6 +7,14 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import PropertyTypeSelect from '@/components/property-type-select'
 import { Plus, X, Pencil } from "lucide-react"
+import {
+  DEFAULT_PROPERTY_RELATIONSHIP,
+  DEFAULT_PROPERTY_SIZE_RANGE,
+  PROPERTY_RELATIONSHIP_OPTIONS,
+  PROPERTY_SIZE_RANGE_OPTIONS,
+  formatPropertyRelationship,
+  formatPropertySizeRange
+} from '@/lib/property-address'
 
 interface Address {
   id?: string
@@ -14,6 +22,8 @@ interface Address {
   postalCode: string
   propertyType: string
   propertySize: string
+  propertySizeRange?: string
+  relationship?: string
   remarks?: string
   status?: string
 }
@@ -87,7 +97,13 @@ export function PropertyAddressesSection({
                 <Label>Property Type</Label>
                 <PropertyTypeSelect
                   value={newAddress.propertyType}
-                  onChange={(value) => setNewAddress({ ...newAddress, propertyType: value, propertySize: '' })}
+                  onChange={(value) => setNewAddress({
+                    ...newAddress,
+                    propertyType: value,
+                    propertySize: '',
+                    propertySizeRange: newAddress.propertySizeRange || DEFAULT_PROPERTY_SIZE_RANGE,
+                    relationship: newAddress.relationship || DEFAULT_PROPERTY_RELATIONSHIP
+                  })}
                 />
               </div>
               <div className="space-y-2">
@@ -105,13 +121,61 @@ export function PropertyAddressesSection({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label>Property Size Range</Label>
+                <Select
+                  value={newAddress.propertySizeRange || undefined}
+                  onValueChange={(value) => setNewAddress({ ...newAddress, propertySizeRange: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select size range" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROPERTY_SIZE_RANGE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Relationship</Label>
+                <Select
+                  value={newAddress.relationship || undefined}
+                  onValueChange={(value) => setNewAddress({ ...newAddress, relationship: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select relationship" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROPERTY_RELATIONSHIP_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-2 md:col-span-2">
                 <Label>Remarks</Label>
                 <Input value={newAddress.remarks || ''} onChange={(e) => setNewAddress({ ...newAddress, remarks: e.target.value })} placeholder="Optional notes for this address" />
               </div>
             </div>
-            <div className="flex gap-2">
-              <Button type="button" onClick={addAddress}>Add</Button>
+          <div className="flex gap-2">
+              <Button
+                type="button"
+                onClick={addAddress}
+                disabled={
+                  !newAddress.address ||
+                  !newAddress.postalCode ||
+                  !newAddress.propertySize ||
+                  !newAddress.propertySizeRange ||
+                  !newAddress.relationship
+                }
+              >
+                Add
+              </Button>
               <Button type="button" variant="outline" onClick={() => setShowAddressForm(false)}>Cancel</Button>
             </div>
           </div>
@@ -133,7 +197,16 @@ export function PropertyAddressesSection({
                     </div>
                     <div className="space-y-2">
                       <Label>Property Type</Label>
-                      <PropertyTypeSelect value={editedAddress?.propertyType || ''} onChange={(value) => setEditedAddress({ ...(editedAddress as Address), propertyType: value, propertySize: '' })} />
+                      <PropertyTypeSelect
+                        value={editedAddress?.propertyType || ''}
+                        onChange={(value) => setEditedAddress({
+                          ...(editedAddress as Address),
+                          propertyType: value,
+                          propertySize: '',
+                          propertySizeRange: editedAddress?.propertySizeRange || DEFAULT_PROPERTY_SIZE_RANGE,
+                          relationship: editedAddress?.relationship || DEFAULT_PROPERTY_RELATIONSHIP
+                        })}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Property Size</Label>
@@ -145,6 +218,42 @@ export function PropertyAddressesSection({
                           {editSizeOptions.map((option) => (
                             <SelectItem key={option.code} value={option.code}>
                               {option.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Property Size Range</Label>
+                      <Select
+                        value={editedAddress?.propertySizeRange || undefined}
+                        onValueChange={(value) => setEditedAddress({ ...(editedAddress as Address), propertySizeRange: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select size range" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROPERTY_SIZE_RANGE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Relationship</Label>
+                      <Select
+                        value={editedAddress?.relationship || undefined}
+                        onValueChange={(value) => setEditedAddress({ ...(editedAddress as Address), relationship: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select relationship" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROPERTY_RELATIONSHIP_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -164,14 +273,20 @@ export function PropertyAddressesSection({
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="font-medium">{addr.address}</p>
-                    <p className="text-sm text-muted-foreground">{addr.postalCode} • {addr.propertyType} • {addr.propertySize}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {addr.postalCode} • {addr.propertyType} • {addr.propertySize}
+                      {addr.propertySizeRange && ` • ${formatPropertySizeRange(addr.propertySizeRange)}`}
+                    </p>
+                    {addr.relationship && (
+                      <p className="text-sm text-muted-foreground">Relationship: {formatPropertyRelationship(addr.relationship)}</p>
+                    )}
                     {addr.remarks && <p className="text-sm text-muted-foreground mt-1">{addr.remarks}</p>}
                   </div>
                   <div className="flex gap-2">
-                    <Button type="button" variant="outline" size="icon" onClick={() => startEditAddress(index)}>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => startEditAddress(index)}>
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button type="button" variant="destructive" size="icon" onClick={() => removeAddress(index)}>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeAddress(index)}>
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
@@ -187,4 +302,3 @@ export function PropertyAddressesSection({
     </Card>
   )
 }
-

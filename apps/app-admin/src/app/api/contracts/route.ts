@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
           customer: true,
           address: true,
           basedOnChecklist: true,
+          contactPersons: true,
           workOrders: {
             include: {
               inspectors: true
@@ -90,7 +91,10 @@ export async function POST(request: NextRequest) {
       scheduledEndDate,
       servicePackage,
       remarks,
-      contractType
+      contractType,
+      marketingSource,
+      referenceIds,
+      contactPersons
     } = body
 
     // Validate required fields
@@ -124,6 +128,24 @@ export async function POST(request: NextRequest) {
     // Create contract
     const normalizedContractType = contractType === 'REPAIR' ? 'REPAIR' : 'INSPECTION'
 
+    const normalizedMarketingSource = marketingSource && ['GOOGLE', 'REFERRAL', 'OTHERS'].includes(marketingSource)
+      ? marketingSource
+      : null
+
+    const sanitizedReferenceIds = Array.isArray(referenceIds)
+      ? referenceIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
+      : []
+
+    const sanitizedContactPersons = Array.isArray(contactPersons)
+      ? contactPersons.filter((person: any) => person && typeof person.name === 'string' && person.name.trim().length > 0)
+        .map((person: any) => ({
+          name: person.name.trim(),
+          phone: typeof person.phone === 'string' && person.phone.trim().length > 0 ? person.phone.trim() : undefined,
+          email: typeof person.email === 'string' && person.email.trim().length > 0 ? person.email.trim() : undefined,
+          relation: typeof person.relation === 'string' && person.relation.trim().length > 0 ? person.relation.trim() : undefined
+        }))
+      : []
+
     const contract = await prisma.contract.create({
       data: {
         customerId,
@@ -137,12 +159,20 @@ export async function POST(request: NextRequest) {
         servicePackage,
         remarks,
         contractType: normalizedContractType,
-        status: 'DRAFT'
+        marketingSource: normalizedMarketingSource as any,
+        referenceIds: sanitizedReferenceIds,
+        status: 'DRAFT',
+        contactPersons: sanitizedContactPersons.length > 0
+          ? {
+              create: sanitizedContactPersons
+            }
+          : undefined
       },
       include: {
         customer: true,
         address: true,
-        basedOnChecklist: true
+        basedOnChecklist: true,
+        contactPersons: true
       }
     })
 

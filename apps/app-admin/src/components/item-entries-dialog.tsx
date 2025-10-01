@@ -20,8 +20,7 @@ const CONDITION_OPTIONS = [
   { value: "GOOD", label: "Good" },
   { value: "FAIR", label: "Fair" },
   { value: "UNSATISFACTORY", label: "Un-Satisfactory" },
-  { value: "NOT_APPLICABLE", label: "Not Applicable" },
-  { value: "UN_OBSERVABLE", label: "Un-Observable" }
+  { value: "NOT_APPLICABLE", label: "Not Applicable" }
 ]
 
 type Task = {

@@ -14,12 +14,18 @@ import { ArrowLeft, Plus, X, Loader2 } from "lucide-react"
 import { PropertyAddressesNewSection } from '@/components/customers/property-addresses-new-section'
 import { PhoneInput } from "@/components/ui/phone-input"
 import { DatePicker } from "@/components/ui/date-picker"
+import {
+  DEFAULT_PROPERTY_RELATIONSHIP,
+  DEFAULT_PROPERTY_SIZE_RANGE
+} from '@/lib/property-address'
 
 interface Address {
   address: string
   postalCode: string
   propertyType: string
   propertySize: string
+  propertySizeRange?: string
+  relationship?: string
   remarks?: string
 }
 
@@ -49,6 +55,8 @@ export default function NewCustomerPage() {
     postalCode: "",
     propertyType: "HDB",
     propertySize: "",
+    propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+    relationship: DEFAULT_PROPERTY_RELATIONSHIP,
     remarks: ""
   })
 
@@ -89,7 +97,7 @@ export default function NewCustomerPage() {
       }
     }
     loadSizes()
-  }, [newAddress.propertyType])
+  }, [newAddress.propertyType, showAddressForm])
 
   const handleTypeChange = (value: string) => {
     setType(value)
@@ -107,13 +115,21 @@ export default function NewCustomerPage() {
   }
 
   const addAddress = () => {
-    if (newAddress.address && newAddress.postalCode && newAddress.propertySize) {
+    if (
+      newAddress.address &&
+      newAddress.postalCode &&
+      newAddress.propertySize &&
+      newAddress.propertySizeRange &&
+      newAddress.relationship
+    ) {
       setAddresses([...addresses, newAddress])
       setNewAddress({
         address: "",
         postalCode: "",
         propertyType: "HDB",
         propertySize: "",
+        propertySizeRange: DEFAULT_PROPERTY_SIZE_RANGE,
+        relationship: DEFAULT_PROPERTY_RELATIONSHIP,
         remarks: ""
       })
       setShowAddressForm(false)
