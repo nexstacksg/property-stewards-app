@@ -408,8 +408,8 @@ enum Condition {
   GOOD
   FAIR
   UNSATISFACTORY
+  UN_OBSERVABLE
   NOT_APPLICABLE
-  UNOBSERVABLE
 }
 
 enum InspectorType {

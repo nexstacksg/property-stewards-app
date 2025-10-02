@@ -1,5 +1,20 @@
 import { cacheGetJSON, cacheSetJSON } from '@/lib/memcache'
 
+export type PendingMediaUpload = {
+  url: string
+  key: string
+  mediaType: 'photo' | 'video'
+  workOrderId?: string
+  location?: string
+  isTaskFlow?: boolean
+  taskId?: string | null
+  taskItemId?: string | null
+  taskEntryId?: string | null
+  taskName?: string | null
+  uploadedAt: string
+  condition?: string | null
+}
+
 export type ChatSessionState = {
   // identity
   inspectorId?: string
@@ -27,8 +42,10 @@ export type ChatSessionState = {
   currentTaskItemId?: string
   currentTaskEntryId?: string
   currentTaskCondition?: string
+  currentLocationCondition?: string
   taskFlowStage?: 'condition' | 'media' | 'remarks' | 'confirm'
   pendingTaskRemarks?: string | null
+  pendingMediaUploads?: PendingMediaUpload[]
 
   // assistant/thread context
   threadId?: string

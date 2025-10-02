@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { detectHasMedia, sendWhatsAppResponse, buildInstantReply } from './utils'
-import { handleMediaMessage } from './media'
+import { handleMediaMessage, finalizePendingMediaWithRemark } from './media'
 import { processWithAssistant, postAssistantMessageIfThread } from './assistant'
+import { getSessionState } from '@/lib/chat-session'
 import { getMemcacheClient } from '@/lib/memcache'
 
 // Per-instance idempotency to prevent duplicate responses
@@ -121,6 +122,23 @@ export async function POST(request: NextRequest) {
     if (!message || !message.trim()) {
       if (!hasMedia) return NextResponse.json({ success: true })
       if (process.env.NODE_ENV !== 'production') console.log('📎 Media-only message detected')
+    }
+
+    const sessionMetadata = await getSessionState(phoneNumber)
+    if (sessionMetadata.pendingMediaUploads?.length) {
+      try {
+        const finalizeResult = await finalizePendingMediaWithRemark(phoneNumber, message, sessionMetadata)
+        if (finalizeResult) {
+          await sendWhatsAppResponse(phoneNumber, finalizeResult.message)
+          if (finalizeResult.message.includes('successfully')) await postAssistantMessageIfThread(phoneNumber, finalizeResult.message)
+          const msgData = processedMessages.get(messageId)
+          if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
+          if (process.env.NODE_ENV !== 'production') console.log(`✅ Pending media finalized for ${phoneNumber} in ${Date.now() - startTime}ms`)
+          return NextResponse.json({ success: true })
+        }
+      } catch (error) {
+        console.error('❌ Failed to finalize pending media with remark:', error)
+      }
     }
 
     if (process.env.NODE_ENV !== 'production') console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`)
