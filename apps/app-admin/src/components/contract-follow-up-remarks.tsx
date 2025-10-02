@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -24,8 +24,11 @@ interface ContractFollowUpRemarksProps {
   initialRemarks?: ContractRemarkEntry[]
 }
 
+const PAGE_SIZE = 5
+
 export function ContractFollowUpRemarks({ contractId, initialRemarks = [] }: ContractFollowUpRemarksProps) {
   const [remarks, setRemarks] = useState<ContractRemarkEntry[]>(initialRemarks)
+  const [page, setPage] = useState(1)
   const [value, setValue] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +57,7 @@ export function ContractFollowUpRemarks({ contractId, initialRemarks = [] }: Con
 
       const remark = await response.json() as ContractRemarkEntry
       setRemarks((prev) => [remark, ...prev])
+      setPage(1)
       setValue("")
     } catch (error) {
       setError(error instanceof Error ? error.message : "Failed to add remark")
@@ -61,6 +65,27 @@ export function ContractFollowUpRemarks({ contractId, initialRemarks = [] }: Con
       setSubmitting(false)
     }
   }
+
+  const {
+    totalPages,
+    currentPage,
+    paginatedRemarks,
+    startDisplay,
+    endDisplay,
+  } = useMemo(() => {
+    const total = remarks.length
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+    const current = Math.min(page, pages)
+    const startIndex = (current - 1) * PAGE_SIZE
+    const slice = remarks.slice(startIndex, startIndex + PAGE_SIZE)
+    return {
+      totalPages: pages,
+      currentPage: current,
+      paginatedRemarks: slice,
+      startDisplay: total === 0 ? 0 : startIndex + 1,
+      endDisplay: startIndex + slice.length,
+    }
+  }, [page, remarks])
 
   return (
     <Card>
@@ -91,7 +116,7 @@ export function ContractFollowUpRemarks({ contractId, initialRemarks = [] }: Con
           <p className="text-sm text-muted-foreground">No remarks yet. Add the first note to start tracking follow-ups.</p>
         ) : (
           <div className="space-y-3">
-            {remarks.map((entry) => {
+            {paginatedRemarks.map((entry) => {
               const author = entry.createdBy?.username || entry.createdBy?.email || "—"
               const createdLabel = new Date(entry.createdOn).toLocaleString("en-SG", {
                 dateStyle: "medium",
@@ -108,6 +133,30 @@ export function ContractFollowUpRemarks({ contractId, initialRemarks = [] }: Con
                 </div>
               )
             })}
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                Showing {startDisplay}–{endDisplay} of {remarks.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage <= 1}
+                >
+                  Previous
+                </Button>
+                <span>Page {currentPage} of {totalPages}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage >= totalPages}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </CardContent>

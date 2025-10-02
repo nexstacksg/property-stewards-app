@@ -3,8 +3,8 @@ import { join } from "node:path"
 
 export const COLUMN_WIDTHS = [40, 170, 100, 225]
 export const TABLE_MARGIN = 36
+const TABLE_WIDTH = COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0)
 const CELL_PADDING = 8
-const MAX_IMAGES_PER_CELL = 6
 const PHOTO_HEIGHT = 60
 const VIDEO_HEIGHT = 48
 const MAX_MEDIA_LINKS = 4
@@ -109,6 +109,11 @@ type TableCell = {
 
 type TableRow = [TableCell, TableCell, TableCell, TableCell]
 
+type TableRowInfo = {
+  cells: TableRow
+  summaryMedia?: CellSegment
+}
+
 async function fetchImage(url: string): Promise<Buffer | null> {
   if (!url) return null
 
@@ -134,7 +139,7 @@ async function fetchImage(url: string): Promise<Buffer | null> {
 async function loadImages(urls: string[], cache: Map<string, Buffer>): Promise<Buffer[]> {
   const result: Buffer[] = []
 
-  for (const url of urls.slice(0, MAX_IMAGES_PER_CELL)) {
+  for (const url of urls) {
     if (!url) continue
     if (cache.has(url)) {
       result.push(cache.get(url)!)
@@ -241,7 +246,7 @@ async function buildRemarkSegment({
   seenVideos?: Set<string>
 }): Promise<CellSegment | null> {
   const normalizedPhotos = photoUrls.filter(Boolean)
-  const normalizedVideos = videoUrls.filter(Boolean)
+  const normalizedVideos: string[] = []
 
   const uniquePhotos = normalizedPhotos.filter((url) => {
     if (!seenPhotos) return true
@@ -258,49 +263,28 @@ async function buildRemarkSegment({
   uniqueVideos.forEach((url) => seenVideos?.add(url))
 
   const images = await loadImages(uniquePhotos, imageCache)
-  const remainingPhotoUrls = uniquePhotos.slice(images.length)
 
   const lines: string[] = []
   const hasRemark = Boolean(text && text.trim().length > 0)
   if (hasRemark) {
     lines.push(text!.trim())
   }
+  const videoItems: VideoItem[] = []
+  const overflowLines: string[] = []
 
-
-
-  if (remainingPhotoUrls.length > 0) {
-    lines.push("Additional photo links:")
-    remainingPhotoUrls.slice(0, MAX_MEDIA_LINKS).forEach((url, index) => {
-      lines.push(`• Photo ${images.length + index + 1}: ${truncateUrl(url)}`)
-    })
-    if (remainingPhotoUrls.length > MAX_MEDIA_LINKS) {
-      lines.push(`• +${remainingPhotoUrls.length - MAX_MEDIA_LINKS} more photo link(s)`)
-    }
-  }
-
-  const { items: videoItems, overflowLines } = buildVideoItems(uniqueVideos)
-  if (videoItems.length > 0) {
-    videoItems.forEach((item) => {
-      lines.push(`${item.label}: ${truncateUrl(item.url)}`)
-    })
-  }
-  if (overflowLines.length > 0) {
-    lines.push(...overflowLines)
-  }
-
-  if (!hasRemark && images.length === 0 && videoItems.length === 0 && remainingPhotoUrls.length === 0 && overflowLines.length === 0) {
+  if (!hasRemark && images.length === 0) {
     return null
   }
 
   return {
     text: lines.length > 0 ? lines.join("\n") : undefined,
     photos: images,
-    videos: videoItems
+    videos: []
   }
 }
 
-async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Promise<TableRow[]> {
-  const rows: TableRow[] = []
+async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Promise<TableRowInfo[]> {
+  const rows: TableRowInfo[] = []
 
   for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
     const item = items[itemIndex]
@@ -313,22 +297,37 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
 
     const itemMetaLine = buildInspectorMeta(item.enteredBy?.name, item.enteredOn)
 
+    let summaryMedia: CellSegment | undefined
+
     if (typeof item.remarks === "string" && item.remarks.trim().length > 0) {
       const summaryLines: string[] = []
       if (itemMetaLine && !itemMetaLine.startsWith('Inspector: Team member')) {
         summaryLines.push(itemMetaLine)
       }
       summaryLines.push(`Summary - ${item.remarks.trim()}`)
-      const summarySegment = await buildRemarkSegment({
+      const summaryRemarkSegment = await buildRemarkSegment({
         text: summaryLines.join("\n"),
+        photoUrls: [],
+        videoUrls: [],
+        imageCache,
+        seenPhotos: undefined,
+        seenVideos: undefined
+      })
+      if (summaryRemarkSegment) {
+        remarkSegments.push(summaryRemarkSegment)
+      }
+
+      const summaryMediaSegment = await buildRemarkSegment({
+        text: undefined,
         photoUrls: Array.isArray(item.photos) ? item.photos : [],
         videoUrls: Array.isArray(item.videos) ? item.videos : [],
         imageCache,
         seenPhotos: seenItemPhotos,
         seenVideos: seenItemVideos
       })
-      if (summarySegment) {
-        remarkSegments.push(summarySegment)
+      if (summaryMediaSegment) {
+        summaryMediaSegment.text = undefined
+        summaryMedia = summaryMediaSegment
       }
     } else if (
       (Array.isArray(item.photos) && item.photos.length > 0) ||
@@ -363,16 +362,31 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
 
     const remarkCell: TableCell = remarkSegments.length
       ? { segments: remarkSegments }
-      : { text: "No remarks provided." }
+      : summaryMedia
+        ? { text: "See media below." }
+        : { text: "No remarks provided." }
 
-    rows.push([
-      { text: String(itemIndex + 1), bold: true },
-      { text: item.name || item.item || `Checklist Item ${itemIndex + 1}`, bold: true },
-      { text: formatEnum(item.status ?? undefined) || "N/A", bold: true },
-      remarkCell
-    ])
+    rows.push({
+      cells: [
+        { text: String(itemIndex + 1), bold: true },
+        { text: item.name || item.item || `Checklist Item ${itemIndex + 1}`, bold: true },
+        { text: formatEnum(item.status ?? undefined) || "N/A", bold: true },
+        remarkCell
+      ],
+      summaryMedia
+    })
 
-    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+    const tasks = Array.isArray(item.checklistTasks) ? [...item.checklistTasks] : []
+    if (!tasks.some((task: any) => typeof task?.name === 'string' && task.name.trim().toLowerCase() === 'others')) {
+      tasks.push({
+        name: 'Others',
+        status: 'PENDING',
+        condition: undefined,
+        photos: [],
+        videos: [],
+        entries: [],
+      })
+    }
 
     for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
       const task = tasks[taskIndex]
@@ -416,12 +430,14 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
 
       const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
 
-      rows.push([
-        { text: "" },
-        { text: label },
-        { text: conditionText },
-        taskSegments.length ? { segments: taskSegments } : { text: "" }
-      ])
+      rows.push({
+        cells: [
+          { text: "" },
+          { text: label },
+          { text: conditionText },
+          taskSegments.length ? { segments: taskSegments } : { text: "" }
+        ]
+      })
     }
   }
 
@@ -629,6 +645,209 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
   return rowHeight
 }
 
+function normalizeSegments(segments?: CellSegment | CellSegment[]): CellSegment[] {
+  if (!segments) return []
+  return Array.isArray(segments) ? segments : [segments]
+}
+
+function calculateMediaBlocksHeight(doc: any, segments?: CellSegment | CellSegment[]): number {
+  const normalized = normalizeSegments(segments)
+  if (normalized.length === 0) return 0
+
+  const contentWidth = TABLE_WIDTH - CELL_PADDING * 2
+  let total = 0
+
+  normalized.forEach((segment, index) => {
+    const photos = segment.photos || []
+    const videos = segment.videos || []
+    const hasPhotos = photos.length > 0
+    const hasVideos = videos.length > 0
+    const text = segment.text?.trim()
+
+    let blockHeight = CELL_PADDING * 2
+
+    let textHeight = 0
+    if (text) {
+      doc.font("Helvetica").fontSize(10)
+      textHeight = doc.heightOfString(text, {
+        width: contentWidth,
+        align: "left"
+      })
+      blockHeight += textHeight
+    }
+
+    let mediaHeight = 0
+    if (hasPhotos) {
+      const rows = Math.ceil(photos.length / MEDIA_PER_ROW)
+      mediaHeight += rows * PHOTO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+    }
+    if (hasVideos) {
+      if (mediaHeight > 0) {
+        mediaHeight += MEDIA_GUTTER
+      }
+      const rows = Math.ceil(videos.length / MEDIA_PER_ROW)
+      mediaHeight += rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+    }
+
+    if (textHeight > 0 && mediaHeight > 0) {
+      blockHeight += MEDIA_GUTTER
+    }
+
+    blockHeight += mediaHeight
+
+    total += blockHeight
+    if (index < normalized.length - 1) {
+      total += SEGMENT_SPACING
+    }
+  })
+
+  return total
+}
+
+function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | CellSegment[]): number {
+  const normalized = normalizeSegments(segments)
+  if (normalized.length === 0) return 0
+
+  const contentWidth = TABLE_WIDTH - CELL_PADDING * 2
+  let currentY = startY
+
+  normalized.forEach((segment, index) => {
+    const photos = segment.photos || []
+    const videos = segment.videos || []
+    const hasPhotos = photos.length > 0
+    const hasVideos = videos.length > 0
+    const text = segment.text?.trim()
+
+    let textHeight = 0
+    if (text) {
+      doc.font("Helvetica").fontSize(10)
+      textHeight = doc.heightOfString(text, {
+        width: contentWidth,
+        align: "left"
+      })
+    }
+
+    let photoHeight = 0
+    if (hasPhotos) {
+      const rows = Math.ceil(photos.length / MEDIA_PER_ROW)
+      photoHeight = rows * PHOTO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+    }
+
+    let videoHeight = 0
+    if (hasVideos) {
+      if (photoHeight > 0) {
+        videoHeight += MEDIA_GUTTER
+      }
+      const rows = Math.ceil(videos.length / MEDIA_PER_ROW)
+      videoHeight += rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+    }
+
+    let blockHeight = CELL_PADDING * 2 + textHeight + photoHeight + videoHeight
+    if (textHeight > 0 && (photoHeight > 0 || videoHeight > 0)) {
+      blockHeight += MEDIA_GUTTER
+    }
+
+    doc.lineWidth(0.7)
+    doc.rect(TABLE_MARGIN, currentY, TABLE_WIDTH, blockHeight).stroke()
+
+    let contentY = currentY + CELL_PADDING
+
+    if (textHeight > 0 && text) {
+      doc.font("Helvetica").fontSize(10).fillColor("#111827")
+      doc.text(text, TABLE_MARGIN + CELL_PADDING, contentY, {
+        width: contentWidth,
+        align: "left"
+      })
+      contentY += textHeight
+    }
+
+    if (textHeight > 0 && (photoHeight > 0 || videoHeight > 0)) {
+      contentY += MEDIA_GUTTER
+    }
+
+    const drawFullWidthPhotos = (start: number) => {
+      if (!hasPhotos) return 0
+      const usableWidth = contentWidth - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
+      const thumbWidth = usableWidth / MEDIA_PER_ROW
+      photos.forEach((buffer, photoIndex) => {
+        const col = photoIndex % MEDIA_PER_ROW
+        const row = Math.floor(photoIndex / MEDIA_PER_ROW)
+        const drawX = TABLE_MARGIN + CELL_PADDING + col * (thumbWidth + MEDIA_GUTTER)
+        const drawY = start + row * (PHOTO_HEIGHT + MEDIA_GUTTER)
+
+        try {
+          doc.image(buffer, drawX, drawY, {
+            fit: [thumbWidth, PHOTO_HEIGHT],
+            align: "center",
+            valign: "top"
+          })
+        } catch (error) {
+          console.error("Failed to render photo in PDF", error)
+          doc.save()
+          doc.rect(drawX, drawY, thumbWidth, PHOTO_HEIGHT).stroke("#ef4444")
+          doc.font("Helvetica").fontSize(8).fillColor("#ef4444")
+          doc.text("Photo unavailable", drawX + 4, drawY + 4, {
+            width: thumbWidth - 8,
+            align: "left"
+          })
+          doc.fillColor("#111827").restore()
+        }
+      })
+      return photoHeight
+    }
+
+    const drawFullWidthVideos = (start: number) => {
+      if (!hasVideos) return 0
+      const usableWidth = contentWidth - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
+      const cardWidth = usableWidth / MEDIA_PER_ROW
+      videos.forEach((_video, videoIndex) => {
+        const col = videoIndex % MEDIA_PER_ROW
+        const row = Math.floor(videoIndex / MEDIA_PER_ROW)
+        const drawX = TABLE_MARGIN + CELL_PADDING + col * (cardWidth + MEDIA_GUTTER)
+        const drawY = start + row * (VIDEO_HEIGHT + MEDIA_GUTTER)
+        doc.save()
+        doc.roundedRect(drawX, drawY, cardWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
+
+        const centerY = drawY + VIDEO_HEIGHT / 2
+        const iconRadius = 12
+        const iconCenterX = drawX + iconRadius + 10
+        doc.circle(iconCenterX, centerY, iconRadius).fill("#0ea5e9")
+        doc.fillColor("#ffffff")
+        doc.moveTo(iconCenterX - 4, centerY - 6)
+        doc.lineTo(iconCenterX + 6, centerY)
+        doc.lineTo(iconCenterX - 4, centerY + 6)
+        doc.closePath().fill("#ffffff")
+
+        doc.restore()
+        doc.fillColor("#111827")
+      })
+      return videoHeight
+    }
+
+    if (hasPhotos) {
+      drawFullWidthPhotos(contentY)
+      contentY += photoHeight
+    }
+
+    if (hasVideos) {
+      if (hasPhotos) {
+        contentY += MEDIA_GUTTER
+      }
+      drawFullWidthVideos(contentY)
+      contentY += videoHeight
+    }
+
+    currentY += blockHeight
+
+    if (index < normalized.length - 1) {
+      currentY += SEGMENT_SPACING
+    }
+  })
+
+  doc.fillColor("#111827").font("Helvetica").fontSize(10)
+  return currentY - startY
+}
+
 export async function appendWorkOrderSection(
   doc: any,
   workOrder: any,
@@ -709,9 +928,10 @@ export async function appendWorkOrderSection(
   const headerHeight = drawTableRow(doc, y, headerRow, { header: true })
   y += headerHeight
 
-  tableRows.forEach((row) => {
+  tableRows.forEach((rowInfo) => {
     const remainingSpace = doc.page.height - TABLE_MARGIN - y
-    const requiredHeight = calculateRowHeight(doc, row)
+    const requiredHeight = calculateRowHeight(doc, rowInfo.cells)
+      + calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
 
     if (requiredHeight > remainingSpace) {
       doc.addPage()
@@ -720,8 +940,13 @@ export async function appendWorkOrderSection(
       y += headerAgainHeight
     }
 
-    const consumedHeight = drawTableRow(doc, y, row)
+    const consumedHeight = drawTableRow(doc, y, rowInfo.cells)
     y += consumedHeight
+
+    if (rowInfo.summaryMedia) {
+      const mediaHeight = drawMediaBlocks(doc, y, rowInfo.summaryMedia)
+      y += mediaHeight
+    }
   })
 
   doc.moveDown()

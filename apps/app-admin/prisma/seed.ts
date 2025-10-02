@@ -24,7 +24,7 @@ type SeedChecklistItem = {
   contractChecklistId: string
   name: string
   remarks?: string
-  condition?: 'GOOD' | 'FAIR' | 'UNSATISFACTORY' | 'NOT_APPLICABLE'
+  condition?: 'GOOD' | 'FAIR' | 'UNSATISFACTORY' | 'NOT_APPLICABLE' | 'UNOBSERVABLE'
   enteredOn?: Date
   enteredById?: string
   order: number

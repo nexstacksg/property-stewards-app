@@ -6,7 +6,7 @@ import { s3Client, BUCKET_NAME, PUBLIC_URL, SPACE_DIRECTORY } from '@/lib/s3-cli
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { randomUUID } from 'crypto'
 
-const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE']
+const ALLOWED_CONDITIONS = ['GOOD', 'FAIR', 'UNSATISFACTORY', 'NOT_APPLICABLE', 'UNOBSERVABLE']
 
 function toStringValue(value: FormDataEntryValue | null | undefined): string | undefined {
   if (typeof value === 'string') {
@@ -104,7 +104,9 @@ export async function POST(
 
     const trimmedRemark = remark ? remark.trim() : ''
     const requiresRemark = normalizedCondition && normalizedCondition !== 'GOOD'
-    const requiresPhoto = normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE'
+    const requiresPhoto = normalizedCondition
+      && normalizedCondition !== 'NOT_APPLICABLE'
+      && normalizedCondition !== 'UNOBSERVABLE'
     const hasPhotos = photoFiles.length > 0
 
     if (requiresRemark && trimmedRemark.length === 0) {

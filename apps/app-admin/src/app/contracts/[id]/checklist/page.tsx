@@ -301,7 +301,12 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                   <TableBody>
                     {items.map((item: any) => {
                       const inspectorName = item.enteredBy?.name || "—"
-                      const subtasks = Array.isArray(item.checklistTasks) ? item.checklistTasks.length : 0
+                      const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+                      const taskNames = tasks
+                        .map((task: any) => task?.name)
+                        .filter((name: string | null | undefined) => Boolean(name))
+                        .map((name: string) => name.trim())
+                      const hasTasks = taskNames.length > 0
 
                       return (
                         <TableRow key={item.id}>
@@ -309,10 +314,14 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                           <TableCell>
                             <div>
                               <p className="font-medium">{item.name || item.item}</p>
-                              {item.description && (
-                                <p className="text-sm text-muted-foreground">{item.description}</p>
+                              {hasTasks && (
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {taskNames.join(" • ")}
+                                </p>
                               )}
-                              <p className="text-xs text-muted-foreground mt-1">Subtasks: {subtasks}</p>
+                              {item.description && (
+                                <p className="mt-1 text-sm text-muted-foreground/80 italic">{item.description}</p>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell>

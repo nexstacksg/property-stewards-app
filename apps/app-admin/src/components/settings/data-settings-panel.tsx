@@ -365,7 +365,7 @@ export function DataSettingsPanel({ properties }: DataSettingsPanelProps) {
                       <Label htmlFor="new-size-label">Label</Label>
                       <Input
                         id="new-size-label"
-                        placeholder="e.g. 1200 sqft"
+                        placeholder="1 Bedroom"
                         value={newSizeLabel}
                         onChange={(event) => setNewSizeLabel(event.target.value)}
                       />
