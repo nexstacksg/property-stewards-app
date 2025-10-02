@@ -23,6 +23,10 @@ class ThreadStore {
   has(sessionId: string): boolean {
     return this.store.has(sessionId)
   }
+
+  clear() {
+    this.store.clear()
+  }
 }
 
 // Export singleton instance
