@@ -23,8 +23,16 @@ function applyWatermark(doc: any, logoBuffer?: Buffer) {
   if (!logoBuffer) return
 
   const draw = () => {
-    const watermarkWidth = doc.page.width * 0.4
-    const watermarkHeight = watermarkWidth * LOGO_ASPECT_RATIO
+    const maxWidth = doc.page.width * 0.95
+    const maxHeight = doc.page.height * 0.95
+    let watermarkWidth = maxWidth
+    let watermarkHeight = watermarkWidth * LOGO_ASPECT_RATIO
+
+    if (watermarkHeight > maxHeight) {
+      watermarkHeight = maxHeight
+      watermarkWidth = watermarkHeight / LOGO_ASPECT_RATIO
+    }
+
     const x = (doc.page.width - watermarkWidth) / 2
     const y = (doc.page.height - watermarkHeight) / 2
 
