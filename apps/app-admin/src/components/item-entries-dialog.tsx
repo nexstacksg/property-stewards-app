@@ -20,8 +20,8 @@ const CONDITION_OPTIONS = [
   { value: "GOOD", label: "Good" },
   { value: "FAIR", label: "Fair" },
   { value: "UNSATISFACTORY", label: "Un-Satisfactory" },
-  { value: "NOT_APPLICABLE", label: "Not Applicable" },
-  { value: "UNOBSERVABLE", label: "Unobservable" }
+  { value: "UN_OBSERVABLE", label: "Un-Observable" },
+  { value: "NOT_APPLICABLE", label: "Not Applicable" }
 ]
 
 type Task = {
@@ -189,7 +189,7 @@ export default function ItemEntriesDialog({
       return
     }
     const requiresRemark = normalizedCondition && normalizedCondition !== 'GOOD'
-    const requiresPhoto = normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE' && normalizedCondition !== 'UNOBSERVABLE'
+    const requiresPhoto = normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE' && normalizedCondition !== 'UN_OBSERVABLE'
     const hasPhotos = photoFiles.length > 0
 
     if (!trimmedRemark && (requiresRemark || hasPhotos)) {

@@ -2,7 +2,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from '@/lib/s3-client'
 import { randomUUID } from 'crypto'
 import prisma from '@/lib/prisma'
-import { getSessionState, updateSessionState } from '@/lib/chat-session'
+import { getSessionState, updateSessionState, PendingMediaUpload, type ChatSessionState } from '@/lib/chat-session'
 import { buildLocationsFormatted, resolveChecklistItemIdForLocation, resolveInspectorIdForSession, saveMediaForItem, saveMediaToItemEntry } from './utils'
 
 const debugLog = (...args: unknown[]) => {
@@ -91,7 +91,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     debugLog('📦 Downloaded media buffer size:', buffer.byteLength, 'bytes')
 
     const normalizedCondition = (metadata.currentTaskCondition || metadata.currentLocationCondition || '').toUpperCase()
-    const requiresRemarkForPhoto = mediaType === 'photo' && normalizedCondition !== 'GOOD'
+    const requiresRemarkForPhoto = mediaType === 'photo'
 
     // Generate storage key
     let customerName = (metadata.customerName || 'unknown').toLowerCase().replace(/[^a-z0-9\s-]/gi, '').replace(/\s+/g, '-').substring(0, 50)
@@ -122,81 +122,184 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const mediaRemarkRaw = rawRemarkCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
     const mediaRemark = mediaRemarkRaw.trim()
 
-    if (mediaType === 'photo') {
-      if (requiresRemarkForPhoto && !mediaRemark) {
-        return 'Please add a quick remark describing this photo so I can log it properly.'
+    if (requiresRemarkForPhoto && !mediaRemark) {
+      const pendingUploads = Array.isArray(metadata.pendingMediaUploads) ? metadata.pendingMediaUploads : []
+      const pendingEntry: PendingMediaUpload = {
+        url: publicUrl,
+        key,
+        mediaType,
+        workOrderId,
+        location: currentLocation,
+        isTaskFlow: isTaskFlowMedia,
+        taskId: activeTaskId || null,
+        taskItemId: activeTaskItemId || null,
+        taskEntryId: activeTaskEntryId || null,
+        taskName: activeTaskName || null,
+        uploadedAt: new Date().toISOString(),
+        condition: normalizedCondition || null
       }
-      if (requiresPhotoForStatus && !mediaRemark && normalizedCondition && normalizedCondition !== 'GOOD') {
-        // Already covered but keep for clarity
-      }
+      const nextPending = [...pendingUploads.filter(entry => entry.url !== publicUrl), pendingEntry]
+      await updateSessionState(phoneNumber, { pendingMediaUploads: nextPending })
+      return 'Please add a quick remark describing this photo so I can log it properly—I’ll save it once I have your note.'
     }
 
-    // Save to DB
-    let handledByTaskFlow = false
-    const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
-
-    if (isTaskFlowMedia && activeTaskId) {
-      try {
-        if (!activeTaskEntryId && activeTaskItemId) {
-          if (resolvedInspectorId) {
-            const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
-            if (orphan) {
-              await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
-              activeTaskEntryId = orphan.id
-            }
-          }
-          if (!activeTaskEntryId) {
-            const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
-            activeTaskEntryId = created.id
-          }
-          await updateSessionState(phoneNumber, { currentTaskEntryId: activeTaskEntryId })
-        }
-        if (activeTaskEntryId) {
-          await saveMediaToItemEntry(activeTaskEntryId, publicUrl, mediaType)
-          if (mediaRemark) {
-            try {
-              await prisma.itemEntry.update({ where: { id: activeTaskEntryId }, data: { remarks: mediaRemark } })
-            } catch (error) {
-              console.error('❌ Failed to attach bundled remarks to item entry', error)
-            }
-          }
-          handledByTaskFlow = true
-          if (mediaRemark) {
-            await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: mediaRemark })
-            return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
-          }
-          await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId: activeTaskEntryId, pendingTaskRemarks: undefined })
-          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if you’re done with this task, or [2] if you need to keep it pending. Add a note first if needed.`
-        }
-      } catch (error) {
-        console.error('❌ Failed to save media to task entry, falling back to item storage', error)
-      }
-    }
-
-    if (!handledByTaskFlow) {
-      if (workOrderId && currentLocation) {
-        debugLog('💾 Saving media to database for location:', currentLocation)
-        const targetItemId = await resolveChecklistItemIdForLocation(workOrderId, currentLocation)
-        if (targetItemId) {
-          try { await updateSessionState(phoneNumber, { currentItemId: targetItemId }) } catch {}
-          await saveMediaForItem(targetItemId, resolvedInspectorId, publicUrl, mediaType)
-        } else {
-          debugLog('❌ Could not resolve a ContractChecklistItem ID for location:', currentLocation)
-      }
-    } else {
-        debugLog('⚠️ Skipping database save - missing workOrderId or currentLocation')
-      }
-
-      const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
-      if (mediaType === 'photo' && requiresRemarkForPhoto && !mediaRemark) {
-        return `📸 Photo saved for ${locationName}. Please reply with a short remark so I can record what you found. Afterwards, choose the next task or location.`
-      }
-      return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nNext: continue with the current location or pick another one from the list when you’re ready.`
-    }
-
-    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.\n\nNext: continue with this task or let me know if it’s complete.`
+    return persistMediaForContext({
+      metadata,
+      phoneNumber,
+      workOrderId,
+      currentLocation,
+      isTaskFlowMedia,
+      activeTaskId,
+      activeTaskItemId,
+      activeTaskEntryId,
+      activeTaskName,
+      mediaType,
+      mediaRemark,
+      publicUrl
+    })
   } catch (error) {
     console.error('❌ Error handling WhatsApp media:', error)
     return 'Failed to upload media. Please try again.'
   }
+}
+
+type PersistMediaParams = {
+  metadata: any
+  phoneNumber: string
+  workOrderId?: string
+  currentLocation?: string
+  isTaskFlowMedia: boolean
+  activeTaskId?: string | null
+  activeTaskItemId?: string | null
+  activeTaskEntryId?: string | null
+  activeTaskName?: string | null
+  mediaType: 'photo' | 'video'
+  mediaRemark: string
+  publicUrl: string
+}
+
+async function persistMediaForContext(params: PersistMediaParams): Promise<string> {
+  const {
+    metadata,
+    phoneNumber,
+    workOrderId,
+    currentLocation,
+    isTaskFlowMedia,
+    activeTaskId,
+    activeTaskItemId,
+    activeTaskEntryId,
+    activeTaskName,
+    mediaType,
+    mediaRemark,
+    publicUrl
+  } = params
+
+  let handledByTaskFlow = false
+  let currentTaskEntryId = activeTaskEntryId || null
+  const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
+
+  if (isTaskFlowMedia && activeTaskId) {
+    try {
+      if (!currentTaskEntryId && activeTaskItemId) {
+        if (resolvedInspectorId) {
+          const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
+          if (orphan) {
+            await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
+            currentTaskEntryId = orphan.id
+          }
+        }
+        if (!currentTaskEntryId) {
+          const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
+          currentTaskEntryId = created.id
+        }
+        await updateSessionState(phoneNumber, { currentTaskEntryId })
+      }
+      if (currentTaskEntryId) {
+        await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType)
+        if (mediaRemark) {
+          try {
+            await prisma.itemEntry.update({ where: { id: currentTaskEntryId }, data: { remarks: mediaRemark } })
+          } catch (error) {
+            console.error('❌ Failed to attach bundled remarks to item entry', error)
+          }
+        }
+        handledByTaskFlow = true
+        if (mediaRemark) {
+          await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: mediaRemark })
+          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
+        }
+        await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: undefined })
+        return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if you’re done with this task, or [2] if you need to keep it pending. Add a note first if needed.`
+      }
+    } catch (error) {
+      console.error('❌ Failed to save media to task entry, falling back to item storage', error)
+    }
+  }
+
+  if (!handledByTaskFlow) {
+    if (workOrderId && currentLocation) {
+      debugLog('💾 Saving media to database for location:', currentLocation)
+      const targetItemId = await resolveChecklistItemIdForLocation(workOrderId, currentLocation)
+      if (targetItemId) {
+        try { await updateSessionState(phoneNumber, { currentItemId: targetItemId }) } catch {}
+        await saveMediaForItem(targetItemId, resolvedInspectorId, publicUrl, mediaType)
+      } else {
+        debugLog('❌ Could not resolve a ContractChecklistItem ID for location:', currentLocation)
+      }
+    } else {
+      debugLog('⚠️ Skipping database save - missing workOrderId or currentLocation')
+    }
+
+    const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nNext: continue with the current location or pick another one from the list when you’re ready.`
+  }
+
+  return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.\n\nNext: continue with this task or let me know if it’s complete.`
+}
+
+type FinalizePendingResult = {
+  message: string
+  mediaType: 'photo' | 'video'
+}
+
+export async function finalizePendingMediaWithRemark(phoneNumber: string, remark: string, existingMetadata?: ChatSessionState): Promise<FinalizePendingResult | null> {
+  const trimmed = remark.trim()
+  if (!trimmed) return null
+
+  const metadata = existingMetadata ?? await getSessionState(phoneNumber)
+  const pendingUploads = Array.isArray(metadata.pendingMediaUploads) ? metadata.pendingMediaUploads : []
+  if (pendingUploads.length === 0) return null
+
+  const target = pendingUploads[pendingUploads.length - 1]
+  const metadataForSave: ChatSessionState = { ...metadata }
+  if (target.workOrderId) metadataForSave.workOrderId = target.workOrderId
+  if (target.location) metadataForSave.currentLocation = target.location
+  if (target.taskId) metadataForSave.currentTaskId = target.taskId
+  if (target.taskItemId) metadataForSave.currentTaskItemId = target.taskItemId
+  if (target.taskEntryId) metadataForSave.currentTaskEntryId = target.taskEntryId
+  if (target.taskName) metadataForSave.currentTaskName = target.taskName
+  if (target.condition) {
+    metadataForSave.currentTaskCondition = target.condition
+    metadataForSave.currentLocationCondition = target.condition
+  }
+
+  const message = await persistMediaForContext({
+    metadata: metadataForSave,
+    phoneNumber,
+    workOrderId: target.workOrderId,
+    currentLocation: target.location,
+    isTaskFlowMedia: Boolean(target.isTaskFlow),
+    activeTaskId: target.taskId,
+    activeTaskItemId: target.taskItemId,
+    activeTaskEntryId: target.taskEntryId,
+    activeTaskName: target.taskName,
+    mediaType: target.mediaType,
+    mediaRemark: trimmed,
+    publicUrl: target.url
+  })
+
+  const remaining = pendingUploads.slice(0, -1)
+  await updateSessionState(phoneNumber, { pendingMediaUploads: remaining.length > 0 ? remaining : undefined })
+
+  return { message, mediaType: target.mediaType }
 }
