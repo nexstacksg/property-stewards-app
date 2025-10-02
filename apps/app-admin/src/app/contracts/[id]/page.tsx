@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { AddChecklistButton } from "@/components/add-checklist-button"
-import { ReportActions } from "@/components/report-actions"
 import {
   ArrowLeft,
   Edit,
@@ -25,6 +24,7 @@ import { PreviewPdfButton } from "@/components/preview-pdf-button"
 import { GenerateContractReportButton } from "@/components/generate-contract-report-button"
 import { ContractFollowUpRemarks } from "@/components/contract-follow-up-remarks"
 import { buildContractReportFilename } from "@/lib/filename"
+import { ContractGeneratedReports } from "@/components/contract-generated-reports"
 
 async function getContract(id: string) {
   const contract = await prisma.contract.findUnique({
@@ -43,6 +43,18 @@ async function getContract(id: string) {
           inspectors: true
         },
         orderBy: { scheduledStartDateTime: 'asc' }
+      },
+      followUpRemarks: {
+        orderBy: { createdOn: 'desc' },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              username: true,
+              email: true
+            }
+          }
+        }
       },
       reports: {
         include: {
@@ -156,10 +168,20 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
     contract.id
   )
   const defaultReportTitle = `${contractTypeLabel} Report`
-  const reports = Array.isArray(contract.reports) ? contract.reports : []
+  const reports = Array.isArray(contract.reports)
+    ? contract.reports.map((report: any) => ({
+        ...report,
+        generatedOn: new Date(report.generatedOn).toISOString(),
+      }))
+    : []
   const referenceContracts = Array.isArray(contract.referenceIds) ? contract.referenceIds : []
   const contactPersons = Array.isArray(contract.contactPersons) ? contract.contactPersons : []
-  const remarkEntries = Array.isArray(contract.followUpRemarks) ? contract.followUpRemarks : []
+  const remarkEntries = Array.isArray(contract.followUpRemarks)
+    ? contract.followUpRemarks.map((entry: any) => ({
+        ...entry,
+        createdOn: new Date(entry.createdOn).toISOString(),
+      }))
+    : []
   const marketingSourceLabel = contract.marketingSource ? formatEnumLabel(contract.marketingSource) : null
   const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
 
@@ -518,60 +540,13 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           </CardContent>
         </Card>
 
-        {/* Generated Reports */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Generated Reports</CardTitle>
-            <CardDescription>Versioned PDF history for this contract</CardDescription>
-          </CardHeader>
-          <CardContent>
-              {reports.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No reports generated yet</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Version</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Generated</TableHead>
-                      <TableHead>Prepared By</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {reports.map((report: any) => {
-                      const versionValue = typeof report.version === 'number' ? report.version : Number(report.version)
-                      const versionLabel = Number.isNaN(versionValue) ? '—' : versionValue.toFixed(1)
-                      const generatedLabel = formatDateTime(report.generatedOn)
-                      const preparedBy = report.generatedBy?.username || report.generatedBy?.email || '—'
-
-                      return (
-                        <TableRow key={report.id}>
-                          <TableCell className="font-medium">v{versionLabel}</TableCell>
-                          <TableCell>{report.title}</TableCell>
-                          <TableCell>{generatedLabel}</TableCell>
-                          <TableCell>{preparedBy}</TableCell>
-                          <TableCell>
-                            <ReportActions
-                              contractId={contract.id}
-                              report={{
-                                id: report.id,
-                                fileUrl: report.fileUrl,
-                                version: versionValue
-                              }}
-                              customerEmail={contract.customer?.email}
-                              customerPhone={contract.customer?.phone}
-                              customerName={contract.customer?.name}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+        <ContractGeneratedReports
+          contractId={contract.id}
+          reports={reports}
+          customerName={contract.customer?.name}
+          customerEmail={contract.customer?.email}
+          customerPhone={contract.customer?.phone}
+        />
 
           {/* Financial Summary */}
           <div className="grid gap-4 md:grid-cols-3">

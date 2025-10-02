@@ -24,7 +24,7 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'confirmJobSelection', description: 'Confirm job selection and show job details', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'startJob', description: 'Start the job', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'getJobLocations', description: 'Get locations for inspection', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
-  { type: 'function' as const, function: { name: 'setLocationCondition', description: 'Set condition for the current location by number (1=Good,2=Fair,3=Un-Satisfactory,4=Not Applicable)', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, conditionNumber: { type: 'number' } }, required: ['workOrderId', 'conditionNumber'] } } },
+  { type: 'function' as const, function: { name: 'setLocationCondition', description: 'Set condition for the current location by number (1=Good,2=Fair,3=Un-Satisfactory,4=Not Applicable,5=Unobservable)', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, conditionNumber: { type: 'number' } }, required: ['workOrderId', 'conditionNumber'] } } },
   { type: 'function' as const, function: { name: 'addLocationRemarks', description: 'Save remarks for current location and create/update an ItemEntry for the inspector', parameters: { type: 'object', properties: { remarks: { type: 'string' } }, required: ['remarks'] } } },
   { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
   {
@@ -157,7 +157,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const session = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
 
         const mapCondition = (num?: number) => {
-          const lookup: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE' }
+          const lookup: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UNOBSERVABLE' }
           return num ? lookup[num] : undefined
         }
 
@@ -371,7 +371,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
 
           if (completed) {
-            const requiresPhoto = condition !== 'NOT_APPLICABLE'
+            const requiresPhoto = condition !== 'NOT_APPLICABLE' && condition !== 'UNOBSERVABLE'
             const requiresRemark = condition !== 'GOOD'
             const photoCount = entryRecord?.photos?.length ?? 0
             const remarkText = entryRecord?.remarks?.trim() ?? ''
@@ -431,14 +431,14 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
         const loc = args.location || (s.currentLocation as string) || ''
         if (!loc) return JSON.stringify({ success: false, error: 'No location in context' })
-        const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE' }
+        const map: Record<number, string> = { 1: 'GOOD', 2: 'FAIR', 3: 'UNSATISFACTORY', 4: 'NOT_APPLICABLE', 5: 'UNOBSERVABLE' }
         const condition = map[Number(args.conditionNumber)]
         if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number' })
         let itemId = (s as any).currentItemId as string
         if (!itemId) itemId = (await getContractChecklistItemIdByLocation(args.workOrderId, loc)) as any
         if (!itemId) return JSON.stringify({ success: false, error: 'Unable to resolve checklist item' })
         await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { condition: condition as any, status: 'COMPLETED' } })
-        const mediaRequired = condition !== 'GOOD'
+        const mediaRequired = condition !== 'GOOD' && condition !== 'NOT_APPLICABLE' && condition !== 'UNOBSERVABLE'
         const locs2 = await getLocationsWithCompletionStatus(args.workOrderId) as any[]
         const locationsFormatted = locs2.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, condition, mediaRequired, locationsFormatted })

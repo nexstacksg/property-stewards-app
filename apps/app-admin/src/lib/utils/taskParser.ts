@@ -14,7 +14,9 @@ export interface Task {
  * "Test all electrical outlets" => [{task: "Test all electrical outlets", status: "pending"}]
  */
 export function parseActionIntoTasks(action: string): Task[] {
-  if (!action) return [];
+  if (!action) {
+    return [{ task: 'Others', status: 'pending' }];
+  }
   
   // Common action verbs that start inspection tasks
   const actionVerbs = ['check', 'inspect', 'test', 'verify', 'examine', 'assess', 'review'];
@@ -34,7 +36,9 @@ export function parseActionIntoTasks(action: string): Task[] {
   
   // If no verb found, return as single task
   if (!verb) {
-    return [{ task: action, status: 'pending' }];
+    const singleTask: Task[] = [{ task: action, status: 'pending' }];
+    ensureOthersTask(singleTask);
+    return singleTask;
   }
   
   // Split by commas and 'and'
@@ -45,7 +49,9 @@ export function parseActionIntoTasks(action: string): Task[] {
   
   // If only one item or no commas/and found, return original
   if (items.length <= 1) {
-    return [{ task: action, status: 'pending' }];
+    const singleTask: Task[] = [{ task: action, status: 'pending' }];
+    ensureOthersTask(singleTask);
+    return singleTask;
   }
   
   // Combine verb with each item
@@ -64,7 +70,21 @@ export function parseActionIntoTasks(action: string): Task[] {
     });
   }
   
-  return tasks.length > 0 ? tasks : [{ task: action, status: 'pending' }];
+  if (tasks.length === 0) {
+    const fallback: Task[] = [{ task: action, status: 'pending' }];
+    ensureOthersTask(fallback);
+    return fallback;
+  }
+
+  ensureOthersTask(tasks);
+  return tasks;
+}
+
+function ensureOthersTask(list: Task[]) {
+  const hasOthers = list.some((task) => task.task.trim().toLowerCase() === 'others');
+  if (!hasOthers) {
+    list.push({ task: 'Others', status: 'pending' });
+  }
 }
 
 // Test examples
