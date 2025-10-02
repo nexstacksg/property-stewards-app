@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
-import { cacheDel, cacheGetJSON, cacheSetJSON, cacheSetLargeArray, getMemcacheClient } from '@/lib/memcache'
+import { cacheDel, cacheFlushAll, cacheGetJSON, cacheSetJSON, cacheSetLargeArray, getMemcacheClient } from '@/lib/memcache'
+import { threadStore } from '@/lib/thread-store'
 
 type WarmupResult = {
   ok: boolean
@@ -27,6 +28,22 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
   const ttl = Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
 
   const results: Record<string, WarmupResult> = {}
+
+  try {
+    const flushed = await cacheFlushAll()
+    results.cacheFlush = flushed
+      ? { ok: true, skipped: false, message: 'Flushed entire Memcache store' }
+      : { ok: false, skipped: false, message: 'Failed to flush Memcache store' }
+  } catch (error) {
+    results.cacheFlush = { ok: false, skipped: false, message: `Flush failed: ${(error as Error).message}` }
+  }
+
+  try {
+    threadStore.clear()
+    results.threadStore = { ok: true, skipped: false, message: 'Cleared in-memory OpenAI thread/session store' }
+  } catch (error) {
+    results.threadStore = { ok: false, skipped: false, message: `Failed to clear thread store: ${(error as Error).message}` }
+  }
 
   const purgeKeyFamily = async (base: string) => {
     const client = getMemcacheClient()
