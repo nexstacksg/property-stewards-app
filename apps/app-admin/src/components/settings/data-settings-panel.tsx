@@ -358,7 +358,7 @@ export function DataSettingsPanel({ properties }: DataSettingsPanelProps) {
                 <div className="space-y-3 rounded-lg border border-dashed bg-muted/10 p-4">
                   <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                     <Plus className="h-4 w-4" />
-                    Add Size Option
+                    Add Property
                   </div>
                   <div className="grid gap-3 sm:grid-cols-[2fr_minmax(0,1fr)]">
                     <div className="space-y-2">
