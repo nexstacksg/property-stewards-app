@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
-  const instantDelayMs = Number(process.env.WHATSAPP_INSTANT_DELAY_MS ?? 200)
+  const instantDelayMs = Number(process.env.WHATSAPP_INSTANT_DELAY_MS ?? 75)
   let instantLeadPromise: Promise<void> | null = null
   const waitForInstantLead = async () => {
     if (instantLeadPromise) {

@@ -393,18 +393,38 @@ export async function getChecklistLocationsForItem(itemId: string) {
         id: true,
         name: true,
         status: true,
-        order: true,
-        tasks: {
-          select: { id: true, status: true }
-        }
+        order: true
       }
     })
 
+    if (locations.length === 0) return []
+
+    const locationIds = locations.map(loc => loc.id)
+
+    const grouped = await prisma.checklistTask.groupBy({
+      by: ['locationId', 'status'],
+      where: {
+        locationId: { in: locationIds }
+      },
+      _count: { _all: true }
+    })
+
+    const totals = new Map<string, number>()
+    const completed = new Map<string, number>()
+    for (const group of grouped) {
+      const locId = group.locationId
+      const currentTotal = totals.get(locId) ?? 0
+      totals.set(locId, currentTotal + group._count._all)
+      if (group.status === 'COMPLETED') {
+        const currentCompleted = completed.get(locId) ?? 0
+        completed.set(locId, currentCompleted + group._count._all)
+      }
+    }
+
     return locations
       .map((loc, index) => {
-        const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
-        const totalTasks = tasks.length
-        const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+        const totalTasks = totals.get(loc.id) ?? 0
+        const completedTasks = completed.get(loc.id) ?? 0
         return {
           id: loc.id,
           number: index + 1,
