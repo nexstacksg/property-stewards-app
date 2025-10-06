@@ -37,9 +37,13 @@ export async function getContractWithWorkOrders(id: string) {
                       }
                     },
                     orderBy: { createdOn: "asc" }
-                  }
+                  },
+                  location: true
                 },
                 orderBy: { createdOn: "asc" }
+              },
+              locations: {
+                orderBy: { order: "asc" }
               }
             },
             orderBy: { order: "asc" }
