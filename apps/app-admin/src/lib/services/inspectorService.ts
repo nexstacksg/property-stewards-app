@@ -400,19 +400,21 @@ export async function getChecklistLocationsForItem(itemId: string) {
       }
     })
 
-    return locations.map((loc, index) => {
-      const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
-      const totalTasks = tasks.length
-      const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
-      return {
-        id: loc.id,
-        number: index + 1,
-        name: loc.name,
-        status: loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks) ? 'completed' : 'pending',
-        totalTasks,
-        completedTasks
-      }
-    })
+    return locations
+      .map((loc, index) => {
+        const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+        const totalTasks = tasks.length
+        const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+        return {
+          id: loc.id,
+          number: index + 1,
+          name: loc.name,
+          status: loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks) ? 'completed' : 'pending',
+          totalTasks,
+          completedTasks
+        }
+      })
+      .filter(loc => loc.totalTasks > 0)
   } catch (error) {
     console.error('Error fetching checklist locations:', error)
     return []
