@@ -348,6 +348,54 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     results.contractChecklistItems = { ok: false, skipped: false, message: `Failed: ${(e as Error).message}` }
   }
 
+  try {
+    const groupedByWorkOrder = new Map<string, any[]>()
+    const groupedByItem = new Map<string, any>()
+
+    for (const item of checklistItems) {
+      groupedByItem.set(item.id, item)
+      if (Array.isArray(item.workOrderIds)) {
+        for (const woId of item.workOrderIds) {
+          if (!groupedByWorkOrder.has(woId)) groupedByWorkOrder.set(woId, [])
+          groupedByWorkOrder.get(woId)!.push(item)
+        }
+      }
+    }
+
+    const woKeys: string[] = []
+    for (const [woId, itemsForWo] of groupedByWorkOrder.entries()) {
+      const woKey = `mc:contract-checklist-items:workorder:${woId}`
+      await delKeys(woKey)
+      const { keys } = await cacheSetLargeArray(woKey, itemsForWo, undefined, { ttlSeconds: ttl })
+      woKeys.push(woKey, ...keys.filter(k => k !== woKey))
+    }
+
+    const itemKeys: string[] = []
+    for (const [itemId, itemData] of groupedByItem.entries()) {
+      const itemKey = `mc:contract-checklist-items:item:${itemId}`
+      await delKeys(itemKey)
+      const { keys } = await cacheSetLargeArray(itemKey, [itemData], undefined, { ttlSeconds: ttl })
+      itemKeys.push(itemKey, ...keys.filter(k => k !== itemKey))
+    }
+
+    results.contractChecklistItemsByWorkOrder = {
+      ok: true,
+      skipped: false,
+      message: `Cached checklist items for ${groupedByWorkOrder.size} work orders`,
+      keys: woKeys.slice(0, 10)
+    }
+
+    results.contractChecklistItemsByItem = {
+      ok: true,
+      skipped: false,
+      message: `Cached checklist item detail keys for ${groupedByItem.size} items`,
+      keys: itemKeys.slice(0, 10)
+    }
+  } catch (e) {
+    results.contractChecklistItemsByWorkOrder = { ok: false, skipped: false, message: `Failed to cache checklist items by work order: ${(e as Error).message}` }
+    results.contractChecklistItemsByItem = { ok: false, skipped: false, message: `Failed to cache checklist items by id: ${(e as Error).message}` }
+  }
+
   // Clear assistant cache so a new assistant picks up latest instructions
   try {
     await cacheDel('assistant:id')

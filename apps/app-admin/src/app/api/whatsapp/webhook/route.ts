@@ -30,21 +30,24 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
-  const instantDelayMs = Number(process.env.WHATSAPP_INSTANT_DELAY_MS ?? 75)
+  const instantDelayMs = Number(process.env.WHATSAPP_INSTANT_DELAY_MS ?? 300)
   let instantLeadPromise: Promise<void> | null = null
   let instantReplyMessage: string | null = null
   let instantSent = false
+  let instantAttempted = false
   const ensureInstantLead = async () => {
-    if (!instantSent && instantReplyMessage) {
+    if (!instantSent && instantReplyMessage && !instantAttempted) {
       try {
         await sendWhatsAppResponse(phoneNumber, instantReplyMessage)
         instantSent = true
+        instantAttempted = true
         instantLeadPromise = instantDelayMs > 0
           ? new Promise(resolve => setTimeout(resolve, instantDelayMs))
           : Promise.resolve()
       } catch (error) {
         console.error('⚠️ Failed to send catch-up instant acknowledgement:', error)
         instantReplyMessage = null
+        instantAttempted = true
       }
     }
     if (instantLeadPromise) {
@@ -131,8 +134,11 @@ export async function POST(request: NextRequest) {
             ? new Promise(resolve => setTimeout(resolve, instantDelayMs))
             : Promise.resolve()
           instantSent = true
+          instantAttempted = true
         } catch (error) {
           console.error('⚠️ Failed to send instant acknowledgement:', error)
+          instantReplyMessage = null
+          instantAttempted = true
         }
       }
     } catch (error) {
@@ -183,6 +189,7 @@ export async function POST(request: NextRequest) {
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media')
       if (assistantResponse && assistantResponse.trim()) {
         await ensureInstantLead()
+        instantReplyMessage = null
         await sendWhatsAppResponse(phoneNumber, assistantResponse)
         const msgData = processedMessages.get(messageId)
         if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
