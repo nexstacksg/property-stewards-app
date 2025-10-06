@@ -30,6 +30,19 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
+  const instantGapMs = Number(process.env.WHATSAPP_INSTANT_GAP_MS ?? 250)
+  let instantBarrier: Promise<void> | null = null
+  const ensureInstantLead = async () => {
+    if (instantBarrier) {
+      try {
+        await instantBarrier
+      } catch (error) {
+        console.error('⚠️ Instant acknowledgement delay error:', error)
+      } finally {
+        instantBarrier = null
+      }
+    }
+  }
 
   try {
     // Verify webhook secret
@@ -95,10 +108,13 @@ export async function POST(request: NextRequest) {
 
     // Instant acknowledgement so inspectors get immediate feedback while processing continues
     try {
-      const instantReply = buildInstantReply(message || '', hasMedia)
+      const instantReply = await buildInstantReply(message || '', hasMedia)
       if (instantReply) {
         try {
           await sendWhatsAppResponse(phoneNumber, instantReply)
+          instantBarrier = instantGapMs > 0
+            ? new Promise(resolve => setTimeout(resolve, instantGapMs))
+            : Promise.resolve()
         } catch (error) {
           console.error('⚠️ Failed to send instant acknowledgement:', error)
         }
@@ -112,6 +128,7 @@ export async function POST(request: NextRequest) {
       if (process.env.NODE_ENV !== 'production') console.log('🔄 Processing media message...')
       const mediaResponse = await handleMediaMessage(data, phoneNumber)
       if (mediaResponse) {
+        await ensureInstantLead()
         await sendWhatsAppResponse(phoneNumber, mediaResponse)
         if (mediaResponse.includes('successfully')) await postAssistantMessageIfThread(phoneNumber, mediaResponse)
         const msgData = processedMessages.get(messageId)
@@ -132,6 +149,7 @@ export async function POST(request: NextRequest) {
       try {
         const finalizeResult = await finalizePendingMediaWithRemark(phoneNumber, message, sessionMetadata)
         if (finalizeResult) {
+          await ensureInstantLead()
           await sendWhatsAppResponse(phoneNumber, finalizeResult.message)
           if (finalizeResult.message.includes('successfully')) await postAssistantMessageIfThread(phoneNumber, finalizeResult.message)
           const msgData = processedMessages.get(messageId)
@@ -148,6 +166,7 @@ export async function POST(request: NextRequest) {
     try {
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media')
       if (assistantResponse && assistantResponse.trim()) {
+        await ensureInstantLead()
         await sendWhatsAppResponse(phoneNumber, assistantResponse)
         const msgData = processedMessages.get(messageId)
         if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
@@ -155,6 +174,7 @@ export async function POST(request: NextRequest) {
       }
     } catch (error) {
       console.error('❌ Error in assistant processing:', error)
+      await ensureInstantLead()
       await sendWhatsAppResponse(phoneNumber, 'Sorry, I encountered an error processing your request. Please try again.')
       const msgData = processedMessages.get(messageId)
       if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
