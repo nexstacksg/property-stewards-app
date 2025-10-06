@@ -197,21 +197,12 @@ export async function POST(request: NextRequest) {
           {
             AND: [
               { scheduledStartDateTime: { lte: new Date(scheduledStartDateTime) } },
-              { scheduledEndDateTime: { gte: new Date(scheduledStartDateTime) } }
+              { scheduledEndDateTime: { gte: new Date(scheduledStartDateTime) } },
+              { scheduledStartDateTime: { gte: new Date(scheduledStartDateTime) } }
+
             ]
           },
-          {
-            AND: [
-              { scheduledStartDateTime: { lte: new Date(scheduledEndDateTime) } },
-              { scheduledEndDateTime: { gte: new Date(scheduledEndDateTime) } }
-            ]
-          },
-          {
-            AND: [
-              { scheduledStartDateTime: { gte: new Date(scheduledStartDateTime) } },
-              { scheduledEndDateTime: { lte: new Date(scheduledEndDateTime) } }
-            ]
-          }
+
         ]
       }
     })

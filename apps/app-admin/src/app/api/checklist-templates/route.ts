@@ -26,7 +26,12 @@ export async function GET(request: NextRequest) {
       where,
       include: {
         items: {
-          orderBy: { order: 'asc' }
+          orderBy: { order: 'asc' },
+          include: {
+            tasks: {
+              orderBy: { order: 'asc' }
+            }
+          }
         },
         _count: {
           select: {
@@ -67,21 +72,60 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const listWithTasks = (Array.isArray(items) ? items : [])
+      .filter((item: any) => item && (item.name || item.location))
+      .map((item: any, index: number) => {
+        const tasks = Array.isArray(item.tasks) ? item.tasks : []
+        const sanitizedTasks = tasks
+          .filter((task: any) => task && (task.name || task.title || task.summary))
+          .map((task: any, taskIndex: number) => ({
+            name: task.name || task.title || task.summary,
+            order: task.order || taskIndex + 1,
+            actions: Array.isArray(task.actions)
+              ? task.actions.filter((action: any) => typeof action === 'string' && action.trim().length > 0)
+              : []
+          }))
+
+        return {
+          name: item.name || item.location,
+          category: item.category || 'GENERAL',
+          order: item.order || index + 1,
+          tasks: sanitizedTasks,
+        }
+      })
+
     const template = await prisma.checklist.create({
       data: {
         name,
         remarks,
         propertyType,
-        items: items && items.length > 0 ? {
-          create: items.map((item: any, index: number) => ({
-            name: item.name,
-            action: item.action || '',
-            order: item.order || index + 1
-          }))
-        } : undefined
+        items:
+          listWithTasks.length > 0
+            ? {
+              create: listWithTasks.map((item) => ({
+                name: item.name,
+                category: item.category,
+                order: item.order,
+                tasks: {
+                  create: item.tasks.map((task) => ({
+                    name: task.name,
+                    order: task.order,
+                      actions: task.actions,
+                    })),
+                  },
+                })),
+              }
+            : undefined,
       },
       include: {
-        items: true
+        items: {
+          orderBy: { order: 'asc' },
+          include: {
+            tasks: {
+              orderBy: { order: 'asc' }
+            }
+          }
+        }
       }
     })
 

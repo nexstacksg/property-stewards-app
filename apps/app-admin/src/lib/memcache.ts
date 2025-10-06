@@ -57,6 +57,24 @@ export async function cacheSetJSON(key: string, value: unknown, opts: CacheSetOp
   }
 }
 
+export async function cacheFlushAll(): Promise<boolean> {
+  const c = getMemcacheClient()
+  if (!c) return false
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // memjs exposes flush(callback) to clear all keys
+      c.flush((err: Error | null) => {
+        if (err) return reject(err)
+        resolve()
+      })
+    })
+    return true
+  } catch (err) {
+    console.error('[memcache] flush error', err)
+    return false
+  }
+}
+
 export async function cacheGetJSON<T = unknown>(key: string): Promise<T | null> {
   const c = getMemcacheClient()
   if (!c) return null
