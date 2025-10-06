@@ -291,7 +291,7 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
     const standaloneEntries = (item.contributions || []).filter((entry: any) => !entry.taskId)
     const reportEntries = standaloneEntries.filter((entry: any) => entry?.includeInReport !== false)
 
-    const remarkSegments: CellSegment[] = []
+    const itemSummarySegments: CellSegment[] = []
     const seenItemPhotos = new Set<string>()
     const seenItemVideos = new Set<string>()
 
@@ -314,7 +314,7 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
         seenVideos: undefined
       })
       if (summaryRemarkSegment) {
-        remarkSegments.push(summaryRemarkSegment)
+        itemSummarySegments.push(summaryRemarkSegment)
       }
 
       const summaryMediaSegment = await buildRemarkSegment({
@@ -342,7 +342,7 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
         seenVideos: seenItemVideos
       })
       if (mediaOnlySegment) {
-        remarkSegments.push(mediaOnlySegment)
+        itemSummarySegments.push(mediaOnlySegment)
       }
     }
 
@@ -356,29 +356,35 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
         seenVideos: seenItemVideos
       })
       if (entrySegment) {
-        remarkSegments.push(entrySegment)
+        itemSummarySegments.push(entrySegment)
       }
     }
 
-    const remarkCell: TableCell = remarkSegments.length
-      ? { segments: remarkSegments }
-      : summaryMedia
-        ? { text: "See media below." }
-        : { text: "No remarks provided." }
+    const itemName = item.name || item.item || `Checklist Item ${itemIndex + 1}`
+    const itemStatus = formatEnum(item.status ?? undefined) || "N/A"
+    const itemLocations = Array.isArray(item.locations) ? item.locations : []
+    const hasItemSummary = itemSummarySegments.length > 0 || Boolean(summaryMedia)
+    const hasLocationRemarks = itemLocations.some((loc: any) => typeof loc?.remarks === 'string' && loc.remarks.trim().length > 0)
+    const hasRemarkContent = hasItemSummary || hasLocationRemarks
+    const itemRemarkCell: TableCell = hasRemarkContent
+      ? { text: "" }
+      : { text: "No remarks provided." }
 
     rows.push({
       cells: [
         { text: String(itemIndex + 1), bold: true },
-        { text: item.name || item.item || `Checklist Item ${itemIndex + 1}`, bold: true },
-        { text: formatEnum(item.status ?? undefined) || "N/A", bold: true },
-        remarkCell
+        { text: itemName, bold: true },
+        { text: "" },
+        { text: itemStatus, bold: true },
+        itemRemarkCell
       ],
-      summaryMedia
+      summaryMedia: undefined
     })
 
     const tasks = Array.isArray(item.checklistTasks) ? [...item.checklistTasks] : []
     if (!tasks.some((task: any) => typeof task?.name === 'string' && task.name.trim().toLowerCase() === 'others')) {
       tasks.push({
+        id: `synthetic-${item.id || itemIndex}`,
         name: 'Others',
         status: 'PENDING',
         condition: undefined,
@@ -388,56 +394,152 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
       })
     }
 
-    for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
-      const task = tasks[taskIndex]
-      const label = `${String.fromCharCode(97 + taskIndex)}. ${task.name || "Subtask"}`
-      const entries = Array.isArray(task.entries) ? task.entries : []
+    type TaskGroup = { key: string; label: string; tasks: any[]; location?: any }
+    const groups: TaskGroup[] = []
+    const groupIndex = new Map<string, TaskGroup>()
 
-      const filteredEntries = entries.filter((entry: EntryLike) => (entry as any)?.includeInReport !== false)
-      const taskSegments: CellSegment[] = []
+    const generalLabel = itemName ? `${itemName} — General` : 'General'
 
-      if (
-        (Array.isArray(task.photos) && task.photos.length > 0) ||
-        (Array.isArray(task.videos) && task.videos.length > 0)
-      ) {
-        const taskMetaLine = buildInspectorMeta(task.inspector?.name, task.createdOn)
-        const taskMediaSegment = await buildRemarkSegment({
-          text: taskMetaLine,
-          photoUrls: Array.isArray(task.photos) ? task.photos : [],
-          videoUrls: Array.isArray(task.videos) ? task.videos : [],
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (taskMediaSegment) {
-          taskSegments.push(taskMediaSegment)
-        }
+    tasks.forEach((task: any) => {
+      const locationId = task?.location?.id
+      const rawLocationName = typeof task?.location?.name === 'string' ? task.location.name.trim() : ''
+      const locationMeta = locationId ? itemLocations.find((loc: any) => loc?.id === locationId) : undefined
+      const isOthers = typeof task?.name === 'string' && task.name.trim().toLowerCase() === 'others'
+      const locationKey = locationId
+        ? `loc-${locationId}`
+        : rawLocationName
+          ? `locname-${rawLocationName.toLowerCase()}`
+          : isOthers
+            ? 'others'
+            : 'general'
+      const locationLabel = isOthers
+        ? 'Others'
+        : locationMeta?.name?.trim() || rawLocationName || generalLabel
+
+      if (!groupIndex.has(locationKey)) {
+        const group: TaskGroup = { key: locationKey, label: locationLabel, tasks: [], location: locationMeta }
+        groupIndex.set(locationKey, group)
+        groups.push(group)
       }
 
-      for (const entry of filteredEntries as EntryLike[]) {
-        const taskEntrySegment = await buildRemarkSegment({
-          text: formatEntryLine(entry),
-          photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
-          videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (taskEntrySegment) {
-          taskSegments.push(taskEntrySegment)
+      groupIndex.get(locationKey)!.tasks.push(task)
+      if (locationMeta && !groupIndex.get(locationKey)!.location) {
+        groupIndex.get(locationKey)!.location = locationMeta
+      }
+    })
+
+    itemLocations.forEach((location: any) => {
+      if (!location) return
+      const locationKey = location.id ? `loc-${location.id}` : location.name ? `locname-${location.name.trim().toLowerCase()}` : null
+      if (!locationKey) return
+      if (!groupIndex.has(locationKey)) {
+        const group: TaskGroup = {
+          key: locationKey,
+          label: location.name?.trim() || generalLabel,
+          tasks: [],
+          location
+        }
+        groupIndex.set(locationKey, group)
+        groups.push(group)
+      } else {
+        const existing = groupIndex.get(locationKey)!
+        if (!existing.location) {
+          existing.location = location
+        }
+        if (!existing.label || existing.label === generalLabel) {
+          existing.label = location.name?.trim() || existing.label
         }
       }
+    })
 
-      const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
+    let summaryAssigned = false
+
+    for (const group of groups) {
+      const locationStatusRaw = group.location?.status ?? group.tasks.find((task: any) => task?.location)?.location?.status
+      const locationStatus = formatEnum(locationStatusRaw ?? undefined) || itemStatus
+      const shouldAttachSummary = hasItemSummary && !summaryAssigned
+      const locationSegments: CellSegment[] = []
+      const locationRemarkText = typeof group.location?.remarks === 'string' ? group.location.remarks.trim() : ''
+      if (locationRemarkText.length > 0) {
+        locationSegments.push({ text: locationRemarkText })
+      }
+      const combinedSegments = shouldAttachSummary
+        ? [...locationSegments, ...itemSummarySegments]
+        : locationSegments
+      const locationRemarkCell: TableCell = combinedSegments.length
+        ? { segments: combinedSegments }
+        : shouldAttachSummary && summaryMedia
+          ? { text: "See media below." }
+          : { text: "" }
+      const locationSummaryMedia = shouldAttachSummary ? summaryMedia : undefined
+      if (shouldAttachSummary) {
+        summaryAssigned = true
+      }
 
       rows.push({
         cells: [
           { text: "" },
-          { text: label },
-          { text: conditionText },
-          taskSegments.length ? { segments: taskSegments } : { text: "" }
-        ]
+          { text: "" },
+          { text: group.label, bold: true },
+          { text: locationStatus },
+          locationRemarkCell
+        ],
+        summaryMedia: locationSummaryMedia
       })
+
+      let letterIndex = 0
+      for (const task of group.tasks) {
+        const label = `${String.fromCharCode(97 + (letterIndex % 26))}. ${task.name || "Subtask"}`
+        letterIndex += 1
+        const entries = Array.isArray(task.entries) ? task.entries : []
+
+        const filteredEntries = entries.filter((entry: EntryLike) => (entry as any)?.includeInReport !== false)
+        const taskSegments: CellSegment[] = []
+
+        if (
+          (Array.isArray(task.photos) && task.photos.length > 0) ||
+          (Array.isArray(task.videos) && task.videos.length > 0)
+        ) {
+          const taskMetaLine = buildInspectorMeta(task.inspector?.name, task.createdOn)
+          const taskMediaSegment = await buildRemarkSegment({
+            text: taskMetaLine,
+            photoUrls: Array.isArray(task.photos) ? task.photos : [],
+            videoUrls: Array.isArray(task.videos) ? task.videos : [],
+            imageCache,
+            seenPhotos: seenItemPhotos,
+            seenVideos: seenItemVideos
+          })
+          if (taskMediaSegment) {
+            taskSegments.push(taskMediaSegment)
+          }
+        }
+
+        for (const entry of filteredEntries as EntryLike[]) {
+          const taskEntrySegment = await buildRemarkSegment({
+            text: formatEntryLine(entry),
+            photoUrls: Array.isArray(entry.photos) ? (entry.photos as string[]) : [],
+            videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+            imageCache,
+            seenPhotos: seenItemPhotos,
+            seenVideos: seenItemVideos
+          })
+          if (taskEntrySegment) {
+            taskSegments.push(taskEntrySegment)
+          }
+        }
+
+        const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
+
+        rows.push({
+          cells: [
+            { text: "" },
+            { text: "" },
+            { text: label },
+            { text: conditionText },
+            taskSegments.length ? { segments: taskSegments } : { text: "" }
+          ]
+        })
+      }
     }
   }
 
@@ -920,6 +1022,7 @@ export async function appendWorkOrderSection(
 
   const headerRow: TableCell[] = [
     { text: "S/N", bold: true },
+    { text: "Location", bold: true },
     { text: "Item / Subtask", bold: true },
     { text: "Status / Condition", bold: true },
     { text: "Remarks / Media", bold: true }
