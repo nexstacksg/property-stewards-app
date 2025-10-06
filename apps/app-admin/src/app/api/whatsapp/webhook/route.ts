@@ -97,8 +97,11 @@ export async function POST(request: NextRequest) {
     try {
       const instantReply = buildInstantReply(message || '', hasMedia)
       if (instantReply) {
-        void sendWhatsAppResponse(phoneNumber, instantReply)
-          .catch(error => { console.error('⚠️ Failed to send instant acknowledgement:', error) })
+        try {
+          await sendWhatsAppResponse(phoneNumber, instantReply)
+        } catch (error) {
+          console.error('⚠️ Failed to send instant acknowledgement:', error)
+        }
       }
     } catch (error) {
       console.error('⚠️ Error preparing instant acknowledgement:', error)
