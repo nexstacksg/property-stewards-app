@@ -54,6 +54,7 @@ export type ChatSessionState = {
   taskFlowStage?: 'condition' | 'media' | 'remarks' | 'confirm'
   pendingTaskRemarks?: string | null
   pendingMediaUploads?: PendingMediaUpload[]
+  locationSubLocations?: Record<string, Array<{ id: string; name: string; status: string }>> // keyed by ContractChecklistItem ID
 
   // assistant/thread context
   threadId?: string

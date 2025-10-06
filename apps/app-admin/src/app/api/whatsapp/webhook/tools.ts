@@ -131,6 +131,21 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId) as any[]
         const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
         const nextPrompt = 'Reply with the number of the location you want to inspect next.'
+        if (sessionId) {
+          const subLocationMap: Record<string, Array<{ id: string; name: string; status: string }>> = {}
+          for (const loc of locationsWithStatus) {
+            if (Array.isArray(loc.subLocations) && loc.subLocations.length > 0) {
+              subLocationMap[loc.contractChecklistItemId] = loc.subLocations.map((sub: any) => ({
+                id: sub.id,
+                name: sub.name,
+                status: sub.status
+              }))
+            }
+          }
+          await updateSessionState(sessionId, {
+            locationSubLocations: Object.keys(subLocationMap).length > 0 ? subLocationMap : undefined
+          })
+        }
         return JSON.stringify({
           success: true,
           locations: locationsWithStatus.map((loc, index) => ({
@@ -190,6 +205,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       }
       case 'getTasksForLocation': {
         const { workOrderId, location, contractChecklistItemId, subLocationId } = args
+        let effectiveSubLocationId = subLocationId as string | undefined
+        let subLocationOptions: Array<{ id: string; name: string; status: string }> | undefined
         if (sessionId) {
           await updateSessionState(sessionId, {
             currentLocation: location,
@@ -202,16 +219,29 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskCondition: undefined,
             taskFlowStage: undefined
           })
-        }
-        const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId, subLocationId) as any[]
-        if ((!subLocationId || subLocationId.length === 0) && tasks.length > 0) {
-          const uniqueLocations = Array.from(new Set(tasks.map((task: any) => task.locationId).filter(Boolean)))
-          if (uniqueLocations.length > 1) {
-            const subLocations = await getChecklistLocationsForItem(contractChecklistItemId) as any[]
-            const formattedStrings = subLocations.map((loc: any, index: number) => `[${index + 1}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
-            return JSON.stringify({ success: false, requiresSubLocationSelection: true, subLocations: subLocations.map((loc: any, index: number) => ({ id: loc.id, number: index + 1, name: loc.name, status: loc.status, totalTasks: loc.totalTasks, completedTasks: loc.completedTasks })), subLocationsFormatted: formattedStrings, message: 'Select a sub-location first before inspecting tasks.' })
+          const latest = await getSessionState(sessionId)
+          const lookup = (latest as any).locationSubLocations as Record<string, Array<{ id: string; name: string; status: string }>> | undefined
+          if (lookup && contractChecklistItemId && lookup[contractChecklistItemId]) {
+            subLocationOptions = lookup[contractChecklistItemId]
+            if (!effectiveSubLocationId && Array.isArray(subLocationOptions)) {
+              const activeOptions = subLocationOptions.filter(option => option.status !== 'completed')
+              const candidates = activeOptions.length > 0 ? activeOptions : subLocationOptions
+              if (candidates.length === 1) {
+                effectiveSubLocationId = candidates[0].id
+                await updateSessionState(sessionId, {
+                  currentSubLocationId: candidates[0].id,
+                  currentSubLocationName: candidates[0].name
+                })
+              }
+            }
           }
         }
+        if (!effectiveSubLocationId && Array.isArray(subLocationOptions) && subLocationOptions.length > 1) {
+          const formattedStrings = subLocationOptions.map((loc, index) => `[${index + 1}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
+          return JSON.stringify({ success: false, requiresSubLocationSelection: true, subLocations: subLocationOptions.map((loc, index) => ({ id: loc.id, number: index + 1, name: loc.name, status: loc.status })), subLocationsFormatted: formattedStrings, message: 'Select a sub-location before inspecting the tasks.' })
+        }
+
+        const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId, effectiveSubLocationId) as any[]
         const formattedTasks = tasks.map((task: any, index: number) => {
           const prefix = task.locationName && task.locationName !== location ? `${task.locationName}: ` : ''
           return {
