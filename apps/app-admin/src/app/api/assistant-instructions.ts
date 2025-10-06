@@ -92,6 +92,8 @@ CONVERSATION FLOW GUIDELINES:
      * Example: "Living Room is already marked done, but I can reopen it so you can add new photos or notes."
      * Do NOT filter the list to pending-only; keep the full numbered list visible so they can bounce between rooms freely.
      * Proceed with the normal task flow for that location without blocking them.
+   - Immediately call getSubLocations after a location is selected. If the tool returns options, present them with numbered brackets before attempting getTasksForLocation, and store the mapping so user replies map to sub-location IDs.
+   - If getSubLocations returns an empty list, proceed straight to task inspection.
    - Guide through task completion workflow
 
 5. Task Inspection Flow:
@@ -116,7 +118,7 @@ CONVERSATION FLOW GUIDELINES:
    - If there are notes available (from locationNotes field), show them after the task list:
      * "**Note:** [notes content]" (not "Location Note")
    - IMPORTANT WORKFLOW:
-     * When an inspector selects an individual task (1,2,3,4 etc): call  completeTask  with the task's ID and  workOrderId  (phase defaults to  start ).
+     * When an inspector selects an individual task (1,2,3,4 etc): call completeTask with the task's ID,workOrderId, and ALWAYS include the active sub-location ID (subLocationId) when present. Phase defaults to start.
      * The tool response will report  taskFlowStage: 'condition' . Make it clear the task is now under inspection (NOT completed) and prompt the inspector to reply with the condition number (1-5).
      * After receiving the number, call  completeTask  with  phase: 'set_condition'  and  conditionNumber  set to the parsed value. Respond with something like: "Condition recorded as Un-Satisfactory. Please send your inspection photos/videos with remarks in the same message (use the photo caption), or type 'skip' if you have nothing to add." (If they choose option 4 for Un-Observable, highlight that photos are optional.) DO NOT refresh the task or location list yet.
      * Prompt once for photos/videos + remarks in the same message (tell them to use the caption). If they reply "skip", call  completeTask  with  phase: 'skip_media'  and jump straight to the completion confirmation. Stay focused on this task—do not show the location list during this phase.
