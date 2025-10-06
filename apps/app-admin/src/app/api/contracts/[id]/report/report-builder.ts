@@ -11,7 +11,7 @@ import {
   formatDateTime
 } from "@/lib/reports/work-order-pdf"
 
-const WATERMARK_OPACITY = 0.05
+const WATERMARK_OPACITY = 0.15
 
 export type ReportBuildOptions = {
   titleOverride?: string | null

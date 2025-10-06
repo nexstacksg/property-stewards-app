@@ -361,26 +361,14 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
     }
 
     const itemName = item.name || item.item || `Checklist Item ${itemIndex + 1}`
-    const itemStatus = formatEnum(item.status ?? undefined) || "N/A"
+    const formattedItemStatus = formatEnum(item.status ?? undefined)
+    const itemStatusFallback = formattedItemStatus || "N/A"
+    const itemNumber = itemIndex + 1
+    const itemStatusSuffix = formattedItemStatus ? ` (${formattedItemStatus.toLowerCase()})` : ""
     const itemLocations = Array.isArray(item.locations) ? item.locations : []
     const hasItemSummary = itemSummarySegments.length > 0 || Boolean(summaryMedia)
     const hasLocationRemarks = itemLocations.some((loc: any) => typeof loc?.remarks === 'string' && loc.remarks.trim().length > 0)
     const hasRemarkContent = hasItemSummary || hasLocationRemarks
-    const itemRemarkCell: TableCell = hasRemarkContent
-      ? { text: "" }
-      : { text: "No remarks provided." }
-
-    rows.push({
-      cells: [
-        { text: String(itemIndex + 1), bold: true },
-        { text: itemName, bold: true },
-        { text: "" },
-        { text: itemStatus, bold: true },
-        itemRemarkCell
-      ],
-      summaryMedia: undefined
-    })
-
     const tasks = Array.isArray(item.checklistTasks) ? [...item.checklistTasks] : []
     if (!tasks.some((task: any) => typeof task?.name === 'string' && task.name.trim().toLowerCase() === 'others')) {
       tasks.push({
@@ -452,47 +440,83 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
       }
     })
 
-    let summaryAssigned = false
-
-    for (const group of groups) {
-      const locationStatusRaw = group.location?.status ?? group.tasks.find((task: any) => task?.location)?.location?.status
-      const locationStatus = formatEnum(locationStatusRaw ?? undefined) || itemStatus
-      const shouldAttachSummary = hasItemSummary && !summaryAssigned
-      const locationSegments: CellSegment[] = []
-      const locationRemarkText = typeof group.location?.remarks === 'string' ? group.location.remarks.trim() : ''
-      if (locationRemarkText.length > 0) {
-        locationSegments.push({ text: locationRemarkText })
-      }
-      const combinedSegments = shouldAttachSummary
-        ? [...locationSegments, ...itemSummarySegments]
-        : locationSegments
-      const locationRemarkCell: TableCell = combinedSegments.length
-        ? { segments: combinedSegments }
-        : shouldAttachSummary && summaryMedia
-          ? { text: "See media below." }
-          : { text: "" }
-      const locationSummaryMedia = shouldAttachSummary ? summaryMedia : undefined
-      if (shouldAttachSummary) {
-        summaryAssigned = true
-      }
+    if (groups.length === 0) {
+      const remarkCell: TableCell = hasRemarkContent
+        ? itemSummarySegments.length
+          ? { segments: itemSummarySegments }
+          : summaryMedia
+            ? { text: "See media below." }
+            : { text: "See item remarks." }
+        : { text: "No remarks provided." }
 
       rows.push({
         cells: [
-          { text: "" },
-          { text: "" },
-          { text: group.label, bold: true },
-          { text: locationStatus },
-          locationRemarkCell
+          { text: String(itemNumber), bold: true },
+          { text: `${itemName}${itemStatusSuffix}`, bold: true },
+          { text: `${itemNumber}. ${itemName}${itemStatusSuffix}` },
+          { text: itemStatusFallback },
+          remarkCell
         ],
-        summaryMedia: locationSummaryMedia
+        summaryMedia
       })
 
-      let letterIndex = 0
-      for (const task of group.tasks) {
-        const label = `${String.fromCharCode(97 + (letterIndex % 26))}. ${task.name || "Subtask"}`
-        letterIndex += 1
-        const entries = Array.isArray(task.entries) ? task.entries : []
+      continue
+    }
 
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+      const group = groups[groupIndex]
+      const locationStatusRaw = group.location?.status ?? group.tasks.find((task: any) => task?.location)?.location?.status
+      const locationStatus = formatEnum(locationStatusRaw ?? undefined) || itemStatusFallback
+      const locationRemarkText = typeof group.location?.remarks === 'string' ? group.location.remarks.trim() : ''
+      const locationSegments: CellSegment[] = []
+      if (locationRemarkText.length > 0) {
+        locationSegments.push({ text: locationRemarkText })
+      }
+      const combinedSegments: CellSegment[] = [...locationSegments]
+      if (itemSummarySegments.length) {
+        combinedSegments.push(...itemSummarySegments)
+      }
+      const locationRemarkCell: TableCell = combinedSegments.length
+        ? { segments: combinedSegments }
+        : summaryMedia
+          ? { text: "See media below." }
+          : { text: "" }
+      const locationSummaryMedia = groupIndex === 0 ? summaryMedia : undefined
+
+      const locationIndex = groupIndex + 1
+      const locationNumber = `${itemNumber}.${locationIndex}`
+
+      if (groupIndex === 0) {
+        const itemLine = `${itemNumber}. ${itemName}${itemStatusSuffix}`
+        const locationLine = `${locationNumber} ${group.label}`
+        const combinedItemText = `${locationLine}`
+
+        rows.push({
+          cells: [
+            { text: String(itemNumber), bold: true },
+            { text: `${itemName}${itemStatusSuffix}`, bold: true },
+            { text: combinedItemText, bold: true },
+            { text: locationStatus },
+            locationRemarkCell
+          ],
+          summaryMedia: locationSummaryMedia
+        })
+      } else {
+        rows.push({
+          cells: [
+            { text: "" },
+            { text: "" },
+            { text: `${locationNumber} ${group.label}` },
+            { text: locationStatus },
+            locationRemarkCell
+          ],
+          summaryMedia: locationSummaryMedia
+        })
+      }
+
+      for (let taskIdx = 0; taskIdx < group.tasks.length; taskIdx += 1) {
+        const task = group.tasks[taskIdx]
+        const entries = Array.isArray(task.entries) ? task.entries : []
         const filteredEntries = entries.filter((entry: EntryLike) => (entry as any)?.includeInReport !== false)
         const taskSegments: CellSegment[] = []
 
@@ -529,12 +553,14 @@ async function buildTableRows(items: any[], imageCache: Map<string, Buffer>): Pr
         }
 
         const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
+        const taskNumber = `${locationNumber}.${taskIdx + 1}`
+        const taskLabel = `${taskNumber} ${task.name || "Subtask"}`
 
         rows.push({
           cells: [
             { text: "" },
             { text: "" },
-            { text: label },
+            { text: taskLabel },
             { text: conditionText },
             taskSegments.length ? { segments: taskSegments } : { text: "" }
           ]
