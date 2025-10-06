@@ -157,6 +157,26 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
               }
             }
           }
+        },
+        locations: {
+          orderBy: { order: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            order: true,
+            tasks: {
+              orderBy: { createdOn: 'asc' },
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                condition: true,
+                photos: true,
+                videos: true
+              }
+            }
+          }
         }
       },
       orderBy: { order: 'asc' }
@@ -192,7 +212,6 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     enteredOn: it.enteredOn,
     enteredById: it.enteredById,
     order: it.order,
-    tasks: undefined,
     checklistTasks: (it.checklistTasks || []).map(task => ({
       id: task.id,
       name: task.name,
@@ -201,6 +220,22 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
       photos: task.photos,
       videos: task.videos,
       entryIds: (task.entries || []).map(entry => entry.id)
+    })),
+    locations: (it.locations || []).map(location => ({
+      id: location.id,
+      name: location.name,
+      status: location.status,
+      order: location.order,
+      tasks: Array.isArray(location.tasks)
+        ? location.tasks.map(task => ({
+            id: task.id,
+            name: task.name,
+            status: task.status,
+            condition: task.condition,
+            photos: task.photos,
+            videos: task.videos
+          }))
+        : []
     })),
     status: it.status,
     condition: it.condition,
@@ -252,6 +287,35 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
     results.workOrders = { ok: true, skipped: false, message: `Cached ${workOrders.length} work orders`, keys }
   } catch (e) {
     results.workOrders = { ok: false, skipped: false, message: `Failed: ${(e as Error).message}` }
+  }
+
+  // Work Orders grouped by inspector for fast lookup
+  try {
+    const inspectorGroups = new Map<string, any[]>()
+    for (const wo of workOrders) {
+      const ids = Array.isArray(wo.inspectorIds) ? wo.inspectorIds : []
+      for (const inspectorId of ids) {
+        if (!inspectorId) continue
+        if (!inspectorGroups.has(inspectorId)) inspectorGroups.set(inspectorId, [])
+        inspectorGroups.get(inspectorId)!.push(wo)
+      }
+    }
+
+    const storedInspectorKeys: string[] = []
+    for (const [inspectorId, list] of inspectorGroups.entries()) {
+      const inspectorKey = `mc:work-orders:inspector:${inspectorId}`
+      const { keys } = await cacheSetLargeArray(inspectorKey, list, undefined, { ttlSeconds: ttl })
+      storedInspectorKeys.push(inspectorKey, ...keys.filter(k => k !== inspectorKey))
+    }
+
+    results.workOrdersByInspector = {
+      ok: true,
+      skipped: false,
+      message: `Cached work orders for ${inspectorGroups.size} inspectors`,
+      keys: storedInspectorKeys.slice(0, 10) // store sample of keys for debugging
+    }
+  } catch (e) {
+    results.workOrdersByInspector = { ok: false, skipped: false, message: `Failed to cache inspector work orders: ${(e as Error).message}` }
   }
 
   // Customers
