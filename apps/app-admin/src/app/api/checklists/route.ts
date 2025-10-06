@@ -9,7 +9,12 @@ export async function GET() {
       where: { status: 'ACTIVE' },
       include: {
         items: {
-          orderBy: { order: 'asc' }
+          orderBy: { order: 'asc' },
+          include: {
+            tasks: {
+              orderBy: { order: 'asc' }
+            }
+          } as any
         },
         _count: {
           select: {
@@ -61,23 +66,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Debug logging
-    console.log('Received items:', items)
-    
-    // Filter out invalid items and validate - map correct field names
-    const validItems = items.filter((item: any) => 
-      (item.name || item.item) && (item.action || item.description)
-    ).map((item: any) => ({
-      name: item.name || item.item,
-      action: item.action || item.description,
-      order: item.order
-    }))
-    
-    console.log('Valid items:', validItems)
-    
-    if (validItems.length === 0) {
+    const listWithTasks = items
+      .filter((item: any) => item && (item.name || item.item || item.location))
+      .map((item: any, index: number) => {
+        const tasks = Array.isArray(item.tasks) ? item.tasks : []
+        const sanitizedTasks = tasks
+          .filter((task: any) => task && (task.name || task.title || task.summary))
+          .map((task: any, taskIndex: number) => ({
+            name: task.name || task.title || task.summary,
+            order: task.order || taskIndex + 1,
+            actions: Array.isArray(task.actions)
+              ? task.actions.filter((action: any) => typeof action === 'string' && action.trim().length > 0)
+              : []
+          }))
+
+        return {
+          name: item.name || item.item || item.location,
+          category: item.category || 'GENERAL',
+          order: item.order || index + 1,
+          tasks: sanitizedTasks
+        }
+      })
+
+    if (listWithTasks.length === 0) {
       return NextResponse.json(
-        { error: 'At least one valid checklist item is required. Each item must have both name and action.' },
+        { error: 'At least one checklist item with a valid name is required.' },
         { status: 400 }
       )
     }
@@ -88,18 +101,30 @@ export async function POST(request: NextRequest) {
         propertyType: normalizedPropertyType as PropertyType,
         remarks,
         items: {
-          create: validItems.map((item: any, index: number) => ({
+          create: listWithTasks.map((item) => ({
             name: item.name,
-            action: item.action,
-            order: item.order || index + 1
+            category: item.category || 'GENERAL',
+            order: item.order,
+            tasks: {
+              create: item.tasks.map((task :any) => ({
+                name: task.name,
+                order: task.order,
+                actions: task.actions
+              }))
+            } 
           }))
-        }
+        } as any
       },
       include: {
         items: {
-          orderBy: { order: 'asc' }
+          orderBy: { order: 'asc' },
+          include: {
+            tasks: {
+              orderBy: { order: 'asc' }
+            }
+          }
         }
-      }
+      } as any
     })
 
     return NextResponse.json(checklist, { status: 201 })

@@ -12,7 +12,12 @@ export async function GET(
       where: { id },
       include: {
         items: {
-          orderBy: { order: 'asc' }
+          orderBy: { order: 'asc' },
+          include: {
+            tasks: {
+              orderBy: { order: 'asc' }
+            }
+          }
         },
         contracts: {
           include: {
@@ -80,20 +85,46 @@ export async function PATCH(
 
     // If items are provided, update them
     if (items && Array.isArray(items)) {
-      // Delete existing items
       await prisma.checklistItem.deleteMany({
         where: { checklistId: id }
       })
 
-      // Create new items
-      await prisma.checklistItem.createMany({
-        data: items.map((item: any, index: number) => ({
-          checklistId: id,
-          name: item.name || item.item,
-          action: item.action || item.description,
-          order: item.order || index + 1
-        }))
-      })
+      for (const [index, item] of items.entries()) {
+        const sanitizedCategory = item.category || 'GENERAL'
+        const createdItem = await prisma.checklistItem.create({
+          data: {
+            checklistId: id,
+            name: item.name || item.item || '',
+            category: sanitizedCategory,
+            order: item.order || index + 1
+          }
+        })
+
+        const rawTasks = Array.isArray(item.tasks) ? item.tasks : []
+
+        const tasksToCreate = rawTasks
+          .filter((task: any) => task && (task.name || task.title || task.summary))
+          .map((task: any, taskIndex: number) => {
+            const name = task.name || task.title || task.summary || task.task || ''
+            const actions = Array.isArray(task.actions)
+              ? task.actions.filter((action: any) => typeof action === 'string' && action.trim().length > 0)
+              : typeof task.details === 'string'
+                ? task.details.split(',').map((detail: string) => detail.trim()).filter((detail: string) => detail.length > 0)
+                : []
+
+            return {
+              checklistItemId: createdItem.id,
+              name: name || sanitizedCategory,
+              order: task.order || taskIndex + 1,
+              actions
+            }
+          })
+          .filter((task: { name: string }) => task.name.trim().length > 0)
+
+        if (tasksToCreate.length > 0) {
+          await prisma.checklistItemTask.createMany({ data: tasksToCreate })
+        }
+      }
     }
 
     // Fetch and return updated checklist with items
@@ -101,7 +132,12 @@ export async function PATCH(
       where: { id },
       include: {
         items: {
-          orderBy: { order: 'asc' }
+          orderBy: { order: 'asc' },
+          include: {
+            tasks: {
+              orderBy: { order: 'asc' }
+            }
+          }
         }
       }
     })

@@ -1,57 +1,104 @@
 "use client"
 
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 
-type ChecklistItem = { item: string; description: string; category: string; isRequired: boolean; order: number }
-
-type Props = {
-  items: ChecklistItem[]
-  editingItems: ChecklistItem[]
+export type ChecklistPreviewTask = {
+  name: string
+  details: string
 }
 
-export function ChecklistPreview({ items, editingItems }: Props) {
-  const allItems = [
-    ...items,
-    ...editingItems.filter(item => item.item.trim() !== '')
-  ]
+export type ChecklistPreviewLocation = {
+  location: string
+  category: string
+  isRequired: boolean
+  order: number
+  tasks: ChecklistPreviewTask[]
+}
 
-  if (allItems.length === 0) return null
+type Props = {
+  locations: ChecklistPreviewLocation[]
+  draftLocation?: ChecklistPreviewLocation
+}
 
-  const categories = Array.from(new Set(allItems.map(item => item.category)))
+export function ChecklistPreview({ locations, draftLocation }: Props) {
+  const draft = draftLocation && draftLocation.location.trim().length > 0
+    ? [{
+        ...draftLocation,
+        order: locations.length + 1,
+      }]
+    : []
+
+  const previewLocations = [...locations, ...draft].filter(
+    (location) => location.location.trim().length > 0,
+  )
+
+  if (previewLocations.length === 0) return null
 
   return (
     <Card className="mt-6">
       <CardHeader>
         <CardTitle className="text-sm">Checklist Preview</CardTitle>
-        <CardDescription className="text-xs">How inspectors will see this checklist</CardDescription>
+        <CardDescription className="text-xs">
+          Inspectors will see locations and tasks in this order
+        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {categories.map(category => {
-            const categoryItems = allItems.filter(item => item.category === category)
-            return (
-              <div key={category}>
-                <p className="text-xs font-medium text-orange-600 mb-1">{category}</p>
-                <ul className="text-sm space-y-1 text-muted-foreground">
-                  {categoryItems.map((item, idx) => (
-                    <li key={`${category}-${idx}`} className="flex items-start">
-                      <span className="text-orange-400 mr-1">•</span>
-                      <span className="text-xs">
-                        {item.item}
-                        {item.isRequired && <span className="text-red-500 ml-0.5">*</span>}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+      <CardContent className="space-y-4">
+        {previewLocations.map((location) => {
+          const sanitizedTasks = location.tasks
+            .map((task) => ({
+              name: task.name.trim(),
+              details: task.details.trim(),
+            }))
+            .filter((task) => task.name.length > 0 || task.details.length > 0)
+
+          return (
+            <div
+              key={`${location.location}-${location.order}`}
+              className="space-y-2"
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">
+                  {location.order}. {location.location}
+                  {location.isRequired && (
+                    <span className="text-red-500 ml-1" title="Required">
+                      *
+                    </span>
+                  )}
+                </p>
+                <span className="text-xs text-muted-foreground">
+                  {location.category}
+                </span>
               </div>
-            )
-          })}
-          <div className="pt-2 border-t">
-            <p className="text-xs text-muted-foreground">Total: {allItems.length} items</p>
-          </div>
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {sanitizedTasks.length === 0 ? (
+                  <li>No tasks configured</li>
+                ) : (
+                  sanitizedTasks.map((task, index) => (
+                    <li key={`${location.location}-task-${index}`}>
+                      <span className="font-medium text-muted-foreground">
+                        {task.name}
+                      </span>
+                      {task.details && ` — ${task.details}`}
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          )
+        })}
+        <div className="pt-2 border-t">
+          <p className="text-xs text-muted-foreground">
+            Total: {previewLocations.length} location
+            {previewLocations.length === 1 ? "" : "s"}
+          </p>
         </div>
       </CardContent>
     </Card>
   )
 }
-

@@ -8,11 +8,18 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Plus, ClipboardCheck, Home, Building, FileText, List } from "lucide-react"
 
+interface ChecklistTask {
+  id: string
+  name: string
+  actions: string[]
+  order: number
+}
+
 interface ChecklistItem {
   id: string
   name: string
-  action: string
   order: number
+  tasks: ChecklistTask[]
 }
 
 interface Checklist {
@@ -77,6 +84,9 @@ export default function ChecklistsPage() {
     }
   }
 
+
+  console.log('here',checklists)
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
@@ -112,7 +122,7 @@ export default function ChecklistsPage() {
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium">Total Items</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Locations</CardTitle>
               <List className="h-4 w-4 text-muted-foreground" />
             </div>
           </CardHeader>
@@ -121,7 +131,7 @@ export default function ChecklistsPage() {
               {checklists.reduce((sum, c) => sum + c.items.length, 0)}
             </div>
             <p className="text-xs text-muted-foreground">
-              Inspection points
+              Inspection locations
             </p>
           </CardContent>
         </Card>
@@ -192,24 +202,33 @@ export default function ChecklistsPage() {
               <CardContent>
                 <div className="space-y-3">
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Checklist Items:</span>
-                    <span className="font-medium">{checklist.items.length} items</span>
+                    <span className="text-muted-foreground">Locations:</span>
+                    <span className="font-medium">{checklist.items.length}</span>
                   </div>
                   
                   <div className="border rounded-lg p-3 max-h-40 overflow-y-auto">
                     <div className="space-y-2">
-                      {checklist.items.slice(0, 5).map((item, idx) => (
-                        <div key={item.id} className="text-sm">
-                          <span className="text-muted-foreground mr-2">{idx + 1}.</span>
-                          <span className="font-medium">{item.name}</span>
-                          <div className="text-xs text-muted-foreground ml-5">
-                            {item.action}
+                      {checklist.items.slice(0, 5).map((item, idx) => {
+                        const taskNames = (item.tasks || [])
+                          .map((task) => task?.name?.trim())
+                          .filter((name): name is string => !!name && name.length > 0)
+                        const summaryText = taskNames.length > 0
+                          ? taskNames.join(', ')
+                          : 'No tasks configured'
+
+                        return (
+                          <div key={item.id} className="text-sm">
+                            <span className="text-muted-foreground mr-2">{idx + 1}.</span>
+                            <span className="font-medium">{item.name}</span>
+                            <div className="text-xs text-muted-foreground ml-5">
+                              {summaryText}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                       {checklist.items.length > 5 && (
                         <div className="text-xs text-muted-foreground text-center pt-2">
-                          ... and {checklist.items.length - 5} more items
+                          ... and {checklist.items.length - 5} more locations
                         </div>
                       )}
                     </div>
