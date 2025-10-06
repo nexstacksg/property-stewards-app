@@ -229,7 +229,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
           return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
         }
         await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: undefined })
-        return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if you’re done with this task, or [2] if you need to keep it pending. Add a note first if needed.`
+        return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
       }
     } catch (error) {
       console.error('❌ Failed to save media to task entry, falling back to item storage', error)
@@ -251,10 +251,10 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
     }
 
     const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
-    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nNext: continue with the current location or pick another one from the list when you’re ready.`
+    return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
   }
 
-  return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.\n\nNext: continue with this task or let me know if it’s complete.`
+  return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
 }
 
 type FinalizePendingResult = {
