@@ -259,6 +259,35 @@ async function main() {
   console.log('Created addresses:', { address1, address2, address3, address4 })
 
   // Create Checklist Templates
+  const actionToTaskPayload = (action: string) => {
+    if (!action) return []
+    return action
+      .replace(/\band\b/gi, ',')
+      .split(',')
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0)
+  }
+
+  const makeTemplateItem = (name: string, order: number, action: string, category = 'GENERAL') => {
+    const taskActions = actionToTaskPayload(action)
+    return {
+      name,
+      category,
+      order,
+      ...(taskActions.length > 0
+        ? {
+            tasks: {
+              create: [{
+                name: 'Inspection Tasks',
+                order: 1,
+                actions: taskActions,
+              }],
+            },
+          }
+        : {}),
+    }
+  }
+
   const checklistHDB = await prisma.checklist.create({
     data: {
       name: 'Standard HDB Inspection',
@@ -267,16 +296,16 @@ async function main() {
       status: 'ACTIVE',
       items: {
         create: [
-          { name: 'Living Room', action: 'Check walls, ceiling, flooring, windows, and electrical points', order: 1 },
-          { name: 'Master Bedroom', action: 'Inspect walls, windows, aircon, built-in wardrobe', order: 2 },
-          { name: 'Bedroom 2', action: 'Inspect walls, windows, aircon, electrical points', order: 3 },
-          { name: 'Bedroom 3', action: 'Inspect walls, windows, aircon, electrical points', order: 4 },
-          { name: 'Kitchen', action: 'Check cabinets, sink, stove, hood, tiles, plumbing', order: 5 },
-          { name: 'Bathroom 1', action: 'Check tiles, toilet, sink, shower, waterproofing', order: 6 },
-          { name: 'Bathroom 2', action: 'Check tiles, toilet, sink, shower, waterproofing', order: 7 },
-          { name: 'Service Yard', action: 'Check washing point, floor trap, ventilation', order: 8 },
-          { name: 'Main Door', action: 'Check lock, hinges, door frame, peephole', order: 9 },
-          { name: 'Windows', action: 'Check all windows for operation, seals, locks', order: 10 }
+          makeTemplateItem('Living Room', 1, 'Check walls, ceiling, flooring, windows, and electrical points'),
+          makeTemplateItem('Master Bedroom', 2, 'Inspect walls, windows, aircon, built-in wardrobe'),
+          makeTemplateItem('Bedroom 2', 3, 'Inspect walls, windows, aircon, electrical points'),
+          makeTemplateItem('Bedroom 3', 4, 'Inspect walls, windows, aircon, electrical points'),
+          makeTemplateItem('Kitchen', 5, 'Check cabinets, sink, stove, hood, tiles, plumbing'),
+          makeTemplateItem('Bathroom 1', 6, 'Check tiles, toilet, sink, shower, waterproofing'),
+          makeTemplateItem('Bathroom 2', 7, 'Check tiles, toilet, sink, shower, waterproofing'),
+          makeTemplateItem('Service Yard', 8, 'Check washing point, floor trap, ventilation'),
+          makeTemplateItem('Main Door', 9, 'Check lock, hinges, door frame, peephole'),
+          makeTemplateItem('Windows', 10, 'Check all windows for operation, seals, locks')
         ]
       }
     }
@@ -290,17 +319,17 @@ async function main() {
       status: 'ACTIVE',
       items: {
         create: [
-          { name: 'Entrance Foyer', action: 'Check flooring, walls, ceiling, lighting', order: 1 },
-          { name: 'Living & Dining', action: 'Inspect flooring, walls, windows, balcony access', order: 2 },
-          { name: 'Master Bedroom', action: 'Check walls, windows, aircon, walk-in wardrobe, ensuite', order: 3 },
-          { name: 'Bedroom 2', action: 'Inspect walls, windows, aircon, built-ins', order: 4 },
-          { name: 'Bedroom 3', action: 'Inspect walls, windows, aircon, built-ins', order: 5 },
-          { name: 'Kitchen', action: 'Check appliances, cabinets, island, backsplash', order: 6 },
-          { name: 'Master Bathroom', action: 'Check bathtub, shower, double vanity, tiles', order: 7 },
-          { name: 'Common Bathroom', action: 'Check fixtures, tiles, ventilation', order: 8 },
-          { name: 'Balcony', action: 'Check railings, flooring, drainage, ceiling', order: 9 },
-          { name: 'Store Room', action: 'Check shelving, ventilation, electrical', order: 10 },
-          { name: 'Smart Home', action: 'Test smart home systems if applicable', order: 11 }
+          makeTemplateItem('Entrance Foyer', 1, 'Check flooring, walls, ceiling, lighting'),
+          makeTemplateItem('Living & Dining', 2, 'Inspect flooring, walls, windows, balcony access'),
+          makeTemplateItem('Master Bedroom', 3, 'Check walls, windows, aircon, walk-in wardrobe, ensuite'),
+          makeTemplateItem('Bedroom 2', 4, 'Inspect walls, windows, aircon, built-ins'),
+          makeTemplateItem('Bedroom 3', 5, 'Inspect walls, windows, aircon, built-ins'),
+          makeTemplateItem('Kitchen', 6, 'Check appliances, cabinets, island, backsplash'),
+          makeTemplateItem('Master Bathroom', 7, 'Check bathtub, shower, double vanity, tiles'),
+          makeTemplateItem('Common Bathroom', 8, 'Check fixtures, tiles, ventilation'),
+          makeTemplateItem('Balcony', 9, 'Check railings, flooring, drainage, ceiling'),
+          makeTemplateItem('Store Room', 10, 'Check shelving, ventilation, electrical'),
+          makeTemplateItem('Smart Home', 11, 'Test smart home systems if applicable')
         ]
       }
     }

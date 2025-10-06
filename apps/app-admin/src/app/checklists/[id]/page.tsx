@@ -20,7 +20,12 @@ async function getChecklist(id: string) {
     where: { id },
     include: {
       items: {
-        orderBy: { order: 'asc' }
+        orderBy: { order: 'asc' },
+        include: {
+          tasks: {
+            orderBy: { order: 'asc' }
+          }
+        }
       },
       contracts: {
         include: {
@@ -29,7 +34,7 @@ async function getChecklist(id: string) {
         take: 5,
         orderBy: { createdOn: 'desc' }
       }
-    }
+    } as any
   })
 
   if (!checklist) {
@@ -115,10 +120,10 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
               </div>
 
               <div>
-                <p className="text-sm text-muted-foreground">Total Items</p>
+                <p className="text-sm text-muted-foreground">Total Locations</p>
                 <div className="flex items-center gap-2">
                   <Hash className="h-4 w-4" />
-                  <span className="font-medium">{checklist.items.length} items</span>
+                  <span className="font-medium">{checklist.items.length}</span>
                 </div>
               </div>
 
@@ -174,8 +179,8 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
             <CardHeader>
               <div className="flex justify-between items-center">
                 <div>
-                  <CardTitle>Checklist Items</CardTitle>
-                  <CardDescription>{checklist.items.length} inspection item(s)</CardDescription>
+                  <CardTitle>Checklist Locations</CardTitle>
+                  <CardDescription>{checklist.items.length} inspection location(s)</CardDescription>
                 </div>
                 {/* <Button size="sm">
                   <Plus className="h-4 w-4 mr-2" />
@@ -185,7 +190,7 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
             </CardHeader>
             <CardContent>
               {checklist.items.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No items in this checklist</p>
+                <p className="text-muted-foreground text-center py-4">No locations in this checklist</p>
               ) : (
                 <Table>
                   <TableHeader>
@@ -198,34 +203,47 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {checklist.items.map((item: any) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-medium">{item.order}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{item.name || item.item}</p>
-                            {item.action || item.description && (
+                    {checklist.items.map((item: any) => {
+                      const taskNames = Array.isArray(item.tasks)
+                        ? item.tasks
+                            .map((task: any) => task?.name?.trim())
+                            .filter((name: string | undefined): name is string => !!name && name.length > 0)
+                        : []
+
+                      const summaryText = taskNames.length > 0
+                        ? taskNames.join(', ')
+                        : 'No tasks configured'
+
+                      const isRequired = item.isRequired ?? true
+                      const status = item.status ?? checklist.status
+
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.order}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{item.name || item.item}</p>
                               <p className="text-sm text-muted-foreground">
-                                {item.action || item.description}
+                                {summaryText}
                               </p>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{checklist.propertyType}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={item.isRequired ? 'default' : 'secondary'}>
-                            {item.isRequired ? 'Required' : 'Optional'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={item.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                            {checklist.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{item.category}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={isRequired ? 'default' : 'secondary'}>
+                              {isRequired ? 'Required' : 'Optional'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={status === 'ACTIVE' ? 'success' : 'secondary'}>
+                              {status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               )}

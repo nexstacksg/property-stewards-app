@@ -102,12 +102,25 @@ model ChecklistItem {
   id          String    @id @default(cuid())
   checklistId String
   name        String
-  action      String
+  category    String    @default("GENERAL")
   order       Int
   checklist   Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  tasks       ChecklistItemTask[]
 
   @@unique([checklistId, order])
   @@index([checklistId])
+}
+
+model ChecklistItemTask {
+  id              String        @id @default(cuid())
+  checklistItemId String
+  name            String
+  actions         String[]      @default([])
+  order           Int
+  checklistItem   ChecklistItem @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+
+  @@unique([checklistItemId, order])
+  @@index([checklistItemId])
 }
 
 model Contract {
