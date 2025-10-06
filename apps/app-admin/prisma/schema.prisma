@@ -254,6 +254,7 @@ model ChecklistTask {
   name        String
   status      ChecklistTaskStatus @default(PENDING)
   condition   Condition?
+  actions     String[] @default([])
   photos      String[] @default([])
   videos      String[] @default([])
   createdOn   DateTime @default(now())

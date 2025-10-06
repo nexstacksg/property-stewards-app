@@ -2,12 +2,34 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { parseActionIntoTasks } from '@/lib/utils/taskParser'
 
+function extractActions(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) =>
+        typeof entry === 'string'
+          ? entry.replace(/^[•\-\u2022\u2023\u25E6\u2043\s]+/, '').trim()
+          : '',
+      )
+      .filter((entry) => entry.length > 0)
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/[,;\n]/)
+      .map((entry) => entry.replace(/^[•\-\u2022\u2023\u25E6\u2043\s]+/, '').trim())
+      .filter((entry) => entry.length > 0)
+  }
+
+  return []
+}
+
 function toChecklistTaskPayload(action: string | undefined) {
   const parsed = parseActionIntoTasks(action ?? '')
   return parsed.length > 0
     ? parsed.map(task => ({
         name: task.task,
         status: task.status === 'done' ? 'COMPLETED' : 'PENDING',
+        actions: [] as string[],
       }))
     : []
 }
@@ -67,31 +89,77 @@ export async function POST(
       })
 
       // Determine source items: custom items (preferred) or template items
-      let sourceItems: Array<{ name: string; action?: string; order?: number }> = []
+      let sourceItems: Array<{
+        name: string
+        action?: string
+        order?: number
+        tasks?: Array<{ name?: string | null; details?: string | null }>
+      }> = []
       if (items && items.length > 0) {
         sourceItems = items
       } else if (templateId) {
         const template = await tx.checklist.findUnique({
           where: { id: templateId },
-          include: { items: true }
+          include: {
+            items: {
+              include: {
+                tasks: true,
+              },
+            },
+          },
         })
         if (!template) {
           throw new Error('Template not found')
         }
-        sourceItems = template.items.map(it => ({ name: it.name, action: it.action, order: it.order }))
-      }
+        sourceItems = template.items.map((it)=> ({
+          name: it.name,
+          action: it.action,
+          order: it.order,
+          tasks: Array.isArray((it as any).tasks) ? (it as any).tasks : undefined,
+        })) 
+      } 
 
       if (sourceItems.length > 0) {
         for (const [index, item] of sourceItems.entries()) {
-          const tasks = toChecklistTaskPayload(item.action)
+          const manualTaskEntries = Array.isArray((item as any).tasks)
+            ? (item as any).tasks
+                .map((task: any) => ({
+                  name: typeof task?.name === 'string' ? task.name.trim() : '',
+                  details: typeof task?.details === 'string' ? task.details.trim() : '',
+                  actions: Array.isArray(task?.actions) ? task.actions : undefined,
+                }))
+                .filter((entry: { name: string }) => entry.name.length > 0)
+            : []
+
+          const manualTasks = manualTaskEntries.map((entry:any) => ({
+            name: entry.name,
+            status: 'PENDING' as const,
+            actions: extractActions(entry.actions ?? entry.details),
+          }))
+
+          const tasks = manualTasks.length > 0
+            ? manualTasks
+            : toChecklistTaskPayload(item.action)
+
+          const manualRemarks = manualTaskEntries.map((entry : any) =>
+            entry.details ? `${entry.name} — ${entry.details}` : entry.name,
+          )
+
+          const remarksSource =
+            item.action ?? (manualRemarks.length > 0 ? manualRemarks.join('; ') : '')
+
           await tx.contractChecklistItem.create({
             data: {
               contractChecklistId: checklist.id,
               name: item.name,
               order: item.order ?? index + 1,
-              remarks: item.action ?? '',
+              remarks: remarksSource,
               checklistTasks: tasks.length > 0 ? {
-                create: tasks
+                create: tasks.map((task : any) => ({
+                  name: task.name,
+                  status: task.status,
+                  actions: Array.isArray(task.actions) ? task.actions : [],
+                }))
               } : undefined
             }
           })
@@ -126,7 +194,15 @@ export async function PUT(
   try {
     const { id: contractId } = await params
     const body = await request.json()
-    const { templateId, items } = body as { templateId?: string, items?: Array<{ name: string; action?: string; order?: number }> }
+    const { templateId, items } = body as {
+      templateId?: string
+      items?: Array<{
+        name: string
+        action?: string
+        order?: number
+        tasks?: Array<{ name?: string | null; details?: string | null; actions?: string[] | null }>
+      }>
+    }
 
     // Ensure contract exists
     const contract = await prisma.contract.findUnique({ where: { id: contractId } })
@@ -150,19 +226,49 @@ export async function PUT(
       if (items && items.length > 0) {
         await tx.contractChecklistItem.deleteMany({ where: { contractChecklistId: checklist.id } })
         for (const [index, item] of items.entries()) {
-          const tasks = toChecklistTaskPayload(item.action)
-          await tx.contractChecklistItem.create({
-            data: {
-              contractChecklistId: checklist!.id,
-              name: item.name,
-              order: item.order ?? index + 1,
-              remarks: item.action ?? '',
-              checklistTasks: tasks.length > 0 ? {
-                create: tasks
-              } : undefined
-            }
-          })
-        }
+        const manualTaskEntries = Array.isArray((item as any).tasks)
+          ? (item as any).tasks
+              .map((task: any) => ({
+                name: typeof task?.name === 'string' ? task.name.trim() : '',
+                details: typeof task?.details === 'string' ? task.details.trim() : '',
+                actions: Array.isArray(task?.actions) ? task.actions : undefined,
+              }))
+              .filter((entry: { name: string }) => entry.name.length > 0)
+          : []
+
+        const manualTasks = manualTaskEntries.map((entry : any) => ({
+          name: entry.name,
+          status: 'PENDING' as const,
+          actions: extractActions(entry.actions ?? entry.details),
+        }))
+
+        const tasks = manualTasks.length > 0
+          ? manualTasks
+          : toChecklistTaskPayload(item.action)
+
+        const manualRemarks = manualTaskEntries.map((entry: any ) =>
+          entry.details ? `${entry.name} — ${entry.details}` : entry.name,
+        )
+
+        const remarksSource =
+          item.action ?? (manualRemarks.length > 0 ? manualRemarks.join('; ') : '')
+
+        await tx.contractChecklistItem.create({
+          data: {
+            contractChecklistId: checklist!.id,
+            name: item.name,
+            order: item.order ?? index + 1,
+            remarks: remarksSource,
+            checklistTasks: tasks.length > 0 ? {
+              create: tasks.map((task:any) => ({
+                name: task.name,
+                status: task.status,
+                actions: Array.isArray(task.actions) ? task.actions : [],
+              }))
+            } : undefined
+          }
+        })
+      }
       }
 
       return await tx.contractChecklist.findUnique({

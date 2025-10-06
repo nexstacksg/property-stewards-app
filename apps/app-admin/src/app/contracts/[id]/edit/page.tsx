@@ -3,13 +3,31 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Loader2 } from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ArrowLeft, GripVertical, Loader2, Pencil, Plus, Trash2, X } from "lucide-react"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
 import { ContractEditForm } from "@/components/contracts/edit/contract-edit-form"
 import { ContractEditSummary } from "@/components/contracts/edit/contract-edit-summary"
 import { ContactPersonsCard } from "@/components/contracts/edit/contact-persons-card"
 import { StatusGuideCard } from "@/components/contracts/edit/status-guide-card"
+import { ChecklistTagLibrary } from "@/components/checklists/checklist-tag-library"
+import { parseActionIntoTasks } from "@/lib/utils/taskParser"
 import type {
   ChecklistDraftItem,
   ChecklistTemplate,
@@ -21,6 +39,114 @@ import type {
   ContractType,
   MarketingSource,
 } from "@/components/contracts/types"
+
+const CATEGORIES = [
+  "GENERAL",
+  "ELECTRICAL",
+  "PLUMBING",
+  "STRUCTURAL",
+  "SAFETY",
+  "EXTERIOR",
+  "INTERIOR",
+  "APPLIANCES",
+] as const
+
+const DEFAULT_CATEGORY = "GENERAL"
+
+const createEmptyTask = () => ({ name: "", details: "" })
+
+const createEmptyLocation = (order: number): ChecklistDraftItem => ({
+  item: "",
+  description: "",
+  category: DEFAULT_CATEGORY,
+  isRequired: true,
+  order,
+  tasks: [],
+})
+
+const sanitiseTasks = (tasks: NonNullable<ChecklistDraftItem["tasks"]>) =>
+  tasks
+    .map((task) => ({
+      ...task,
+      name: (task.name || "").trim(),
+      details: (task.details || "").trim(),
+    }))
+    .filter((task) => task.name.length > 0 || task.details.length > 0)
+
+const buildActionFromTasks = (tasks: NonNullable<ChecklistDraftItem["tasks"]>) =>
+  tasks
+    .map((task) => {
+      const name = task.name.trim()
+      const details = task.details.trim()
+      if (!name) return details
+      return details ? `${name}: ${details}` : name
+    })
+    .filter((entry) => entry.length > 0)
+    .join("; ")
+
+const parseActionToTasks = (action?: string | null) => {
+  if (!action) return [] as NonNullable<ChecklistDraftItem["tasks"]>
+  const parsed = parseActionIntoTasks(action)
+  return parsed
+    .map((task) => task.task.trim())
+    .filter((name) => name.length > 0 && name.toLowerCase() !== "others")
+    .map((name) => ({ name, details: "" }))
+}
+
+const parseRemarksToTasks = (remarks?: string | null) => {
+  if (!remarks) return [] as NonNullable<ChecklistDraftItem["tasks"]>
+
+  const segments = remarks
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+
+  const parsedSegments = segments
+    .map((segment) => {
+      const [namePart, ...rest] = segment.split(":")
+      const name = namePart.trim()
+      const details = rest.join(":").trim()
+      return {
+        name,
+        details,
+      }
+    })
+    .filter((entry) => entry.name.length > 0 || entry.details.length > 0)
+
+  if (parsedSegments.length > 0) {
+    return sanitiseTasks(parsedSegments)
+  }
+
+  return sanitiseTasks(parseActionToTasks(remarks))
+}
+
+const mapTemplateItemToDraft = (item: any, index: number): ChecklistDraftItem => {
+  const tasksFromTemplate = Array.isArray(item.tasks)
+    ? item.tasks
+        .map((task: any) => ({
+          name: typeof task?.name === "string" ? task.name.trim() : "",
+          details: Array.isArray(task?.actions)
+            ? task.actions.filter((detail: any) => typeof detail === "string").join(", ")
+            : typeof task?.details === "string"
+            ? task.details.trim()
+            : "",
+        }))
+        .filter((task) => task.name.length > 0 || task.details.length > 0)
+    : []
+
+  const rawTasks = tasksFromTemplate.length > 0 ? tasksFromTemplate : parseActionToTasks(item.action)
+  const tasks = sanitiseTasks(rawTasks)
+  const descriptionFromTasks = tasks.length > 0 ? buildActionFromTasks(tasks) : item.action || ""
+
+  return {
+    item: item.name || item.item || "",
+    description: descriptionFromTasks,
+    order: item.order ?? index + 1,
+    isRequired: item.isRequired ?? true,
+    category: item.category || DEFAULT_CATEGORY,
+    tasks,
+  }
+}
 
 interface ContractResponse {
   id: string
@@ -87,6 +213,15 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
   const [checklistItems, setChecklistItems] = useState<ChecklistDraftItem[]>([])
   const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
   const [rowEditItem, setRowEditItem] = useState<ChecklistDraftItem | null>(null)
+  const [rowTaskEditIndex, setRowTaskEditIndex] = useState<number | null>(null)
+  const [rowTaskDraft, setRowTaskDraft] = useState<{ name: string; details: string } | null>(null)
+
+  const [showLocationForm, setShowLocationForm] = useState(false)
+  const [newLocation, setNewLocation] = useState<ChecklistDraftItem>(
+    createEmptyLocation(1),
+  )
+  const [newTaskEditIndex, setNewTaskEditIndex] = useState<number | null>(null)
+  const [newTaskDraft, setNewTaskDraft] = useState<{ name: string; details: string } | null>(null)
 
   const [availableReferences, setAvailableReferences] = useState<ContractReferenceOption[]>([])
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([])
@@ -149,21 +284,33 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       try {
         const basedOnId = contract.basedOnChecklist?.id
         if (basedOnId) setSelectedTemplateId(basedOnId)
+        else setSelectedTemplateId("")
         const checklist = contract.contractChecklist
         if (checklist && Array.isArray(checklist.items)) {
           const items = checklist.items
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-            .map((item, index) => ({
-              item: item.name,
-              description: item.remarks || "",
-              order: item.order ?? index + 1,
-            }))
+            .map((item, index) => {
+              const tasks = parseRemarksToTasks(item.remarks)
+              return {
+                item: item.name,
+                description: item.remarks || "",
+                order: item.order ?? index + 1,
+                isRequired: true,
+                category: DEFAULT_CATEGORY,
+                tasks,
+              }
+            })
           setChecklistItems(items)
+          setNewLocation(createEmptyLocation(items.length + 1))
         } else {
           setChecklistItems([])
+          setNewLocation(createEmptyLocation(1))
         }
+        setShowLocationForm(false)
       } catch {
         setChecklistItems([])
+        setNewLocation(createEmptyLocation(1))
+        setShowLocationForm(false)
       }
 
       setLoading(false)
@@ -215,48 +362,56 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
     setSelectedTemplateId(templateId)
     if (!templateId) {
       setChecklistItems([])
+      setShowLocationForm(false)
+      setNewLocation(createEmptyLocation(1))
+      setNewTaskEditIndex(null)
+      setNewTaskDraft(null)
+      setRowEditIndex(null)
+      setRowEditItem(null)
+      setRowTaskEditIndex(null)
+      setRowTaskDraft(null)
       return
     }
+
     const local = templates.find((template) => template.id === templateId)
     if (local && Array.isArray(local.items)) {
-      const items = local.items.map((item: any, index: number) => ({
-        item: item.name,
-        description: item.action || "",
-        order: item.order ?? index + 1,
-        isRequired: true,
-      }))
+      const items = local.items.map((item: any, index: number) => mapTemplateItemToDraft(item, index))
       setChecklistItems(items)
+      setShowLocationForm(false)
+      setNewLocation(createEmptyLocation(items.length + 1))
+      setNewTaskEditIndex(null)
+      setNewTaskDraft(null)
+      setRowEditIndex(null)
+      setRowEditItem(null)
+      setRowTaskEditIndex(null)
+      setRowTaskDraft(null)
       return
     }
+
     try {
       const res = await fetch(`/api/checklists/${templateId}`)
       if (!res.ok) return
       const tpl = await res.json()
-      const items = (tpl.items || []).map((item: any, index: number) => ({
-        item: item.name,
-        description: item.action || "",
-        order: item.order ?? index + 1,
-        isRequired: true,
-      }))
+      const items = (tpl.items || []).map((item: any, index: number) => mapTemplateItemToDraft(item, index))
       setChecklistItems(items)
+      setShowLocationForm(false)
+      setNewLocation(createEmptyLocation(items.length + 1))
+      setNewTaskEditIndex(null)
+      setNewTaskDraft(null)
+      setRowEditIndex(null)
+      setRowEditItem(null)
+      setRowTaskEditIndex(null)
+      setRowTaskDraft(null)
     } catch {
       /* noop */
     }
   }
 
   const addBlankChecklistItem = () => {
-    const newItem: ChecklistDraftItem = {
-      item: "",
-      description: "",
-      order: 1,
-      isRequired: true,
-    }
-    setChecklistItems((previous) => {
-      const updated = [newItem, ...previous.map((item) => ({ ...item }))]
-      return updated.map((item, index) => ({ ...item, order: index + 1 }))
-    })
-    setRowEditIndex(0)
-    setRowEditItem({ ...newItem })
+    setShowLocationForm(true)
+    setNewLocation(createEmptyLocation(checklistItems.length + 1))
+    setNewTaskEditIndex(null)
+    setNewTaskDraft(null)
   }
 
   const moveChecklistItem = (index: number, direction: "up" | "down") => {
@@ -278,30 +433,216 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
     if (rowEditIndex === index) {
       setRowEditIndex(null)
       setRowEditItem(null)
+      setRowTaskEditIndex(null)
+      setRowTaskDraft(null)
+    } else if (rowEditIndex !== null && rowEditIndex > index) {
+      setRowEditIndex(rowEditIndex - 1)
+    }
+  }
+
+  const resetNewLocationForm = () => {
+    setShowLocationForm(false)
+    setNewLocation(createEmptyLocation(checklistItems.length + 1))
+    setNewTaskEditIndex(null)
+    setNewTaskDraft(null)
+  }
+
+  const addLocation = () => {
+    if (!newLocation.item.trim()) return
+
+    const sanitizedTasks = sanitiseTasks(newLocation.tasks ?? [])
+    const nextLocation: ChecklistDraftItem = {
+      ...newLocation,
+      item: newLocation.item.trim(),
+      category: newLocation.category || DEFAULT_CATEGORY,
+      isRequired: newLocation.isRequired ?? true,
+      order: checklistItems.length + 1,
+      tasks: sanitizedTasks,
+      description: buildActionFromTasks(sanitizedTasks),
+    }
+
+    setChecklistItems((previous) => [...previous, nextLocation])
+    resetNewLocationForm()
+  }
+
+  const addTaskToNewLocation = () => {
+    const nextIndex = (newLocation.tasks ?? []).length
+    setNewLocation((prev) => ({
+      ...prev,
+      tasks: [...(prev.tasks ?? []), createEmptyTask()],
+    }))
+    setNewTaskEditIndex(nextIndex)
+    setNewTaskDraft(createEmptyTask())
+  }
+
+  const startEditNewTask = (index: number) => {
+    const task = newLocation.tasks?.[index]
+    if (!task) return
+    setNewTaskEditIndex(index)
+    setNewTaskDraft({ ...task })
+  }
+
+  const updateNewTaskDraft = (field: "name" | "details", value: string) => {
+    setNewTaskDraft((prev) => (prev ? { ...prev, [field]: value } : prev))
+  }
+
+  const saveNewTaskEdit = (index: number) => {
+    if (newTaskDraft === null) return
+    const trimmedTask = {
+      name: newTaskDraft.name.trim(),
+      details: newTaskDraft.details.trim(),
+    }
+    setNewLocation((prev) => {
+      const nextTasks = [...(prev.tasks ?? [])]
+      nextTasks[index] = trimmedTask
+      return { ...prev, tasks: nextTasks }
+    })
+    setNewTaskEditIndex(null)
+    setNewTaskDraft(null)
+  }
+
+  const cancelNewTaskEdit = (index: number) => {
+    const task = newLocation.tasks?.[index]
+    const isNewTask = task && !task.name.trim() && !task.details.trim()
+    if (isNewTask) {
+      setNewLocation((prev) => ({
+        ...prev,
+        tasks: (prev.tasks ?? []).filter((_, taskIndex) => taskIndex !== index),
+      }))
+    }
+    setNewTaskEditIndex(null)
+    setNewTaskDraft(null)
+  }
+
+  const removeNewLocationTask = (index: number) => {
+    setNewLocation((prev) => ({
+      ...prev,
+      tasks: (prev.tasks ?? []).filter((_, taskIndex) => taskIndex !== index),
+    }))
+    if (newTaskEditIndex === index) {
+      setNewTaskEditIndex(null)
+      setNewTaskDraft(null)
+    } else if (newTaskEditIndex !== null && newTaskEditIndex > index) {
+      setNewTaskEditIndex(newTaskEditIndex - 1)
     }
   }
 
   const startRowEdit = (index: number) => {
+    const source = checklistItems[index]
     setRowEditIndex(index)
-    setRowEditItem({ ...checklistItems[index] })
+    setRowEditItem({
+      ...source,
+      tasks: (source.tasks ?? []).map((task) => ({ ...task })),
+      category: source.category || DEFAULT_CATEGORY,
+      isRequired: source.isRequired ?? true,
+    })
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
+  }
+
+  const addTaskToRowEdit = () => {
+    setRowEditItem((prev) => {
+      if (!prev) return prev
+      const nextTasks = [...(prev.tasks ?? []), createEmptyTask()]
+      setRowTaskEditIndex(nextTasks.length - 1)
+      setRowTaskDraft(createEmptyTask())
+      return { ...prev, tasks: nextTasks }
+    })
+  }
+
+  const startRowTaskEdit = (index: number) => {
+    const task = rowEditItem?.tasks?.[index]
+    if (!task) return
+    setRowTaskEditIndex(index)
+    setRowTaskDraft({ ...task })
+  }
+
+  const updateRowTaskDraft = (field: "name" | "details", value: string) => {
+    setRowTaskDraft((prev) => (prev ? { ...prev, [field]: value } : prev))
+  }
+
+  const saveRowTaskEdit = (index: number) => {
+    if (!rowTaskDraft) return
+    const trimmedTask = {
+      name: rowTaskDraft.name.trim(),
+      details: rowTaskDraft.details.trim(),
+    }
+    setRowEditItem((prev) => {
+      if (!prev) return prev
+      const nextTasks = [...(prev.tasks ?? [])]
+      nextTasks[index] = trimmedTask
+      return { ...prev, tasks: nextTasks }
+    })
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
+  }
+
+  const cancelRowTaskEdit = (index: number) => {
+    const task = rowEditItem?.tasks?.[index]
+    const isNewTask = task && !task.name.trim() && !task.details.trim()
+    if (isNewTask) {
+      setRowEditItem((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          tasks: (prev.tasks ?? []).filter((_, taskIndex) => taskIndex !== index),
+        }
+      })
+    }
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
+  }
+
+  const removeRowEditTask = (taskIndex: number) => {
+    setRowEditItem((prev) => {
+      if (!prev) return prev
+      const nextTasks = (prev.tasks ?? []).filter((_, index) => index !== taskIndex)
+      return { ...prev, tasks: nextTasks }
+    })
+    if (rowTaskEditIndex === taskIndex) {
+      setRowTaskEditIndex(null)
+      setRowTaskDraft(null)
+    } else if (rowTaskEditIndex !== null && rowTaskEditIndex > taskIndex) {
+      setRowTaskEditIndex(rowTaskEditIndex - 1)
+    }
   }
 
   const cancelRowEdit = () => {
     setRowEditIndex(null)
     setRowEditItem(null)
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
   }
 
   const saveRowEdit = () => {
     if (rowEditIndex === null || !rowEditItem) return
+    if (!rowEditItem.item.trim()) return
+    if (rowTaskEditIndex !== null) return
+
+    const sanitizedTasks = sanitiseTasks(rowEditItem.tasks ?? [])
     const items = [...checklistItems]
-    items[rowEditIndex] = { ...rowEditItem, order: rowEditIndex + 1 }
+    items[rowEditIndex] = {
+      ...rowEditItem,
+      item: rowEditItem.item.trim(),
+      category: rowEditItem.category || DEFAULT_CATEGORY,
+      isRequired: rowEditItem.isRequired ?? true,
+      tasks: sanitizedTasks,
+      description: buildActionFromTasks(sanitizedTasks),
+      order: rowEditIndex + 1,
+    }
     setChecklistItems(items)
-    setRowEditIndex(null)
-    setRowEditItem(null)
+    cancelRowEdit()
   }
 
   const handleRowEditChange = (updates: Partial<ChecklistDraftItem>) => {
-    setRowEditItem((previous) => (previous ? { ...previous, ...updates } : previous))
+    setRowEditItem((previous) =>
+      previous
+        ? {
+            ...previous,
+            ...updates,
+          }
+        : previous,
+    )
   }
 
   const applyTagToChecklist = (label: string) => {
@@ -309,22 +650,24 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
     if (!trimmed) return
 
     if (rowEditIndex !== null) {
-      setRowEditItem((previous) => (previous ? { ...previous, item: trimmed } : previous))
+      setRowEditItem((previous) =>
+        previous
+          ? {
+              ...previous,
+              item: trimmed,
+            }
+          : previous,
+      )
       return
     }
 
-    const newItem: ChecklistDraftItem = {
+    setShowLocationForm(true)
+    setNewTaskEditIndex(null)
+    setNewTaskDraft(null)
+    setNewLocation(() => ({
+      ...createEmptyLocation(checklistItems.length + 1),
       item: trimmed,
-      description: "",
-      order: 1,
-      isRequired: true,
-    }
-    setChecklistItems((previous) => {
-      const updated = [newItem, ...previous.map((item) => ({ ...item }))]
-      return updated.map((item, index) => ({ ...item, order: index + 1 }))
-    })
-    setRowEditIndex(0)
-    setRowEditItem({ ...newItem })
+    }))
   }
 
   const beginAddContactPerson = () => {
@@ -488,9 +831,18 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
             body: JSON.stringify({
               templateId: selectedTemplateId || undefined,
               items: checklistItems.map((item, index) => ({
-                name: item.item,
-                action: item.description,
+                name: item.item.trim(),
+                action:
+                  buildActionFromTasks(sanitiseTasks(item.tasks ?? [])) ||
+                  item.description.trim(),
                 order: index + 1,
+                category: item.category || DEFAULT_CATEGORY,
+                isRequired: item.isRequired ?? true,
+                tasks: sanitiseTasks(item.tasks ?? []).map((task, taskIndex) => ({
+                  name: task.name.trim(),
+                  details: task.details.trim(),
+                  order: taskIndex + 1,
+                })),
               })),
             }),
           })
@@ -569,21 +921,459 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                   availableReferences={availableReferences}
                   selectedReferenceIds={selectedReferenceIds}
                   onReferenceIdsChange={setSelectedReferenceIds}
-                  templates={templates}
-                  selectedTemplateId={selectedTemplateId}
-                  checklistItems={checklistItems}
-                  rowEditIndex={rowEditIndex}
-                  rowEditItem={rowEditItem}
-                  onSelectTemplate={loadTemplate}
-                  onAddBlankItem={addBlankChecklistItem}
-                  onMoveItem={moveChecklistItem}
-                  onRemoveItem={removeChecklistItem}
-                  onStartEdit={startRowEdit}
-                  onCancelEdit={cancelRowEdit}
-                  onSaveEdit={saveRowEdit}
-                  onRowEditChange={handleRowEditChange}
-                  onApplyTag={applyTagToChecklist}
                 />
+
+                <div className="border rounded-lg p-4 space-y-4 mt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold">Checklist Locations</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Select a template or edit locations and tasks for this contract
+                      </p>
+                    </div>
+                    <Select value={selectedTemplateId} onValueChange={loadTemplate}>
+                      <SelectTrigger className="w-[220px]">
+                        <SelectValue placeholder="Load template..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {templates.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            {template.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <ChecklistTagLibrary onApplyTag={applyTagToChecklist} />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addBlankChecklistItem}
+                      disabled={showLocationForm || newTaskEditIndex !== null}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Location
+                    </Button>
+                  </div>
+
+                  {showLocationForm && (
+                    <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Location *</Label>
+                          <Input
+                            value={newLocation.item}
+                            onChange={(event) =>
+                              setNewLocation((prev) => ({
+                                ...prev,
+                                item: event.target.value,
+                              }))
+                            }
+                            placeholder="e.g., Balcony"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Category *</Label>
+                          <Select
+                            value={newLocation.category || DEFAULT_CATEGORY}
+                            onValueChange={(value) =>
+                              setNewLocation((prev) => ({
+                                ...prev,
+                                category: value,
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {CATEGORIES.map((category) => (
+                                <SelectItem key={category} value={category}>
+                                  {category}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex items-center gap-2 md:col-span-2">
+                          <input
+                            type="checkbox"
+                            id="edit-new-location-required"
+                            checked={newLocation.isRequired ?? true}
+                            onChange={(event) =>
+                              setNewLocation((prev) => ({
+                                ...prev,
+                                isRequired: event.target.checked,
+                              }))
+                            }
+                            className="rounded"
+                          />
+                          <Label htmlFor="edit-new-location-required">Required Location</Label>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label className="font-medium">Tasks</Label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={addTaskToNewLocation}
+                            disabled={newTaskEditIndex !== null}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add Task
+                          </Button>
+                        </div>
+
+                        {(newLocation.tasks ?? []).length === 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Add the task names and optional details inspectors should follow for this location.
+                          </p>
+                        )}
+
+                        {(newLocation.tasks ?? []).map((task, index) => {
+                          const isEditing = newTaskEditIndex === index
+                          const draftTask = isEditing && newTaskDraft ? newTaskDraft : task
+
+                          return (
+                            <div key={`edit-new-task-${index}`} className="border rounded-md p-3">
+                              {isEditing ? (
+                                <div className="space-y-3">
+                                  <div className="space-y-2">
+                                    <Label>Task Name *</Label>
+                                    <Input
+                                      value={draftTask.name}
+                                      onChange={(event) => updateNewTaskDraft("name", event.target.value)}
+                                      placeholder="e.g., Inspect railings"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Details (optional)</Label>
+                                    <Input
+                                      value={draftTask.details}
+                                      onChange={(event) => updateNewTaskDraft("details", event.target.value)}
+                                      placeholder="e.g., Check stability, Look for rust"
+                                    />
+                                  </div>
+                                  <div className="flex justify-end gap-2">
+                                    <Button type="button" variant="outline" size="sm" onClick={() => cancelNewTaskEdit(index)}>
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      onClick={() => saveNewTaskEdit(index)}
+                                      disabled={!draftTask.name.trim()}
+                                    >
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-sm">{task.name.trim() || "Untitled task"}</p>
+                                    {task.details.trim() && (
+                                      <p className="text-xs text-muted-foreground">{task.details.trim()}</p>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => startEditNewTask(index)}
+                                      aria-label="Edit task"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => removeNewLocationTask(index)}
+                                      aria-label="Delete task"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={resetNewLocationForm}>
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={addLocation}
+                          disabled={!newLocation.item.trim() || newTaskEditIndex !== null}
+                        >
+                          Add Location
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {checklistItems.length > 0 ? (
+                    <div className="space-y-2">
+                      {checklistItems.map((location, index) => {
+                        const taskSummaries = (location.tasks ?? [])
+                          .map((task) => {
+                            const name = task.name.trim()
+                            const details = task.details.trim()
+                            if (!name && !details) return ""
+                            return details ? `${name} (${details})` : name
+                          })
+                          .filter((entry) => entry.length > 0)
+
+                        return (
+                          <div
+                            key={location.item ? `${location.item}-${index}` : `location-${index}`}
+                            className="border rounded-lg p-3 flex items-start gap-2"
+                          >
+                            <div className="flex flex-col gap-1 pt-1">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => moveChecklistItem(index, "up")}
+                                disabled={index === 0}
+                              >
+                                ↑
+                              </Button>
+                              <GripVertical className="h-4 w-4 text-muted-foreground mx-auto" />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => moveChecklistItem(index, "down")}
+                                disabled={index === checklistItems.length - 1}
+                              >
+                                ↓
+                              </Button>
+                            </div>
+
+                            <div className="flex-1">
+                              {rowEditIndex === index ? (
+                                <div className="space-y-4">
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-1">
+                                      <Label>Location *</Label>
+                                      <Input
+                                        value={rowEditItem?.item || ""}
+                                        onChange={(event) => handleRowEditChange({ item: event.target.value })}
+                                      />
+                                    </div>
+                                    <div className="space-y-1">
+                                      <Label>Category</Label>
+                                      <Select
+                                        value={rowEditItem?.category || DEFAULT_CATEGORY}
+                                        onValueChange={(value) => handleRowEditChange({ category: value })}
+                                      >
+                                        <SelectTrigger>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {CATEGORIES.map((category) => (
+                                            <SelectItem key={category} value={category}>
+                                              {category}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="flex items-center gap-2 md:col-span-2">
+                                      <input
+                                        type="checkbox"
+                                        id={`edit-location-required-${index}`}
+                                        checked={rowEditItem?.isRequired ?? true}
+                                        onChange={(event) => handleRowEditChange({ isRequired: event.target.checked })}
+                                        className="rounded"
+                                      />
+                                      <Label htmlFor={`edit-location-required-${index}`}>
+                                        Required Location
+                                      </Label>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                      <Label className="font-medium">Tasks</Label>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={addTaskToRowEdit}
+                                        disabled={rowTaskEditIndex !== null}
+                                      >
+                                        <Plus className="h-4 w-4 mr-2" />
+                                        Add Task
+                                      </Button>
+                                    </div>
+
+                                    {(!rowEditItem?.tasks || rowEditItem.tasks.length === 0) && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Add at least one task to describe what needs to be inspected.
+                                      </p>
+                                    )}
+
+                                    {rowEditItem?.tasks?.map((task, taskIndex) => {
+                                      const isEditing = rowTaskEditIndex === taskIndex
+                                      const draftTask = isEditing && rowTaskDraft ? rowTaskDraft : task
+
+                                      return (
+                                        <div
+                                          key={task.id || `edit-task-${taskIndex}`}
+                                          className="border rounded-md p-3"
+                                        >
+                                          {isEditing ? (
+                                            <div className="space-y-3">
+                                              <div className="space-y-2">
+                                                <Label>Task Name *</Label>
+                                                <Input
+                                                  value={draftTask.name}
+                                                  onChange={(event) => updateRowTaskDraft("name", event.target.value)}
+                                                  placeholder="e.g., Inspect balcony doors"
+                                                />
+                                              </div>
+                                              <div className="space-y-2">
+                                                <Label>Details (optional)</Label>
+                                                <Input
+                                                  value={draftTask.details}
+                                                  onChange={(event) => updateRowTaskDraft("details", event.target.value)}
+                                                  placeholder="e.g., Check alignment, Test locks"
+                                                />
+                                              </div>
+                                              <div className="flex justify-end gap-2">
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="sm"
+                                                  onClick={() => cancelRowTaskEdit(taskIndex)}
+                                                >
+                                                  Cancel
+                                                </Button>
+                                                <Button
+                                                  type="button"
+                                                  size="sm"
+                                                  onClick={() => saveRowTaskEdit(taskIndex)}
+                                                  disabled={!draftTask.name.trim()}
+                                                >
+                                                  Save
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-start justify-between gap-3">
+                                              <div className="space-y-1">
+                                                <p className="font-medium text-sm">{task.name.trim() || "Untitled task"}</p>
+                                                {task.details.trim() && (
+                                                  <p className="text-xs text-muted-foreground">{task.details.trim()}</p>
+                                                )}
+                                              </div>
+                                              <div className="flex gap-1">
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  onClick={() => startRowTaskEdit(taskIndex)}
+                                                  aria-label="Edit task"
+                                                >
+                                                  <Pencil className="h-4 w-4" />
+                                                </Button>
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  onClick={() => removeRowEditTask(taskIndex)}
+                                                  aria-label="Delete task"
+                                                >
+                                                  <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+
+                                  <div className="flex justify-end gap-2">
+                                    <Button type="button" variant="outline" size="sm" onClick={cancelRowEdit}>
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      onClick={saveRowEdit}
+                                      disabled={!rowEditItem?.item.trim() || rowTaskEditIndex !== null}
+                                    >
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between gap-4">
+                                  <div>
+                                    <p className="font-medium">{location.order}. {location.item}</p>
+                                    <p className="text-sm text-muted-foreground">
+                                      {taskSummaries.length > 0 ? taskSummaries.join(", ") : "No tasks configured"}
+                                    </p>
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                      <Badge variant={location.isRequired ? "default" : "secondary"}>
+                                        {location.isRequired ? "Required" : "Optional"}
+                                      </Badge>
+                                      <Badge variant="outline">{location.category || DEFAULT_CATEGORY}</Badge>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => startRowEdit(index)}
+                                      aria-label="Edit location"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => removeChecklistItem(index)}
+                                      aria-label="Remove location"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    !showLocationForm && (
+                      <p className="text-sm text-muted-foreground">
+                        No locations configured yet. Load a template or add one manually.
+                      </p>
+                    )
+                  )}
+                </div>
               </CardContent>
             </Card>
           </div>
