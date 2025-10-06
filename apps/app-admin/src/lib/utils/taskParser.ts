@@ -17,10 +17,25 @@ export function parseActionIntoTasks(action: string): Task[] {
   if (!action) {
     return [{ task: 'Others', status: 'pending' }];
   }
-  
+
+  const normalized = action.replace(/\r/g, '').trim();
+
+  if (normalized.includes(';') || normalized.includes('\n')) {
+    const segments = normalized
+      .split(/[;\n]/)
+      .map(segment => segment.trim())
+      .filter(segment => segment.length > 0);
+
+    if (segments.length > 0) {
+      const tasks: Task[] = segments.map(name => ({ task: name, status: 'pending' }));
+      ensureOthersTask(tasks);
+      return tasks;
+    }
+  }
+
   // Common action verbs that start inspection tasks
   const actionVerbs = ['check', 'inspect', 'test', 'verify', 'examine', 'assess', 'review'];
-  
+
   // Find if the action starts with a common verb
   const lowerAction = action.toLowerCase();
   let verb = '';

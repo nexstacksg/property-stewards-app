@@ -1,36 +1,179 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { parseActionIntoTasks } from '@/lib/utils/taskParser'
-import type { Task as ParsedTask } from '@/lib/utils/taskParser'
 
-type TaskSeed = {
-  itemId: string
+type LocationSeed = {
   name: string
-  tasks?: ParsedTask[]
+  subtasks: string[]
 }
 
-async function ensureTasksForItem(itemId: string, name: string, tasks?: ParsedTask[]) {
-  const taskDelegate = (prisma as any).checklistTask
-  if (!taskDelegate) {
-    throw new Error('ChecklistTask model not available. Run `pnpm prisma generate` after updating the schema.')
+function extractActionStrings(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) =>
+        typeof entry === 'string'
+          ? entry.replace(/^[•\-\u2022\u2023\u25E6\u2043\s]+/, '').trim()
+          : '',
+      )
+      .filter((entry) => entry.length > 0)
   }
 
-  const existingTasks = await taskDelegate.count({ where: { itemId } })
-  if (existingTasks > 0) {
+  if (typeof value === 'string') {
+    return value
+      .split(/[,;\n]/)
+      .map((entry) => entry.replace(/^[•\-\u2022\u2023\u25E6\u2043\s]+/, '').trim())
+      .filter((entry) => entry.length > 0)
+  }
+
+  return []
+}
+
+function normaliseSubTasks(fallbackName: string, fallbackSource?: string | string[]): string[] {
+  let entries: string[] = []
+
+  if (Array.isArray(fallbackSource)) {
+    entries = fallbackSource
+      .filter((entry) => typeof entry === 'string')
+      .map((entry: string) => entry.trim())
+      .filter((entry) => entry.length > 0)
+  } else if (typeof fallbackSource === 'string') {
+    entries = extractActionStrings(fallbackSource)
+  }
+
+  if (entries.length === 0) {
+    const baseName = fallbackName && fallbackName.trim().length > 0 ? fallbackName.trim() : 'Inspect area'
+    entries = [baseName]
+  }
+
+  const unique = Array.from(new Set(entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0)))
+
+  return unique.length > 0 ? unique : [fallbackName && fallbackName.trim().length > 0 ? fallbackName.trim() : 'Inspect area']
+}
+
+async function ensureLocationsForItem(itemId: string, fallbackName: string, seeds?: LocationSeed[]) {
+  const locationDelegate = (prisma as any).contractChecklistLocation
+  const taskDelegate = (prisma as any).checklistTask
+
+  if (!locationDelegate || !taskDelegate) {
+    throw new Error('Checklist location/task delegates unavailable. Run `pnpm prisma generate`.')
+  }
+
+  const existingLocations = await locationDelegate.count({ where: { itemId } })
+  if (existingLocations > 0) {
     return
   }
 
-  const parsed = Array.isArray(tasks) && tasks.length > 0
-    ? tasks
-    : [{ task: name || 'Inspect area', status: 'pending' as const }]
+  const fallbackSeed: LocationSeed = {
+    name: fallbackName && fallbackName.trim().length > 0 ? fallbackName.trim() : 'General',
+    subtasks: normaliseSubTasks(fallbackName, undefined),
+  }
 
-  await Promise.all(parsed.map((task) => taskDelegate.create({
-    data: {
-      itemId,
-      name: task.task,
-      status: task.status === 'done' ? 'COMPLETED' : 'PENDING'
+  const finalSeeds: LocationSeed[] = Array.isArray(seeds) && seeds.length > 0 ? seeds : [fallbackSeed]
+
+  const existingTasks = await taskDelegate.findMany({ where: { itemId } })
+
+  let order = 1
+
+  if (existingTasks.length > 0) {
+    const [firstSeed, ...remainingSeeds] = finalSeeds
+    const primarySeed = firstSeed ?? fallbackSeed
+
+    const primaryLocation = await locationDelegate.create({
+      data: {
+        itemId,
+        name: primarySeed.name,
+        status: 'PENDING',
+        order: order++,
+      },
+    })
+
+    await taskDelegate.updateMany({
+      where: { itemId },
+      data: { locationId: primaryLocation.id },
+    })
+
+    for (const seed of remainingSeeds) {
+      const location = await locationDelegate.create({
+        data: {
+          itemId,
+          name: seed.name,
+          status: 'PENDING',
+          order: order++,
+        },
+      })
+
+      for (const subtaskName of seed.subtasks) {
+        await taskDelegate.create({
+          data: {
+            itemId,
+            locationId: location.id,
+            name: subtaskName,
+            status: 'PENDING',
+          },
+        })
+      }
     }
-  })))
+
+    return
+  }
+
+  for (const seed of finalSeeds) {
+    const location = await locationDelegate.create({
+      data: {
+        itemId,
+        name: seed.name,
+        status: 'PENDING',
+        order: order++,
+      },
+    })
+
+    for (const subtaskName of seed.subtasks) {
+      await taskDelegate.create({
+        data: {
+          itemId,
+          locationId: location.id,
+          name: subtaskName,
+          status: 'PENDING',
+        },
+      })
+    }
+  }
+}
+
+function deriveLocationSeeds(
+  sourceTasks: Array<{ name?: string | null; actions?: any; details?: string | null }>,
+  fallbackName: string,
+  fallbackActions?: string | string[] | null,
+): LocationSeed[] {
+  const seeds: LocationSeed[] = []
+
+  for (const rawTask of sourceTasks) {
+    const taskName = typeof rawTask?.name === 'string' ? rawTask.name.trim() : ''
+    const locationName = taskName.length > 0 ? taskName : fallbackName
+
+    const actionStrings = Array.isArray(rawTask?.actions)
+      ? rawTask.actions
+      : typeof rawTask?.details === 'string'
+      ? rawTask.details
+      : undefined
+
+    const subtasks = extractActionStrings(actionStrings)
+    const uniqueSubtasks = Array.from(new Set(subtasks.map((entry) => entry.trim()).filter((entry) => entry.length > 0)))
+
+    seeds.push({
+      name: locationName,
+      subtasks: uniqueSubtasks.length > 0 ? uniqueSubtasks : [locationName],
+    })
+  }
+
+  if (seeds.length === 0) {
+    const fallbackSubtasks = normaliseSubTasks(fallbackName, fallbackActions)
+    seeds.push({
+      name: fallbackName,
+      subtasks: fallbackSubtasks,
+    })
+  }
+
+  return seeds
 }
 
 // GET /api/work-orders - Get all work orders
@@ -159,7 +302,14 @@ export async function POST(request: NextRequest) {
           contractChecklist: true,
           basedOnChecklist: {
             include: {
-              items: true
+              items: {
+                orderBy: { order: 'asc' },
+                include: {
+                  tasks: {
+                    orderBy: { order: 'asc' }
+                  }
+                }as any
+              }
             }
           }
         }
@@ -216,15 +366,20 @@ export async function POST(request: NextRequest) {
 
     // Precompute checklist items outside of transaction to avoid timeouts
     const itemsFromTemplate = (!contract.contractChecklist && contract.basedOnChecklist?.items?.length)
-      ? contract.basedOnChecklist.items.map(item => ({
-          name: item.name,
-          order: item.order,
-          remarks: item.action,
-          tasks: parseActionIntoTasks(item.action)
-        }))
-      : []
+      ? contract.basedOnChecklist.items.map((item: any) => {
+          const templateTasks = Array.isArray((item as any).tasks) ? (item as any).tasks : []
+          const fallbackAction = typeof (item as any)?.action === 'string' ? (item as any).action : undefined
+          const locations = deriveLocationSeeds(templateTasks, item.name, fallbackAction)
+          const originalRemarks = typeof (item as any)?.remarks === 'string' ? (item as any).remarks : undefined
 
-    const taskSeedQueue: TaskSeed[] = []
+          return {
+            name: item.name,
+            order: item.order,
+            remarks: originalRemarks || undefined,
+            locations,
+          }
+        })
+      : []
 
     // Create work order in a transaction (with extended timeout)
     const transactionResult = await prisma.$transaction(async (tx) => {
@@ -248,7 +403,29 @@ export async function POST(request: NextRequest) {
                 order: templateItem.order,
               }
             })
-            taskSeedQueue.push({ itemId: createdItem.id, name: templateItem.name, tasks: templateItem.tasks })
+
+            let locationOrder = 1
+            for (const seed of templateItem.locations) {
+              const location = await tx.contractChecklistLocation.create({
+                data: {
+                  itemId: createdItem.id,
+                  name: seed.name,
+                  status: 'PENDING',
+                  order: locationOrder++,
+                },
+              })
+
+              for (const subtaskName of seed.subtasks) {
+                await tx.checklistTask.create({
+                  data: {
+                    itemId: createdItem.id,
+                    locationId: location.id,
+                    name: subtaskName,
+                    status: 'PENDING',
+                  },
+                })
+              }
+            }
           }
         }
       }
@@ -273,7 +450,23 @@ export async function POST(request: NextRequest) {
               contractChecklist: {
                 include: {
                   items: {
-                    orderBy: { order: 'asc' }
+                    orderBy: { order: 'asc' },
+                    include: {
+                      locations: {
+                        orderBy: { order: 'asc' },
+                        include: {
+                          tasks: {
+                            orderBy: { createdOn: 'asc' }
+                          }
+                        }
+                      },
+                      checklistTasks: {
+                        orderBy: { createdOn: 'asc' },
+                        include: {
+                          location: true,
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -284,31 +477,29 @@ export async function POST(request: NextRequest) {
       })
       
       return { workOrder: newWorkOrder, contractChecklistId: contractChecklist?.id }
-    }, { timeout: 20000, maxWait: 10000 })
+    }, { timeout: 60000, maxWait: 20000 })
 
     if (transactionResult?.contractChecklistId) {
       const checklistItems = await prisma.contractChecklistItem.findMany({
         where: { contractChecklistId: transactionResult.contractChecklistId },
-        select: { id: true, name: true }
+        select: { id: true, name: true, remarks: true }
       })
 
-      const templateLookup = new Map((contract.basedOnChecklist?.items || []).map((item) => [item.name, item]))
-
-      const dedupe = new Map<string, TaskSeed>()
-      for (const seed of taskSeedQueue) {
-        dedupe.set(seed.itemId, seed)
-      }
+      const templateLookup = new Map(
+        (contract.basedOnChecklist?.items || []).map((item) => {
+          const templateTasks = Array.isArray((item as any).tasks) ? (item as any).tasks : []
+          const fallbackAction = typeof (item as any)?.action === 'string' ? (item as any).action : undefined
+          return [
+            typeof item.name === 'string' ? item.name.trim().toLowerCase() : '',
+            deriveLocationSeeds(templateTasks, item.name, fallbackAction),
+          ]
+        }),
+      )
 
       for (const item of checklistItems) {
-        if (!dedupe.has(item.id)) {
-          const templateMatch = templateLookup.get(item.name)
-          const tasks = templateMatch ? parseActionIntoTasks(templateMatch.action || '') : []
-          dedupe.set(item.id, { itemId: item.id, name: item.name, tasks })
-        }
-      }
-
-      for (const seed of dedupe.values()) {
-        await ensureTasksForItem(seed.itemId, seed.name, seed.tasks)
+        const templateSeeds = templateLookup.get(item.name?.trim().toLowerCase() || '')
+        const fallbackSeeds = templateSeeds ?? deriveLocationSeeds([], item.name, item.remarks)
+        await ensureLocationsForItem(item.id, item.name, fallbackSeeds)
       }
     }
 

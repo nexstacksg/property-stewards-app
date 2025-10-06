@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
-export const COLUMN_WIDTHS = [40, 170, 100, 225]
+export const COLUMN_WIDTHS = [40, 95, 150, 90, 150]
 export const TABLE_MARGIN = 36
 const TABLE_WIDTH = COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0)
 const CELL_PADDING = 8
@@ -107,7 +107,7 @@ type TableCell = {
   segments?: CellSegment[]
 }
 
-type TableRow = [TableCell, TableCell, TableCell, TableCell]
+type TableRow = [TableCell, TableCell, TableCell, TableCell, TableCell]
 
 type TableRowInfo = {
   cells: TableRow

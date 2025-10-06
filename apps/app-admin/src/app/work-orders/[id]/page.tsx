@@ -63,6 +63,15 @@ async function getWorkOrder(id: string) {
                     include: {
                       entries: {
                         select: { id: true }
+                      },
+                      location: true
+                    }
+                  },
+                  locations: {
+                    orderBy: { order: 'asc' },
+                    include: {
+                      tasks: {
+                        orderBy: { createdOn: 'asc' }
                       }
                     }
                   }
@@ -138,9 +147,20 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
   // Calculate sub-items from checklist tasks if available, otherwise fallback to remarks parsing
   let totalSubItems = 0
   checklistItems.forEach((item: any) => {
-    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
-    if (tasks.length > 0) {
-      totalSubItems += tasks.length
+    const locations = Array.isArray(item.locations) ? item.locations : []
+    const locationTaskCount = locations.reduce((count: number, location: any) => {
+      const subtasks = Array.isArray(location?.tasks) ? location.tasks : []
+      return count + subtasks.length
+    }, 0)
+
+    if (locationTaskCount > 0) {
+      totalSubItems += locationTaskCount
+      return
+    }
+
+    const fallbackTasks = Array.isArray(item.checklistTasks) ? item.checklistTasks.length : 0
+    if (fallbackTasks > 0) {
+      totalSubItems += fallbackTasks
       return
     }
 
@@ -409,23 +429,44 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                   </TableHeader>
                   <TableBody>
                     {checklistItems.map((item: any, index: number) => {
-                      const primaryTasks = Array.isArray(item.checklistTasks)
-                        ? item.checklistTasks
-                        : []
-                      const taskNames = primaryTasks
-                        .map((task: any) => task?.name)
-                        .filter((name: string | null | undefined) => Boolean(name))
-                      const hasTasks = taskNames.length > 0
-                      const taskLine = hasTasks ? taskNames.map((name: string) => `• ${name}`).join('  ') : ''
+                      const locations = Array.isArray(item.locations) ? item.locations : []
+                      const locationTasks = locations.flatMap((location: any) =>
+                        Array.isArray(location?.tasks) ? location.tasks : [],
+                      )
+
+                      const fallbackTasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+
+                      const locationSummaries = locations
+                        .map((location: any) => {
+                          const name = typeof location?.name === 'string' ? location.name.trim() : ''
+                          const subtasks = Array.isArray(location?.tasks)
+                            ? location.tasks
+                                .map((task: any) => (typeof task?.name === 'string' ? task.name.trim() : ''))
+                                .filter((entry: string) => entry.length > 0)
+                            : []
+                          if (name && subtasks.length > 0) {
+                            return `${name}: ${subtasks.join(', ')}`
+                          }
+                          if (name) return name
+                          if (subtasks.length > 0) return subtasks.join(', ')
+                          return ''
+                        })
+                        .filter((entry: string) => entry.length > 0)
+
+                      const fallbackNames = fallbackTasks
+                        .map((task: any) => (typeof task?.name === 'string' ? task.name.trim() : ''))
+                        .filter((entry: string) => entry.length > 0)
+
                       const description = typeof item.description === 'string' ? item.description.trim() : ''
                       const checklistRemarks = typeof item.remarks === 'string' ? item.remarks.trim() : ''
 
                       const uploadTarget = item?.contractChecklistId ? 'item' : 'task'
 
                       const itemPhotos = Array.isArray(item.photos) ? item.photos : []
-                      const taskPhotos = Array.isArray(item.checklistTasks)
-                        ? item.checklistTasks.flatMap((task: any) => task.photos || [])
-                        : []
+                      const taskPhotosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
+                      const taskPhotos = taskPhotosSource.flatMap((task: any) =>
+                        Array.isArray(task?.photos) ? task.photos : [],
+                      )
                       const contributionPhotos = (item.contributions || []).flatMap((entry: any) => {
                         const entryPhotos = Array.isArray(entry.photos) ? entry.photos : []
                         const taskPhotosFromEntry = entry.task && Array.isArray(entry.task.photos) ? entry.task.photos : []
@@ -434,9 +475,10 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                       const combinedPhotos = Array.from(new Set([...itemPhotos, ...taskPhotos, ...contributionPhotos]))
 
                       const itemVideos = Array.isArray(item.videos) ? item.videos : []
-                      const taskVideos = Array.isArray(item.checklistTasks)
-                        ? item.checklistTasks.flatMap((task: any) => task.videos || [])
-                        : []
+                      const taskVideosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
+                      const taskVideos = taskVideosSource.flatMap((task: any) =>
+                        Array.isArray(task?.videos) ? task.videos : [],
+                      )
                       const contributionVideos = (item.contributions || []).flatMap((entry: any) => {
                         const entryVideos = Array.isArray(entry.videos) ? entry.videos : []
                         const taskVideosFromEntry = entry.task && Array.isArray(entry.task.videos) ? entry.task.videos : []
@@ -457,31 +499,24 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                   {item.category}
                                 </Badge>
                               )}
-                              {hasTasks ? (
-                                <>
-                                  <p className="text-sm text-muted-foreground mt-1">
-                                    {taskLine}
-                                  </p>
-                                  {checklistRemarks && (
-                                    <p className="text-sm text-muted-foreground/80 italic mt-1">
-                                      {checklistRemarks}
-                                    </p>
-                                  )}
-                                </>
-                              ) : (
-                                <>
-                                  {description && (
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                      {description}
-                                    </p>
-                                  )}
-                                  {checklistRemarks && (
-                                    <p className="text-sm text-muted-foreground/80 italic mt-1">
-                                      {checklistRemarks}
-                                    </p>
-                                  )}
-                                </>
+                              {locationSummaries.length > 0 && (
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  {locationSummaries.map((summary) => `• ${summary}`).join('  ')}
+                                </p>
                               )}
+                              {locationSummaries.length === 0 && fallbackNames.length > 0 && (
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  {fallbackNames.map((name) => `• ${name}`).join('  ')}
+                                </p>
+                              )}
+                              {/* {description && (
+                                <p className="text-sm text-muted-foreground mt-1">{description}</p>
+                              )}
+                              {checklistRemarks && (
+                                <p className="text-sm text-muted-foreground/80 italic mt-1">
+                                  {checklistRemarks}
+                                </p>
+                              )} */}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -514,6 +549,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 workOrderId={workOrder.id}
                                 entries={item.contributions || []}
                                 tasks={item.checklistTasks || []}
+                                locations={item.locations || []}
                                 itemName={item.name || item.item}
                               />
                             </div>

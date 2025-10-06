@@ -10,10 +10,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { DatePicker } from "@/components/ui/date-picker"
-import { ChecklistEditor } from "@/components/contracts/new/checklist-editor"
 import type {
-  ChecklistDraftItem,
-  ChecklistTemplate,
   ContractAddressSummary,
   ContractCustomerSummary,
   ContractReferenceOption,
@@ -53,20 +50,6 @@ interface ContractEditFormProps {
   availableReferences: ContractReferenceOption[]
   selectedReferenceIds: string[]
   onReferenceIdsChange: (ids: string[]) => void
-  templates: ChecklistTemplate[]
-  selectedTemplateId: string
-  checklistItems: ChecklistDraftItem[]
-  rowEditIndex: number | null
-  rowEditItem: ChecklistDraftItem | null
-  onSelectTemplate: (templateId: string) => void
-  onAddBlankItem: () => void
-  onMoveItem: (index: number, direction: "up" | "down") => void
-  onRemoveItem: (index: number) => void
-  onStartEdit: (index: number) => void
-  onCancelEdit: () => void
-  onSaveEdit: () => void
-  onRowEditChange: (updates: Partial<ChecklistDraftItem>) => void
-  onApplyTag: (label: string) => void
 }
 
 const STATUS_OPTIONS: ContractStatus[] = [
@@ -109,20 +92,6 @@ export function ContractEditForm({
   availableReferences,
   selectedReferenceIds,
   onReferenceIdsChange,
-  templates,
-  selectedTemplateId,
-  checklistItems,
-  rowEditIndex,
-  rowEditItem,
-  onSelectTemplate,
-  onAddBlankItem,
-  onMoveItem,
-  onRemoveItem,
-  onStartEdit,
-  onCancelEdit,
-  onSaveEdit,
-  onRowEditChange,
-  onApplyTag,
 }: ContractEditFormProps) {
   const formatPropertyDetails = () => {
     if (!address) return ""
@@ -349,23 +318,6 @@ export function ContractEditForm({
           )}
         </div>
       )}
-
-      <ChecklistEditor
-        templates={templates}
-        selectedTemplateId={selectedTemplateId}
-        checklistItems={checklistItems}
-        rowEditIndex={rowEditIndex}
-        rowEditItem={rowEditItem}
-        onSelectTemplate={onSelectTemplate}
-        onAddBlankItem={onAddBlankItem}
-        onMoveItem={onMoveItem}
-        onRemoveItem={onRemoveItem}
-        onStartEdit={onStartEdit}
-        onCancelEdit={onCancelEdit}
-        onSaveEdit={onSaveEdit}
-        onRowEditChange={onRowEditChange}
-        onApplyTag={onApplyTag}
-      />
     </div>
   )
 }

@@ -33,11 +33,19 @@ export interface ContractCustomerSummary {
   phone: string
 }
 
+export type ChecklistTaskDraft = {
+  id?: string
+  name: string
+  details: string
+}
+
 export type ChecklistDraftItem = {
   item: string
   description: string
   order: number
   isRequired?: boolean
+  category?: string
+  tasks?: ChecklistTaskDraft[]
 }
 
 export interface ChecklistTemplateItem {
