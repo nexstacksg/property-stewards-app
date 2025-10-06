@@ -147,6 +147,39 @@ export async function cacheSetLargeArray(
   return { chunks: chunkIndex, keys: [indexKey, ...keys] }
 }
 
+export async function cacheSetLargeArrayNoFlush(
+  baseKey: string,
+  items: unknown[],
+  chunkSize = Number(process.env.MEMCACHE_CHUNK_SIZE ?? 200),
+  opts: CacheSetOptions = {}
+): Promise<{ chunks: number, keys: string[] }> {
+  const c = getMemcacheClient()
+  if (!c) return { chunks: 0, keys: [] }
+
+  const ttl = opts.ttlSeconds ?? Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
+
+  const serialized = JSON.stringify(items)
+  if (Buffer.byteLength(serialized, 'utf8') < 900_000) {
+    await cacheSetJSON(baseKey, items, { ttlSeconds: ttl })
+    return { chunks: 1, keys: [baseKey] }
+  }
+
+  const total = items.length
+  const keys: string[] = []
+  let chunkIndex = 0
+  for (let i = 0; i < total; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize)
+    const key = `${baseKey}:chunk:${chunkIndex}`
+    await cacheSetJSON(key, chunk, { ttlSeconds: ttl })
+    keys.push(key)
+    chunkIndex++
+  }
+
+  const indexKey = `${baseKey}:index`
+  await cacheSetJSON(indexKey, { total, chunkSize, chunks: chunkIndex, keys }, { ttlSeconds: ttl })
+  return { chunks: chunkIndex, keys: [indexKey, ...keys] }
+}
+
 // Delete a key (for invalidation on updates)
 export async function cacheDel(key: string): Promise<boolean> {
   const c = getMemcacheClient()
