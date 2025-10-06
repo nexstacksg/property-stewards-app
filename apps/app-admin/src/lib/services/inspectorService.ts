@@ -297,7 +297,6 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
 
 export async function getLocationsWithCompletionStatus(workOrderId: string) {
   try {
-    // Always query DB for freshest status
     const items = await prisma.contractChecklistItem.findMany({
       where: {
         contractChecklist: {
@@ -310,9 +309,17 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
         order: true,
         status: true,
         checklistTasks: {
+          select: { id: true, status: true }
+        },
+        locations: {
           select: {
             id: true,
-            status: true
+            name: true,
+            status: true,
+            order: true,
+            tasks: {
+              select: { id: true, status: true }
+            }
           }
         }
       }
@@ -320,39 +327,52 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
     const sorted = items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
 
-    const locationMap = new Map<string, { totalItems: number; completedItems: number; totalTasks: number; completedTasks: number; anyId: string }>()
-    for (const item of sorted) {
-      const loc = item.name
-      if (!locationMap.has(loc)) {
-        locationMap.set(loc, {
-          totalItems: 0,
-          completedItems: 0,
-          totalTasks: 0,
-          completedTasks: 0,
-          anyId: item.id
-        })
-      }
-      const ref = locationMap.get(loc)!
-      ref.totalItems += 1
-      if (item.status === 'COMPLETED') ref.completedItems += 1
-      const tasks = item.checklistTasks || []
-      ref.totalTasks += tasks.length
-      ref.completedTasks += tasks.filter((task: any) => task.status === 'COMPLETED').length
-      if (!ref.anyId) ref.anyId = item.id
-    }
+    const result = sorted.map(item => {
+      const hasLocations = Array.isArray(item.locations) && item.locations.length > 0
+      const locationSummaries = hasLocations
+        ? item.locations.map(loc => {
+            const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+            const totalTasks = tasks.length
+            const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+            const isCompleted = loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
+            return {
+              id: loc.id,
+              name: loc.name,
+              order: loc.order ?? 0,
+              status: isCompleted ? 'COMPLETED' : 'PENDING',
+              totalTasks,
+              completedTasks
+            }
+          })
+        : []
 
-    const result = Array.from(locationMap.entries()).map(([name, data]) => {
-      const hasTasks = data.totalTasks > 0
-      const isCompleted = hasTasks
-        ? data.completedTasks === data.totalTasks
-        : data.totalItems > 0 && data.completedItems === data.totalItems
+      let totalTasks = 0
+      let completedTasks = 0
+
+      if (hasLocations) {
+        for (const loc of locationSummaries) {
+          totalTasks += loc.totalTasks
+          completedTasks += loc.completedTasks
+        }
+      } else {
+        const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+        totalTasks = tasks.length || 1
+        completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+      }
+
+      const isCompleted = hasLocations
+        ? locationSummaries.length > 0 && locationSummaries.every(loc => loc.status === 'COMPLETED')
+        : item.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
+
       return {
-        name,
-        displayName: isCompleted ? `${name} (Done)` : name,
+        id: item.id,
+        name: item.name,
+        displayName: isCompleted ? `${item.name} (Done)` : item.name,
         isCompleted,
-        totalTasks: hasTasks ? data.totalTasks : data.totalItems,
-        completedTasks: hasTasks ? data.completedTasks : data.completedItems,
-        contractChecklistItemId: data.anyId
+        totalTasks,
+        completedTasks,
+        contractChecklistItemId: item.id,
+        subLocations: locationSummaries.sort((a, b) => a.order - b.order)
       }
     })
 
@@ -364,7 +384,58 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
   }
 }
 
-export async function getTasksByLocation(workOrderId: string, location: string, contractChecklistItemId?: string) {
+export async function getChecklistLocationsForItem(itemId: string) {
+  try {
+    const locations = await prisma.contractChecklistLocation.findMany({
+      where: { itemId },
+      orderBy: { order: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        order: true,
+        tasks: {
+          select: { id: true, status: true }
+        }
+      }
+    })
+
+    return locations.map((loc, index) => {
+      const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+      const totalTasks = tasks.length
+      const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+      return {
+        id: loc.id,
+        number: index + 1,
+        name: loc.name,
+        status: loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks) ? 'completed' : 'pending',
+        totalTasks,
+        completedTasks
+      }
+    })
+  } catch (error) {
+    console.error('Error fetching checklist locations:', error)
+    return []
+  }
+}
+
+type NormalisedTask = {
+  id: string
+  locationId: string | null
+  locationName: string
+  action: string
+  status: 'completed' | 'pending'
+  notes: string | null
+  photos: string[]
+  videos: string[]
+  completed_at: Date | null
+  completed_by: string | null
+  isSubTask: boolean
+  taskIndex: number
+  locationStatus: 'completed' | 'pending'
+}
+
+export async function getTasksByLocation(workOrderId: string, location: string, contractChecklistItemId?: string, subLocationId?: string) {
   try {
     const item = await prisma.contractChecklistItem.findFirst({
       where: {
@@ -402,6 +473,41 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
                 id: true,
                 remarks: true
               }
+            },
+            location: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                order: true,
+                tasks: {
+                  select: { id: true }
+                }
+              }
+            }
+          }
+        },
+        locations: {
+          orderBy: { order: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            order: true,
+            tasks: {
+              orderBy: { createdOn: 'asc' },
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                inspectorId: true,
+                photos: true,
+                videos: true,
+                updatedOn: true,
+                entries: {
+                  select: { remarks: true }
+                }
+              }
             }
           }
         }
@@ -410,37 +516,98 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
 
     if (!item) return []
 
-    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
-    if (tasks.length === 0) {
-      return [{
-        id: item.id,
-        location: item.name,
-        action: item.remarks || 'Inspect area',
-        status: item.status === 'COMPLETED' ? 'completed' : 'pending',
-        notes: item.remarks,
-        photos: item.photos,
-        videos: item.videos,
-        completed_at: item.enteredOn,
-        completed_by: item.enteredById,
-        isSubTask: false,
-        locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
-      }]
+    const flattenTasks = (): NormalisedTask[] => {
+      const hasLocations = Array.isArray(item.locations) && item.locations.length > 0
+      if (!hasLocations) {
+        const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+        if (tasks.length === 0) {
+          return [{
+            id: item.id,
+            locationId: null,
+            locationName: item.name,
+            action: item.remarks || 'Inspect area',
+            status: item.status === 'COMPLETED' ? 'completed' : 'pending',
+            notes: item.remarks,
+            photos: item.photos ?? [],
+            videos: item.videos ?? [],
+            completed_at: item.enteredOn ?? null,
+            completed_by: item.enteredById ?? null,
+            isSubTask: false,
+            taskIndex: 0,
+            locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
+          }]
+        }
+
+        return tasks.map((task: any, index: number) => ({
+          id: task.id,
+          locationId: null,
+          locationName: item.name,
+          action: task.name || `Task ${index + 1}`,
+          status: task.status === 'COMPLETED' ? 'completed' : 'pending',
+          notes: (task.entries?.[0]?.remarks as string | undefined) || item.remarks || null,
+          photos: task.photos ?? [],
+          videos: task.videos ?? [],
+          completed_at: task.updatedOn,
+          completed_by: task.inspectorId,
+          isSubTask: true,
+          taskIndex: index,
+          locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
+        }))
+      }
+
+      const output: NormalisedTask[] = []
+      let taskIndex = 0
+      const orderedLocations = [...item.locations].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+
+      const filterBySubLocation = subLocationId && subLocationId.trim().length > 0
+
+      for (const loc of orderedLocations) {
+        if (filterBySubLocation && loc.id !== subLocationId) continue
+        const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+        if (tasks.length === 0) {
+          output.push({
+            id: loc.id,
+            locationId: loc.id,
+            locationName: loc.name,
+            action: loc.name,
+            status: loc.status === 'COMPLETED' ? 'completed' : 'pending',
+            notes: null,
+            photos: [],
+            videos: [],
+            completed_at: null,
+            completed_by: null,
+            isSubTask: false,
+            taskIndex: taskIndex++,
+            locationStatus: loc.status === 'COMPLETED' ? 'completed' : 'pending'
+          })
+          continue
+        }
+
+        const locationCompleted = loc.status === 'COMPLETED' || tasks.every((t: any) => t.status === 'COMPLETED')
+
+        for (const task of tasks) {
+          output.push({
+            id: task.id,
+            locationId: loc.id,
+            locationName: loc.name,
+            action: task.name || `${loc.name} task ${taskIndex + 1}`,
+            status: task.status === 'COMPLETED' ? 'completed' : 'pending',
+            notes: (task.entries?.[0]?.remarks as string | undefined) || null,
+            photos: task.photos ?? [],
+            videos: task.videos ?? [],
+            completed_at: task.updatedOn,
+            completed_by: task.inspectorId,
+            isSubTask: true,
+            taskIndex: taskIndex++,
+            locationStatus: locationCompleted ? 'completed' : 'pending'
+          })
+        }
+      }
+
+      return output
     }
 
-    return tasks.map((task: any, index: number) => ({
-      id: task.id,
-      location: item.name,
-      action: task.name || `Task ${index + 1}`,
-      status: task.status === 'COMPLETED' ? 'completed' : 'pending',
-      notes: (task.entries?.[0]?.remarks as string | undefined) || item.remarks || null,
-      photos: task.photos ?? [],
-      videos: task.videos ?? [],
-      completed_at: task.updatedOn,
-      completed_by: task.inspectorId,
-      isSubTask: true,
-      taskIndex: index,
-      locationStatus: item.status === 'COMPLETED' ? 'completed' : 'pending'
-    }))
+    return flattenTasks()
   } catch (error) {
     console.error('Error fetching tasks by location:', error)
     return []
@@ -534,6 +701,14 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
         checklistTasks: {
           select: { id: true }
         },
+        locations: {
+          select: {
+            id: true,
+            tasks: {
+              select: { id: true }
+            }
+          }
+        },
         enteredById: true
       },
       take: 1
@@ -544,16 +719,30 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
       return false
     }
 
-    await prisma.$transaction([
-      prisma.checklistTask.updateMany({
+    await prisma.$transaction(async tx => {
+      await tx.checklistTask.updateMany({
         where: { itemId: checklistItem.id },
         data: {
           status: 'COMPLETED',
           condition: 'GOOD',
           updatedOn: new Date()
         }
-      }),
-      prisma.contractChecklistItem.update({
+      })
+
+      if (Array.isArray(checklistItem.locations) && checklistItem.locations.length > 0) {
+        const locationIds = checklistItem.locations.map((loc: any) => loc.id)
+        if (locationIds.length > 0) {
+          await tx.contractChecklistLocation.updateMany({
+            where: { id: { in: locationIds } },
+            data: {
+              status: 'COMPLETED',
+              updatedOn: new Date()
+            }
+          })
+        }
+      }
+
+      await tx.contractChecklistItem.update({
         where: { id: checklistItem.id },
         data: {
           enteredOn: new Date(),
@@ -562,7 +751,7 @@ export async function completeAllTasksForLocation(workOrderId: string, location:
           condition: 'GOOD'
         }
       })
-    ])
+    })
 
     // Invalidate cache
     locationCache.invalidate(workOrderId)
@@ -669,6 +858,25 @@ export async function getContractChecklistItemIdByLocation(workOrderId: string, 
       }
     }
     
+    const dbItem = await prisma.contractChecklistItem.findFirst({
+      where: {
+        name: location,
+        contractChecklist: {
+          contract: {
+            workOrders: {
+              some: { id: workOrderId }
+            }
+          }
+        }
+      },
+      select: { id: true }
+    })
+
+    if (dbItem?.id) {
+      locationCache.set(cacheKey, dbItem.id)
+      return dbItem.id
+    }
+
     return null
   } catch (error) {
     console.error('Error finding ContractChecklistItem:', error)

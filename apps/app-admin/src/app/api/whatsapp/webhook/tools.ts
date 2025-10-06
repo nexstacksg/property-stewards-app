@@ -7,6 +7,7 @@ import {
   updateWorkOrderStatus,
   getTasksByLocation,
   getLocationsWithCompletionStatus,
+  getChecklistLocationsForItem,
   getInspectorByPhone,
   updateWorkOrderDetails,
   completeAllTasksForLocation,
@@ -26,7 +27,8 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'getJobLocations', description: 'Get locations for inspection', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'setLocationCondition', description: 'Set condition for the current location by number (1=Good,2=Fair,3=Un-Satisfactory,4=Un-Observable,5=Not Applicable,)', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, conditionNumber: { type: 'number' } }, required: ['workOrderId', 'conditionNumber'] } } },
   { type: 'function' as const, function: { name: 'addLocationRemarks', description: 'Save remarks for current location and create/update an ItemEntry for the inspector', parameters: { type: 'object', properties: { remarks: { type: 'string' } }, required: ['remarks'] } } },
-  { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
+  { type: 'function' as const, function: { name: 'getSubLocations', description: 'Get sub-locations for a checklist item', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, locationName: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId'] } } },
+  { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
   {
     type: 'function' as const,
     function: {
@@ -129,13 +131,71 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId) as any[]
         const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
         const nextPrompt = 'Reply with the number of the location you want to inspect next.'
-        return JSON.stringify({ success: true, locations: locationsWithStatus.map((loc, index) => ({ number: index + 1, name: loc.name, displayName: loc.displayName, contractChecklistItemId: loc.contractChecklistItemId, status: loc.isCompleted ? 'completed' : (loc.completedTasks > 0 ? 'in_progress' : 'pending'), tasks: loc.totalTasks, completed: loc.completedTasks, pending: loc.totalTasks - loc.completedTasks })), locationsFormatted, nextPrompt })
+        return JSON.stringify({
+          success: true,
+          locations: locationsWithStatus.map((loc, index) => ({
+            number: index + 1,
+            name: loc.name,
+            displayName: loc.displayName,
+            contractChecklistItemId: loc.contractChecklistItemId,
+            status: loc.isCompleted ? 'completed' : (loc.completedTasks > 0 ? 'in_progress' : 'pending'),
+            tasks: loc.totalTasks,
+            completed: loc.completedTasks,
+            pending: loc.totalTasks - loc.completedTasks,
+            subLocations: Array.isArray(loc.subLocations) ? loc.subLocations : []
+          })),
+          locationsFormatted,
+          nextPrompt
+        })
+      }
+      case 'getSubLocations': {
+        const { workOrderId, contractChecklistItemId, locationName } = args
+        const subLocations = await getChecklistLocationsForItem(contractChecklistItemId) as any[]
+        let derivedName = locationName as string | undefined
+        if (!derivedName) {
+          try {
+            const item = await prisma.contractChecklistItem.findUnique({ where: { id: contractChecklistItemId }, select: { name: true } })
+            derivedName = item?.name || undefined
+          } catch {}
+        }
+        if (sessionId) {
+          await updateSessionState(sessionId, {
+            currentLocation: derivedName,
+            currentLocationId: contractChecklistItemId,
+            currentSubLocationId: undefined,
+            currentSubLocationName: undefined,
+            currentTaskId: undefined,
+            currentTaskName: undefined,
+            currentTaskItemId: contractChecklistItemId,
+            currentTaskEntryId: undefined,
+            currentTaskCondition: undefined,
+            currentTaskLocationId: undefined,
+            currentTaskLocationName: undefined,
+            taskFlowStage: undefined
+          })
+        }
+        if (subLocations.length === 0) {
+          return JSON.stringify({ success: true, subLocations: [], subLocationsFormatted: [], nextPrompt: 'No sub-locations found. Proceed to task selection.' })
+        }
+        const formatted = subLocations.map((loc: any, index: number) => ({
+          id: loc.id,
+          number: index + 1,
+          name: loc.name,
+          status: loc.status,
+          totalTasks: loc.totalTasks,
+          completedTasks: loc.completedTasks
+        }))
+        const formattedStrings = formatted.map(loc => `[${loc.number}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
+        return JSON.stringify({ success: true, subLocations: formatted, subLocationsFormatted: formattedStrings, nextPrompt: 'Reply with the sub-location number you want to inspect.' })
       }
       case 'getTasksForLocation': {
-        const { workOrderId, location, contractChecklistItemId } = args
+        const { workOrderId, location, contractChecklistItemId, subLocationId } = args
         if (sessionId) {
           await updateSessionState(sessionId, {
             currentLocation: location,
+            currentLocationId: contractChecklistItemId,
+            currentSubLocationId: subLocationId || undefined,
+            currentSubLocationName: undefined,
             currentTaskId: undefined,
             currentTaskName: undefined,
             currentTaskEntryId: undefined,
@@ -143,12 +203,48 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             taskFlowStage: undefined
           })
         }
-        const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId) as any[]
-        const formattedTasks = tasks.map((task: any, index: number) => ({ id: task.id, number: index + 1, description: task.action || `Check ${location.toLowerCase()} condition`, status: task.status, displayStatus: task.status === 'completed' ? 'done' : 'pending', notes: task.notes || null }))
+        const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId, subLocationId) as any[]
+        if ((!subLocationId || subLocationId.length === 0) && tasks.length > 0) {
+          const uniqueLocations = Array.from(new Set(tasks.map((task: any) => task.locationId).filter(Boolean)))
+          if (uniqueLocations.length > 1) {
+            const subLocations = await getChecklistLocationsForItem(contractChecklistItemId) as any[]
+            const formattedStrings = subLocations.map((loc: any, index: number) => `[${index + 1}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
+            return JSON.stringify({ success: false, requiresSubLocationSelection: true, subLocations: subLocations.map((loc: any, index: number) => ({ id: loc.id, number: index + 1, name: loc.name, status: loc.status, totalTasks: loc.totalTasks, completedTasks: loc.completedTasks })), subLocationsFormatted: formattedStrings, message: 'Select a sub-location first before inspecting tasks.' })
+          }
+        }
+        const formattedTasks = tasks.map((task: any, index: number) => {
+          const prefix = task.locationName && task.locationName !== location ? `${task.locationName}: ` : ''
+          return {
+            id: task.id,
+            number: index + 1,
+            description: (task.action ? `${prefix}${task.action}` : `Check ${location.toLowerCase()} condition`),
+            status: task.status,
+            displayStatus: task.status === 'completed' ? 'done' : 'pending',
+            notes: task.notes || null,
+            locationId: task.locationId,
+            locationName: task.locationName
+          }
+        })
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
         const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to mark them all done) when you're ready.`
-        return JSON.stringify({ success: true, location, allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0, tasks: formattedTasks, locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation }, locationNotes: tasks.length > 0 && tasks[0].notes ? tasks[0].notes : null, locationStatus: tasks.length > 0 && tasks[0].locationStatus === 'completed' ? 'done' : 'pending', nextPrompt })
+        const firstTask = tasks[0]
+        if (sessionId && firstTask?.locationId) {
+          await updateSessionState(sessionId, {
+            currentSubLocationId: firstTask.locationId,
+            currentSubLocationName: firstTask.locationName
+          })
+        }
+        return JSON.stringify({
+          success: true,
+          location,
+          allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0,
+          tasks: formattedTasks,
+          locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation },
+          locationNotes: tasks.length > 0 && firstTask?.notes ? firstTask.notes : null,
+          locationStatus: tasks.length > 0 && firstTask?.locationStatus === 'completed' ? 'done' : 'pending',
+          nextPrompt
+        })
       }
       case 'completeTask': {
         const phase = (args.phase as string | undefined) || 'start'
@@ -174,7 +270,19 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             const success = await completeAllTasksForLocation(workOrderId, location)
             let itemIdForSession: string | null = null
             try { itemIdForSession = await getContractChecklistItemIdByLocation(workOrderId, location) as any } catch {}
-            if (sessionId && itemIdForSession) await updateSessionState(sessionId, { currentItemId: itemIdForSession, currentTaskId: undefined, currentTaskEntryId: undefined, currentTaskName: undefined, taskFlowStage: undefined, currentTaskCondition: undefined, currentTaskItemId: itemIdForSession })
+            if (sessionId && itemIdForSession) await updateSessionState(sessionId, {
+              currentItemId: itemIdForSession,
+              currentTaskId: undefined,
+              currentTaskEntryId: undefined,
+              currentTaskName: undefined,
+              taskFlowStage: undefined,
+              currentTaskCondition: undefined,
+              currentTaskItemId: itemIdForSession,
+              currentSubLocationId: undefined,
+              currentSubLocationName: undefined,
+              currentTaskLocationId: undefined,
+              currentTaskLocationName: undefined
+            })
             if (success) {
               const remarks = args.notes as string | undefined
               if (remarks) {
@@ -191,7 +299,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
           }
 
-          const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, name: true, itemId: true } })
+          const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, name: true, itemId: true, locationId: true, location: { select: { name: true } } } })
           let taskName = task?.name
           let taskItemId = task?.itemId
 
@@ -207,6 +315,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskId: taskId,
               currentTaskName: taskName,
               currentTaskItemId: taskItemId,
+              currentTaskLocationId: task?.locationId || undefined,
+              currentTaskLocationName: task?.location?.name || undefined,
               currentTaskEntryId: undefined,
               currentTaskCondition: undefined,
               taskFlowStage: 'condition'
@@ -234,6 +344,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number. Please use 1-5.' })
           const taskId = (args.taskId as string | undefined) || session.currentTaskId
           const taskItemId = session.currentTaskItemId
+          const taskLocationId = session.currentTaskLocationId || (task?.locationId as string | undefined)
           if (!taskId || !taskItemId) {
             return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
           }
@@ -322,6 +433,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (phase === 'finalize') {
           const taskId = (args.taskId as string | undefined) || session.currentTaskId
           const taskItemId = session.currentTaskItemId
+          const taskLocationId = session.currentTaskLocationId
           if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
 
           if (typeof args.completed !== 'boolean') {
@@ -336,7 +448,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const condition = session.currentTaskCondition || 'GOOD'
           const entryId = session.currentTaskEntryId
 
-          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true } })
+          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true } })
           let targetItemId = task?.itemId || taskItemId
 
           if (task) {
@@ -349,6 +461,19 @@ export async function executeTool(toolName: string, args: any, threadId?: string
                 updatedOn: new Date()
               }
             })
+            if (task.locationId) {
+              try {
+                const remainingForLocation = await prisma.checklistTask.count({ where: { locationId: task.locationId, status: { not: 'COMPLETED' } } })
+                await prisma.contractChecklistLocation.update({
+                  where: { id: task.locationId },
+                  data: {
+                    status: remainingForLocation === 0 ? 'COMPLETED' : 'PENDING'
+                  }
+                })
+              } catch (error) {
+                console.error('Failed to update checklist location status', error)
+              }
+            }
           } else {
             await prisma.contractChecklistItem.update({
               where: { id: taskId },
@@ -392,8 +517,28 @@ export async function executeTool(toolName: string, args: any, threadId?: string
                 enteredOn: remaining === 0 ? new Date() : null
               }
             })
+            if (task?.locationId) {
+              try {
+                const remainingForLocation = await prisma.checklistTask.count({ where: { locationId: task.locationId, status: { not: 'COMPLETED' } } })
+                await prisma.contractChecklistLocation.update({
+                  where: { id: task.locationId },
+                  data: {
+                    status: remainingForLocation === 0 ? 'COMPLETED' : 'PENDING'
+                  }
+                })
+              } catch (error) {
+                console.error('Failed to update checklist location status after completion', error)
+              }
+            }
           } else {
             await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: 'PENDING' } })
+            if (task?.locationId) {
+              try {
+                await prisma.contractChecklistLocation.update({ where: { id: task.locationId }, data: { status: 'PENDING' } })
+              } catch (error) {
+                console.error('Failed to reset checklist location status', error)
+              }
+            }
           }
 
           if (entryId) {
@@ -414,6 +559,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskEntryId: entryId || undefined,
               currentTaskCondition: undefined,
               currentTaskItemId: targetItemId,
+              currentTaskLocationId: task?.locationId || session.currentTaskLocationId,
+              currentTaskLocationName: session.currentTaskLocationName,
               pendingTaskRemarks: undefined
             })
           }

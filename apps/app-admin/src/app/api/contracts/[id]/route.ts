@@ -21,7 +21,21 @@ export async function GET(
             items: {
               include: {
                 enteredBy: true,
-                workOrder: true
+                workOrder: true,
+                locations: {
+                  orderBy: { order: 'asc' },
+                  include: {
+                    tasks: {
+                      orderBy: { createdOn: 'asc' }
+                    }
+                  }
+                },
+                checklistTasks: {
+                  orderBy: { createdOn: 'asc' },
+                  include: {
+                    location: true,
+                  }
+                }
               },
               orderBy: { order: 'asc' }
             }

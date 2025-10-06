@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
-type SeedChecklistTask = {
+type SeedSubTask = {
   name: string
   status: 'COMPLETED' | 'PENDING'
   photos?: string[]
@@ -17,7 +17,7 @@ type SeedInspectorEntry = {
   includeInReport?: boolean
   photos?: string[]
   videos?: string[]
-  tasks?: SeedChecklistTask[]
+  tasks?: SeedSubTask[]
 }
 
 type SeedChecklistItem = {
@@ -31,7 +31,13 @@ type SeedChecklistItem = {
   status: 'COMPLETED' | 'PENDING'
   photos?: string[]
   videos?: string[]
-  tasks?: SeedChecklistTask[]
+  tasks?: SeedSubTask[]
+  locations?: Array<{
+    name: string
+    status?: 'COMPLETED' | 'PENDING'
+    order?: number
+    subtasks: SeedSubTask[]
+  }>
   inspectorEntries?: SeedInspectorEntry[]
 }
 
@@ -42,6 +48,7 @@ async function main() {
   await prisma.propertySizeOption.deleteMany()
   await prisma.property.deleteMany()
   await prisma.checklistTask.deleteMany()
+  await prisma.contractChecklistLocation.deleteMany()
   await prisma.itemEntry.deleteMany()
   await prisma.contractChecklistItem.deleteMany()
   await prisma.contractChecklist.deleteMany()
@@ -598,17 +605,45 @@ async function main() {
       }
     })
 
-    for (const task of itemSeed.tasks || []) {
-      await prisma.checklistTask.create({
+    const locationSeeds = Array.isArray(itemSeed.locations) && itemSeed.locations.length > 0
+      ? itemSeed.locations
+      : [
+          {
+            name: itemSeed.name,
+            status: itemSeed.status,
+            order: 1,
+            subtasks: itemSeed.tasks ?? [],
+          },
+        ]
+
+    const locationRecords: { id: string; name: string }[] = []
+    let locationOrder = 1
+    for (const locationSeed of locationSeeds) {
+      const location = await prisma.contractChecklistLocation.create({
         data: {
           itemId: item.id,
-          name: task.name,
-          status: task.status,
-          photos: task.photos ?? [],
-          videos: task.videos ?? []
-        }
+          name: locationSeed.name,
+          status: locationSeed.status ?? 'PENDING',
+          order: locationSeed.order ?? locationOrder++,
+        },
       })
+      locationRecords.push({ id: location.id, name: locationSeed.name })
+
+      for (const subtask of locationSeed.subtasks || []) {
+        await prisma.checklistTask.create({
+          data: {
+            itemId: item.id,
+            locationId: location.id,
+            name: subtask.name,
+            status: subtask.status,
+            photos: subtask.photos ?? [],
+            videos: subtask.videos ?? [],
+          },
+        })
+      }
     }
+
+    let defaultLocationId = locationRecords[0]?.id
 
     for (const entrySeed of itemSeed.inspectorEntries || []) {
       if (!entrySeed.inspectorId && !entrySeed.userId) {
@@ -629,9 +664,25 @@ async function main() {
 
       let linkedTaskId: string | undefined
       for (const task of entrySeed.tasks || []) {
+        if (!defaultLocationId) {
+          const fallbackLocation = await prisma.contractChecklistLocation.create({
+            data: {
+              itemId: item.id,
+              name: item.name,
+              status: 'PENDING',
+              order: (locationRecords.length || 0) + 1,
+            },
+          })
+          locationRecords.push({ id: fallbackLocation.id, name: item.name })
+          defaultLocationId = fallbackLocation.id
+        }
+
+        const targetLocationId = defaultLocationId
+
         const createdTask = await prisma.checklistTask.create({
           data: {
             itemId: item.id,
+            locationId: targetLocationId,
             inspectorId: entrySeed.inspectorId ?? undefined,
             name: task.name,
             status: task.status,

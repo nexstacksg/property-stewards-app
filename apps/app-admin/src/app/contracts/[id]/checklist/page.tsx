@@ -117,8 +117,18 @@ export default async function ContractChecklistPage({ params }: { params: Promis
 
   const completedItems = items.filter((item: any) => item.status === "COMPLETED").length
   const totalTasks = items.reduce((sum: number, item: any) => {
-    const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks.length : 0
-    return sum + tasks
+    const locations = Array.isArray(item.locations) ? item.locations : []
+    const locationTaskCount = locations.reduce((count: number, location: any) => {
+      const subtasks = Array.isArray(location?.tasks) ? location.tasks : []
+      return count + subtasks.length
+    }, 0)
+
+    if (locationTaskCount > 0) {
+      return sum + locationTaskCount
+    }
+
+    const fallbackTasks = Array.isArray(item.checklistTasks) ? item.checklistTasks.length : 0
+    return sum + fallbackTasks
   }, 0)
   const pendingItems = items.length - completedItems
 
@@ -301,12 +311,31 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                   <TableBody>
                     {items.map((item: any) => {
                       const inspectorName = item.enteredBy?.name || "—"
-                      const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
-                      const taskNames = tasks
-                        .map((task: any) => task?.name)
-                        .filter((name: string | null | undefined) => Boolean(name))
-                        .map((name: string) => name.trim())
-                      const hasTasks = taskNames.length > 0
+                      const locations = Array.isArray(item.locations) ? item.locations : []
+                      const locationSummaries = locations
+                        .map((location: any) => {
+                          const name = typeof location?.name === "string" ? location.name.trim() : ""
+                          const subtasks = Array.isArray(location?.tasks)
+                            ? location.tasks
+                                .map((task: any) => (typeof task?.name === "string" ? task.name.trim() : ""))
+                                .filter((entry: string) => entry.length > 0)
+                            : []
+                          if (name && subtasks.length > 0) {
+                            return `${name}: ${subtasks.join(", ")}`
+                          }
+                          if (name) return name
+                          if (subtasks.length > 0) return subtasks.join(", ")
+                          return ""
+                        })
+                        .filter((entry: string) => entry.length > 0)
+
+                      const fallbackTasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+                      const fallbackNames = fallbackTasks
+                        .map((task: any) => (typeof task?.name === "string" ? task.name.trim() : ""))
+                        .filter((entry: string) => entry.length > 0)
+
+                      const hasLocations = locationSummaries.length > 0
+                      const hasFallbackTasks = fallbackNames.length > 0 && !hasLocations
 
                       return (
                         <TableRow key={item.id}>
@@ -314,9 +343,14 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                           <TableCell>
                             <div>
                               <p className="font-medium">{item.name || item.item}</p>
-                              {hasTasks && (
+                              {hasLocations && (
                                 <p className="mt-1 text-sm text-muted-foreground">
-                                  {taskNames.join(" • ")}
+                                  {locationSummaries.join(" • ")}
+                                </p>
+                              )}
+                              {!hasLocations && hasFallbackTasks && (
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                  {fallbackNames.join(" • ")}
                                 </p>
                               )}
                               {item.description && (
