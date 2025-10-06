@@ -1037,6 +1037,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
 
       locationCache.invalidate(taskId)
       try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+      await refreshChecklistItemCache(taskId)
       return true
     }
 
@@ -1077,6 +1078,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
     // Invalidate cache
     locationCache.invalidate(task.itemId)
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+    await refreshChecklistItemCache(task.itemId)
     return true
   } catch (error) {
     console.error('Error updating task status:', error)
