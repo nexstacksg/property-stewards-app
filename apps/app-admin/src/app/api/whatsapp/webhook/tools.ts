@@ -344,7 +344,18 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number. Please use 1-5.' })
           const taskId = (args.taskId as string | undefined) || session.currentTaskId
           const taskItemId = session.currentTaskItemId
-          const taskLocationId = session.currentTaskLocationId || (task?.locationId as string | undefined)
+          let taskLocationId = session.currentTaskLocationId as string | undefined
+          if (!taskLocationId && taskId) {
+            try {
+              const lookup = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { locationId: true } })
+              taskLocationId = lookup?.locationId || undefined
+              if (taskLocationId && sessionId) {
+                await updateSessionState(sessionId, { currentTaskLocationId: taskLocationId })
+              }
+            } catch (error) {
+              console.error('Failed to load task location for condition phase', error)
+            }
+          }
           if (!taskId || !taskItemId) {
             return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
           }
