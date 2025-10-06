@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { parseActionIntoTasks } from '@/lib/utils/taskParser'
+type LocationSeed = {
+  name: string
+  subtasks: string[]
+}
 
-function extractActions(value: unknown): string[] {
+function extractActionStrings(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
       .map((entry) =>
@@ -23,15 +26,43 @@ function extractActions(value: unknown): string[] {
   return []
 }
 
-function toChecklistTaskPayload(action: string | undefined) {
-  const parsed = parseActionIntoTasks(action ?? '')
-  return parsed.length > 0
-    ? parsed.map(task => ({
-        name: task.task,
-        status: task.status === 'done' ? 'COMPLETED' : 'PENDING',
-        actions: [] as string[],
-      }))
-    : []
+function deriveLocationSeeds(
+  sourceTasks: Array<{ name?: string | null; actions?: any; details?: string | null }>,
+  fallbackName: string,
+  fallbackActions?: string | string[] | null,
+): LocationSeed[] {
+  const seeds: LocationSeed[] = []
+
+  for (const rawTask of sourceTasks) {
+    const rawName = typeof rawTask?.name === 'string' ? rawTask.name.trim() : ''
+    const locationName = rawName.length > 0 ? rawName : fallbackName
+
+    const actionSource = Array.isArray(rawTask?.actions)
+      ? rawTask.actions
+      : typeof rawTask?.details === 'string'
+      ? rawTask.details
+      : undefined
+
+    const subtasks = extractActionStrings(actionSource)
+    const uniqueSubtasks = Array.from(new Set(subtasks.map((entry) => entry.trim()).filter((entry) => entry.length > 0)))
+
+    seeds.push({
+      name: locationName,
+      subtasks: uniqueSubtasks.length > 0 ? uniqueSubtasks : [locationName],
+    })
+  }
+
+  if (seeds.length === 0) {
+    const fallbackSubtasks = extractActionStrings(fallbackActions)
+    const cleanedFallback = Array.from(new Set(fallbackSubtasks.map((entry) => entry.trim()).filter((entry) => entry.length > 0)))
+
+    seeds.push({
+      name: fallbackName,
+      subtasks: cleanedFallback.length > 0 ? cleanedFallback : [fallbackName],
+    })
+  }
+
+  return seeds
 }
 
 // POST /api/contracts/[id]/checklist - Add a checklist to a contract
@@ -131,38 +162,50 @@ export async function POST(
                 .filter((entry: { name: string }) => entry.name.length > 0)
             : []
 
-          const manualTasks = manualTaskEntries.map((entry:any) => ({
-            name: entry.name,
-            status: 'PENDING' as const,
-            actions: extractActions(entry.actions ?? entry.details),
-          }))
+          const fallbackAction = typeof item.action === 'string' ? item.action : undefined
+          const locationSeeds = deriveLocationSeeds(manualTaskEntries, item.name, fallbackAction)
 
-          const tasks = manualTasks.length > 0
-            ? manualTasks
-            : toChecklistTaskPayload(item.action)
+          const manualRemarks = manualTaskEntries
+            .map((entry: any) => (entry.details ? `${entry.name} — ${entry.details}` : entry.name))
+            .filter((value: string) => value && value.length > 0)
 
-          const manualRemarks = manualTaskEntries.map((entry : any) =>
-            entry.details ? `${entry.name} — ${entry.details}` : entry.name,
-          )
+          const remarksSource = fallbackAction && fallbackAction.trim().length > 0
+            ? fallbackAction
+            : manualRemarks.length > 0
+            ? manualRemarks.join('; ')
+            : undefined
 
-          const remarksSource =
-            item.action ?? (manualRemarks.length > 0 ? manualRemarks.join('; ') : '')
-
-          await tx.contractChecklistItem.create({
+          const createdItem = await tx.contractChecklistItem.create({
             data: {
               contractChecklistId: checklist.id,
               name: item.name,
               order: item.order ?? index + 1,
               remarks: remarksSource,
-              checklistTasks: tasks.length > 0 ? {
-                create: tasks.map((task : any) => ({
-                  name: task.name,
-                  status: task.status,
-                  actions: Array.isArray(task.actions) ? task.actions : [],
-                }))
-              } : undefined
-            }
+            },
           })
+
+          let locationOrder = 1
+          for (const seed of locationSeeds) {
+            const location = await tx.contractChecklistLocation.create({
+              data: {
+                itemId: createdItem.id,
+                name: seed.name,
+                status: 'PENDING',
+                order: locationOrder++,
+              },
+            })
+
+            for (const subtaskName of seed.subtasks) {
+              await tx.checklistTask.create({
+                data: {
+                  itemId: createdItem.id,
+                  locationId: location.id,
+                  name: subtaskName,
+                  status: 'PENDING',
+                },
+              })
+            }
+          }
         }
       }
 
@@ -170,11 +213,27 @@ export async function POST(
         where: { id: checklist.id },
         include: {
           items: {
-            orderBy: { order: 'asc' }
+            orderBy: { order: 'asc' },
+            include: {
+              checklistTasks: {
+                orderBy: { createdOn: 'asc' },
+                include: {
+                  location: true,
+                },
+              },
+              locations: {
+                orderBy: { order: 'asc' },
+                include: {
+                  tasks: {
+                    orderBy: { createdOn: 'asc' }
+                  }
+                }
+              }
+            }as any
           }
         }
       })
-    }, { timeout: 15000, maxWait: 10000 })
+    }, { timeout: 60000, maxWait: 20000 })
 
     return NextResponse.json(contractChecklist, { status: 201 })
   } catch (error) {
@@ -236,46 +295,78 @@ export async function PUT(
               .filter((entry: { name: string }) => entry.name.length > 0)
           : []
 
-        const manualTasks = manualTaskEntries.map((entry : any) => ({
-          name: entry.name,
-          status: 'PENDING' as const,
-          actions: extractActions(entry.actions ?? entry.details),
-        }))
+        const fallbackAction = typeof item.action === 'string' ? item.action : undefined
+        const locationSeeds = deriveLocationSeeds(manualTaskEntries, item.name, fallbackAction)
 
-        const tasks = manualTasks.length > 0
-          ? manualTasks
-          : toChecklistTaskPayload(item.action)
+        const manualRemarks = manualTaskEntries
+          .map((entry: any) => (entry.details ? `${entry.name} — ${entry.details}` : entry.name))
+          .filter((value: string) => value && value.length > 0)
 
-        const manualRemarks = manualTaskEntries.map((entry: any ) =>
-          entry.details ? `${entry.name} — ${entry.details}` : entry.name,
-        )
+        const remarksSource = fallbackAction && fallbackAction.trim().length > 0
+          ? fallbackAction
+          : manualRemarks.length > 0
+          ? manualRemarks.join('; ')
+          : undefined
 
-        const remarksSource =
-          item.action ?? (manualRemarks.length > 0 ? manualRemarks.join('; ') : '')
-
-        await tx.contractChecklistItem.create({
+        const createdItem = await tx.contractChecklistItem.create({
           data: {
             contractChecklistId: checklist!.id,
             name: item.name,
             order: item.order ?? index + 1,
             remarks: remarksSource,
-            checklistTasks: tasks.length > 0 ? {
-              create: tasks.map((task:any) => ({
-                name: task.name,
-                status: task.status,
-                actions: Array.isArray(task.actions) ? task.actions : [],
-              }))
-            } : undefined
-          }
+          },
         })
+
+        let locationOrder = 1
+        for (const seed of locationSeeds) {
+          const location = await tx.contractChecklistLocation.create({
+            data: {
+              itemId: createdItem.id,
+              name: seed.name,
+              status: 'PENDING',
+              order: locationOrder++,
+            },
+          })
+
+          for (const subtaskName of seed.subtasks) {
+            await tx.checklistTask.create({
+              data: {
+                itemId: createdItem.id,
+                locationId: location.id,
+                name: subtaskName,
+                status: 'PENDING',
+              },
+            })
+          }
+        }
       }
       }
 
       return await tx.contractChecklist.findUnique({
         where: { id: checklist.id },
-        include: { items: { orderBy: { order: 'asc' } } }
+        include: {
+          items: {
+            orderBy: { order: 'asc' },
+            include: {
+              checklistTasks: {
+                orderBy: { createdOn: 'asc' },
+                include: {
+                  location: true,
+                },
+              },
+              locations: {
+                orderBy: { order: 'asc' },
+                include: {
+                  tasks: {
+                    orderBy: { createdOn: 'asc' }
+                  }
+                }
+              }
+            }
+          }
+        }
       })
-    }, { timeout: 15000, maxWait: 10000 })
+    }, { timeout: 60000, maxWait: 20000 })
 
     return NextResponse.json(updatedChecklist)
   } catch (error) {

@@ -32,6 +32,7 @@ type Task = {
   photos?: string[] | null
   videos?: string[] | null
   entries?: { id: string }[] | null
+  location?: { id: string; name?: string | null } | null
 }
 
 type Entry = {
@@ -57,6 +58,11 @@ type Props = {
   workOrderId: string
   entries?: Entry[]
   tasks?: Task[]
+  locations?: Array<{
+    id: string
+    name?: string | null
+    tasks?: Task[] | null
+  }>
   itemName?: string
   triggerLabel?: string | ((count: number) => string)
 }
@@ -81,6 +87,7 @@ export default function ItemEntriesDialog({
   workOrderId,
   entries = [],
   tasks = [],
+  locations = [],
   itemName,
   triggerLabel,
 }: Props) {
@@ -89,6 +96,7 @@ export default function ItemEntriesDialog({
   const [localEntries, setLocalEntries] = useState<Entry[]>(entries)
   const [localTasks, setLocalTasks] = useState<Task[]>(tasks)
   const [addingRemark, setAddingRemark] = useState(false)
+  const [selectedLocationId, setSelectedLocationId] = useState<string>("")
   const [selectedTaskId, setSelectedTaskId] = useState<string>("")
   const [selectedCondition, setSelectedCondition] = useState<string>("")
   const [remarkText, setRemarkText] = useState<string>("")
@@ -107,24 +115,96 @@ export default function ItemEntriesDialog({
     setLocalTasks(tasks)
   }, [tasks])
 
-  const availableTasks = useMemo(() => localTasks, [localTasks])
+  const locationOptions = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; tasks: Task[] }>()
+    const seenTaskIds = new Set<string>()
+
+    locations.forEach((location) => {
+      if (!location?.id) return
+      const displayName = typeof location.name === "string" && location.name.trim().length > 0 ? location.name.trim() : "Location"
+      const locationTasks = Array.isArray(location.tasks)
+        ? (location.tasks.filter((task: any) => task && typeof task.id === "string") as Task[])
+        : []
+      locationTasks.forEach((task) => seenTaskIds.add(task.id))
+      map.set(location.id, {
+        id: location.id,
+        name: displayName,
+        tasks: locationTasks,
+      })
+    })
+
+    const orphanTasks: Task[] = []
+
+    localTasks.forEach((task) => {
+      if (!task?.id || seenTaskIds.has(task.id)) return
+      const locationId = task.location?.id
+      if (locationId) {
+        const name = task.location?.name && task.location.name.trim().length > 0 ? task.location.name.trim() : 'Location'
+        if (!map.has(locationId)) {
+          map.set(locationId, { id: locationId, name, tasks: [] })
+        }
+        map.get(locationId)!.tasks.push(task)
+        seenTaskIds.add(task.id)
+        return
+      }
+      orphanTasks.push(task)
+      seenTaskIds.add(task.id)
+    })
+
+    if (orphanTasks.length > 0) {
+      const fallbackName = itemName ? `${itemName} — General` : 'General'
+      map.set('unassigned', {
+        id: 'unassigned',
+        name: fallbackName,
+        tasks: orphanTasks,
+      })
+    }
+
+    return Array.from(map.values())
+  }, [locations, localTasks, itemName])
+
+  const hasSelectableTasks = useMemo(() => locationOptions.some((location) => location.tasks.length > 0), [locationOptions])
+
+  const availableTasks = useMemo(() => {
+    if (!selectedLocationId) return []
+    return locationOptions.find((location) => location.id === selectedLocationId)?.tasks ?? []
+  }, [locationOptions, selectedLocationId])
 
   useEffect(() => {
     if (!addingRemark) return
+    if (!selectedLocationId) return
+
+    if (!locationOptions.some((location) => location.id === selectedLocationId)) {
+      setSelectedLocationId("")
+      setSelectedTaskId("")
+    }
+  }, [addingRemark, locationOptions, selectedLocationId])
+
+  useEffect(() => {
+    if (!addingRemark) return
+
+    if (!selectedLocationId) {
+      setSelectedTaskId("")
+      return
+    }
+
     if (availableTasks.length === 0) {
       setSelectedTaskId("")
       return
     }
+
     setSelectedTaskId((prev) =>
       prev && availableTasks.some((task) => task.id === prev)
         ? prev
         : availableTasks[0]?.id || ""
     )
-    setSelectedCondition((prev) => (prev ? prev : 'GOOD'))
-  }, [addingRemark, availableTasks])
+
+    setSelectedCondition('GOOD')
+  }, [addingRemark, selectedLocationId, availableTasks])
 
   const resetForm = () => {
     setAddingRemark(false)
+    setSelectedLocationId("")
     setSelectedTaskId("")
     setSelectedCondition("")
     setRemarkText("")
@@ -176,6 +256,11 @@ export default function ItemEntriesDialog({
 
   const handleSaveRemark: React.FormEventHandler<HTMLFormElement> = async (event) => {
     event.preventDefault()
+    if (!selectedLocationId) {
+      setFormError("Please choose a location before selecting a subtask.")
+      return
+    }
+
     if (!selectedTaskId) {
       setFormError("Please choose a subtask to attach this remark to.")
       return
@@ -207,6 +292,7 @@ export default function ItemEntriesDialog({
     try {
       const formData = new FormData()
       formData.set("taskId", selectedTaskId)
+      formData.set("locationId", selectedLocationId)
       formData.set("workOrderId", workOrderId)
       if (selectedCondition) {
         formData.set("condition", selectedCondition)
@@ -350,11 +436,18 @@ export default function ItemEntriesDialog({
               size="sm"
               onClick={() => {
                 setFormError(null)
+                setSelectedLocationId("")
+                setSelectedTaskId("")
+                setSelectedCondition('GOOD')
+                setRemarkText("")
+                setPhotoFiles([])
+                setVideoFiles([])
+                if (mediaInputRef.current) mediaInputRef.current.value = ""
                 setAddingRemark(true)
               }}
-              disabled={availableTasks.length === 0 || submitting}
+              disabled={!hasSelectableTasks || submitting}
               title={
-                availableTasks.length === 0
+                !hasSelectableTasks
                   ? "No subtasks available for remarks"
                   : "Add a new remark"
               }
@@ -368,13 +461,30 @@ export default function ItemEntriesDialog({
               {formError && <p className="text-sm text-destructive">{formError}</p>}
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
+                  <Label htmlFor={`select-location-${itemId}`}>Location</Label>
+                  <select
+                    id={`select-location-${itemId}`}
+                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                    value={selectedLocationId}
+                    onChange={(event) => setSelectedLocationId(event.target.value)}
+                    disabled={submitting || locationOptions.length === 0}
+                  >
+                    <option value="">Select location</option>
+                    {locationOptions.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor={`select-subtask-${itemId}`}>Subtask</Label>
                   <select
                     id={`select-subtask-${itemId}`}
                     className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
                     value={selectedTaskId}
                     onChange={(event) => setSelectedTaskId(event.target.value)}
-                    disabled={submitting || availableTasks.length === 0}
+                    disabled={submitting || !selectedLocationId || availableTasks.length === 0}
                   >
                     <option value="">Select subtask</option>
                     {availableTasks.map((task) => (
@@ -505,7 +615,7 @@ export default function ItemEntriesDialog({
                 <Button type="button" variant="outline" onClick={resetForm} disabled={submitting}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={submitting || !selectedTaskId}>
+                <Button type="submit" disabled={submitting || !selectedLocationId || !selectedTaskId}>
                   {submitting ? "Saving..." : "Save Remark"}
                 </Button>
               </div>
@@ -516,10 +626,14 @@ export default function ItemEntriesDialog({
             <div className="space-y-3">
               {displayEntries.map((entry) => {
                 const task = entry.task
+                const rawLocationName = task?.location?.name
+                const fallbackLocationName = !rawLocationName && task ? (itemName ? `${itemName} — General` : 'General') : null
+                const locationName = rawLocationName || fallbackLocationName
                 const conditionLabel = formatCondition(entry.condition ?? task?.condition)
                 const createdBy = entry.inspector?.name || entry.user?.username || entry.user?.email || null
-                const headline = task?.name || createdBy || 'Remark'
-                const mediaContext = task?.name || createdBy || null
+                const headlineBase = task?.name || createdBy || 'Remark'
+                const headline = locationName ? `${locationName} — ${headlineBase}` : headlineBase
+                const mediaContext = task?.name || locationName || createdBy || null
                 const mediaLabel = buildMediaLabel(itemName, mediaContext)
                 const showByline = Boolean(createdBy) && headline !== createdBy
 
@@ -531,19 +645,14 @@ export default function ItemEntriesDialog({
                         {showByline ? (
                           <p className="text-xs text-muted-foreground mt-0.5">By {createdBy}</p>
                         ) : null}
+                        {locationName ? (
+                          <p className="text-xs text-muted-foreground mt-0.5">Location: {locationName}</p>
+                        ) : null}
                         {conditionLabel ? (
                           <p className="text-xs text-muted-foreground mt-0.5">Condition: {conditionLabel}</p>
                         ) : null}
                       </div>
-                      <div className="flex items-center gap-2 sm:self-start">
-                        <label className="flex items-center gap-2 text-xs text-muted-foreground select-none">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(entry.includeInReport)}
-                            onChange={(event) => toggleInclude(entry.id, event.target.checked)}
-                          />
-                          Use in final report
-                        </label>
+                      <div className="flex flex-col items-end gap-2 sm:self-start">
                         <Button
                           type="button"
                           variant="ghost"
@@ -555,6 +664,14 @@ export default function ItemEntriesDialog({
                         >
                           <Trash2 className={`h-4 w-4 ${deletingEntryId === entry.id ? 'animate-pulse text-destructive' : ''}`} />
                         </Button>
+                        <label className="flex items-center gap-2 text-xs text-muted-foreground select-none">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(entry.includeInReport)}
+                            onChange={(event) => toggleInclude(entry.id, event.target.checked)}
+                          />
+                          Use in final report
+                        </label>
                       </div>
                     </div>
                     {entry.remarks ? (

@@ -56,6 +56,19 @@ async function getChecklistItem(id: string) {
         },
         orderBy: { createdOn: 'asc' }
       },
+      locations: {
+        include: {
+          tasks: {
+            include: {
+              entries: {
+                select: { id: true }
+              }
+            },
+            orderBy: { createdOn: 'asc' }
+          }
+        },
+        orderBy: { order: 'asc' }
+      },
       contributions: {
         include: {
           inspector: { select: { id: true, name: true } },
@@ -100,7 +113,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
     condition: task.condition,
     photos: task.photos,
     videos: task.videos,
-    entries: Array.isArray(task.entries) ? task.entries.map((entry: any) => ({ id: entry.id })) : []
+    entries: Array.isArray(task.entries) ? task.entries.map((entry: any) => ({ id: entry.id })) : [],
+    location: task.location
   }))
   const primaryWorkOrderId =
     checklistItem.contractChecklist?.contract?.workOrders?.[0]?.id ?? 'unknown'
@@ -154,6 +168,7 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             workOrderId={primaryWorkOrderId}
             entries={allEntries}
             tasks={dialogTasks}
+            locations={Array.isArray(checklistItem.locations) ? checklistItem.locations : []}
             itemName={checklistItem.name}
             triggerLabel={remarkButtonLabel}
           />

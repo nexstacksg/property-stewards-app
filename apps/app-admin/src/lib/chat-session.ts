@@ -6,6 +6,9 @@ export type PendingMediaUpload = {
   mediaType: 'photo' | 'video'
   workOrderId?: string
   location?: string
+  locationId?: string
+  subLocation?: string
+  subLocationId?: string
   isTaskFlow?: boolean
   taskId?: string | null
   taskItemId?: string | null
@@ -34,6 +37,9 @@ export type ChatSessionState = {
 
   // inspection context
   currentLocation?: string
+  currentLocationId?: string
+  currentSubLocationId?: string
+  currentSubLocationName?: string
   currentItemId?: string
 
   // task flow context
@@ -42,6 +48,8 @@ export type ChatSessionState = {
   currentTaskItemId?: string
   currentTaskEntryId?: string
   currentTaskCondition?: string
+  currentTaskLocationId?: string
+  currentTaskLocationName?: string
   currentLocationCondition?: string
   taskFlowStage?: 'condition' | 'media' | 'remarks' | 'confirm'
   pendingTaskRemarks?: string | null

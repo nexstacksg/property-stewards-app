@@ -18,13 +18,19 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     debugLog('📋 Session state for media upload:', metadata)
 
     const workOrderId = metadata.workOrderId
-    let currentLocation = metadata.currentLocation
+    const primaryLocationName = metadata.currentLocation
+    let currentLocation = metadata.currentSubLocationName || primaryLocationName
+    const currentLocationId = metadata.currentLocationId
+    const currentSubLocationId = metadata.currentSubLocationId
+    const currentSubLocationName = metadata.currentSubLocationName
     const taskFlowStage = metadata.taskFlowStage
     const isTaskFlowMedia = taskFlowStage === 'media' || taskFlowStage === 'remarks'
     const activeTaskName = metadata.currentTaskName
     const activeTaskId = metadata.currentTaskId
     const activeTaskItemId = metadata.currentTaskItemId
     let activeTaskEntryId = metadata.currentTaskEntryId
+    const activeTaskLocationId = metadata.currentTaskLocationId
+    const activeTaskLocationName = metadata.currentTaskLocationName
     debugLog('🔍 Media upload context check:', { workOrderId, currentLocation, hasWorkOrder: !!workOrderId, hasLocation: !!currentLocation })
 
     if (!workOrderId) {
@@ -96,7 +102,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     // Generate storage key
     let customerName = (metadata.customerName || 'unknown').toLowerCase().replace(/[^a-z0-9\s-]/gi, '').replace(/\s+/g, '-').substring(0, 50)
     const postalCode = metadata.postalCode || 'unknown'
-    let roomName = (currentLocation || 'general').toLowerCase().replace(/[^a-z0-9\s-]/gi, '').replace(/\s+/g, '-')
+    let roomName = (currentSubLocationName || currentLocation || 'general').toLowerCase().replace(/[^a-z0-9\s-]/gi, '').replace(/\s+/g, '-')
     const filename = `${randomUUID()}-${Date.now()}.${mediaType === 'video' ? 'mp4' : 'jpeg'}`
     const key = `${SPACE_DIRECTORY}/data/${customerName}-${postalCode}/${roomName}/${mediaType === 'photo' ? 'photos' : 'videos'}/${filename}`
     debugLog('📤 Uploading to DigitalOcean Spaces:', key)
@@ -130,6 +136,9 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
         mediaType,
         workOrderId,
         location: currentLocation,
+        locationId: currentLocationId,
+        subLocation: currentSubLocationName,
+        subLocationId: currentSubLocationId,
         isTaskFlow: isTaskFlowMedia,
         taskId: activeTaskId || null,
         taskItemId: activeTaskItemId || null,
@@ -148,6 +157,9 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       phoneNumber,
       workOrderId,
       currentLocation,
+      currentLocationId,
+      currentSubLocationId,
+      currentSubLocationName,
       isTaskFlowMedia,
       activeTaskId,
       activeTaskItemId,
@@ -168,6 +180,9 @@ type PersistMediaParams = {
   phoneNumber: string
   workOrderId?: string
   currentLocation?: string
+  currentLocationId?: string
+  currentSubLocationId?: string | null
+  currentSubLocationName?: string | null
   isTaskFlowMedia: boolean
   activeTaskId?: string | null
   activeTaskItemId?: string | null
@@ -184,6 +199,9 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
     phoneNumber,
     workOrderId,
     currentLocation,
+    currentLocationId,
+    currentSubLocationId,
+    currentSubLocationName,
     isTaskFlowMedia,
     activeTaskId,
     activeTaskItemId,
@@ -239,7 +257,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
   if (!handledByTaskFlow) {
     if (workOrderId && currentLocation) {
       debugLog('💾 Saving media to database for location:', currentLocation)
-      const targetItemId = await resolveChecklistItemIdForLocation(workOrderId, currentLocation)
+      const targetItemId = currentLocationId || await resolveChecklistItemIdForLocation(workOrderId, primaryLocationName || currentLocation)
       if (targetItemId) {
         try { await updateSessionState(phoneNumber, { currentItemId: targetItemId }) } catch {}
         await saveMediaForItem(targetItemId, resolvedInspectorId, publicUrl, mediaType)
@@ -250,7 +268,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
       debugLog('⚠️ Skipping database save - missing workOrderId or currentLocation')
     }
 
-    const locationName = currentLocation === 'general' ? 'your current job' : currentLocation
+    const locationName = currentSubLocationName || currentLocation || 'your current job'
     return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} uploaded successfully for ${locationName}!\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
   }
 
@@ -274,6 +292,9 @@ export async function finalizePendingMediaWithRemark(phoneNumber: string, remark
   const metadataForSave: ChatSessionState = { ...metadata }
   if (target.workOrderId) metadataForSave.workOrderId = target.workOrderId
   if (target.location) metadataForSave.currentLocation = target.location
+  if (target.locationId) metadataForSave.currentLocationId = target.locationId
+  if (target.subLocation) metadataForSave.currentSubLocationName = target.subLocation
+  if (target.subLocationId) metadataForSave.currentSubLocationId = target.subLocationId
   if (target.taskId) metadataForSave.currentTaskId = target.taskId
   if (target.taskItemId) metadataForSave.currentTaskItemId = target.taskItemId
   if (target.taskEntryId) metadataForSave.currentTaskEntryId = target.taskEntryId
@@ -287,7 +308,10 @@ export async function finalizePendingMediaWithRemark(phoneNumber: string, remark
     metadata: metadataForSave,
     phoneNumber,
     workOrderId: target.workOrderId,
-    currentLocation: target.location,
+    currentLocation: target.subLocation || target.location,
+    currentLocationId: target.locationId,
+    currentSubLocationId: target.subLocationId,
+    currentSubLocationName: target.subLocation,
     isTaskFlowMedia: Boolean(target.isTaskFlow),
     activeTaskId: target.taskId,
     activeTaskItemId: target.taskItemId,

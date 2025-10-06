@@ -93,31 +93,59 @@ const parseActionToTasks = (action?: string | null) => {
     .map((name) => ({ name, details: "" }))
 }
 
-const parseRemarksToTasks = (remarks?: string | null) => {
-  if (!remarks) return [] as NonNullable<ChecklistDraftItem["tasks"]>
+const extractActionTasksFromItem = (item: any): NonNullable<ChecklistDraftItem["tasks"]> => {
+  const locationEntries = Array.isArray(item?.locations)
+    ? item.locations
+        .map((location: any) => {
+          const name = typeof location?.name === "string" ? location.name.trim() : ""
+          const subtaskNames = Array.isArray(location?.tasks)
+            ? location.tasks
+                .map((task: any) => (typeof task?.name === "string" ? task.name.trim() : ""))
+                .filter((entry: string) => entry.length > 0)
+            : []
 
-  const segments = remarks
-    .split(";")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0)
+          return {
+            name,
+            details: subtaskNames.join(", "),
+          }
+        })
+        .filter((entry: { name: string; details: string }) => entry.name.length > 0 || entry.details.length > 0)
+    : []
 
-  const parsedSegments = segments
-    .map((segment) => {
-      const [namePart, ...rest] = segment.split(":")
-      const name = namePart.trim()
-      const details = rest.join(":").trim()
-      return {
-        name,
-        details,
-      }
-    })
-    .filter((entry) => entry.name.length > 0 || entry.details.length > 0)
-
-  if (parsedSegments.length > 0) {
-    return sanitiseTasks(parsedSegments)
+  const tasksFromLocations = sanitiseTasks(locationEntries)
+  if (tasksFromLocations.length > 0) {
+    return tasksFromLocations
   }
 
-  return sanitiseTasks(parseActionToTasks(remarks))
+  if (Array.isArray(item?.checklistTasks) && item.checklistTasks.length > 0) {
+    const grouped = new Map<string, string[]>()
+
+    for (const rawTask of item.checklistTasks) {
+      const subtaskName = typeof rawTask?.name === "string" ? rawTask.name.trim() : ""
+      if (!subtaskName) continue
+      const locationName = typeof rawTask?.location?.name === "string"
+        ? rawTask.location.name.trim()
+        : item.name
+      const key = locationName && locationName.length > 0 ? locationName : item.name
+      const existing = grouped.get(key) ?? []
+      existing.push(subtaskName)
+      grouped.set(key, existing)
+    }
+
+    if (grouped.size > 0) {
+      const entries = Array.from(grouped.entries()).map(([name, subtasks]) => ({
+        name,
+        details: subtasks.filter((entry) => entry.length > 0).join(", "),
+      }))
+      return sanitiseTasks(entries)
+    }
+  }
+
+  if (typeof item?.remarks === "string" && item.remarks.trim().length > 0) {
+    return sanitiseTasks(parseActionToTasks(item.remarks))
+  }
+
+  return [] as NonNullable<ChecklistDraftItem["tasks"]>
 }
 
 const mapTemplateItemToDraft = (item: any, index: number): ChecklistDraftItem => {
@@ -290,10 +318,10 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
           const items = checklist.items
             .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
             .map((item, index) => {
-              const tasks = parseRemarksToTasks(item.remarks)
+              const tasks = extractActionTasksFromItem(item)
               return {
                 item: item.name,
-                description: item.remarks || "",
+                description: tasks.length > 0 ? buildActionFromTasks(tasks) : item.remarks || "",
                 order: item.order ?? index + 1,
                 isRequired: true,
                 category: DEFAULT_CATEGORY,

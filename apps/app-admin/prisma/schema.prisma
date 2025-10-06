@@ -202,10 +202,26 @@ model ContractChecklistItem {
   workOrder           WorkOrder?        @relation(fields: [workOrderId], references: [id])
   contributions       ItemEntry[]
   checklistTasks      ChecklistTask[]
+  locations           ContractChecklistLocation[]
 
   @@unique([contractChecklistId, order])
   @@index([contractChecklistId])
   @@index([workOrderId])
+}
+
+model ContractChecklistLocation {
+  id         String                @id @default(cuid())
+  itemId     String
+  name       String
+  status     ChecklistItemStatus   @default(PENDING)
+  order      Int?
+  createdOn  DateTime              @default(now())
+  updatedOn  DateTime              @updatedAt
+  item       ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  tasks      ChecklistTask[]
+
+  @@index([itemId])
+  @@index([status])
 }
 
 model ContractContactPerson {
@@ -250,22 +266,24 @@ model ItemEntry {
 model ChecklistTask {
   id          String   @id @default(cuid())
   itemId      String
+  locationId  String?
   inspectorId String?
   name        String
   status      ChecklistTaskStatus @default(PENDING)
   condition   Condition?
-  actions     String[] @default([])
   photos      String[] @default([])
   videos      String[] @default([])
   createdOn   DateTime @default(now())
   updatedOn   DateTime @updatedAt
 
-  item       ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item       ContractChecklistItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location   ContractChecklistLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
   entries    ItemEntry[]
-  inspector  Inspector?            @relation(fields: [inspectorId], references: [id], onDelete: SetNull)
+  inspector  Inspector?             @relation(fields: [inspectorId], references: [id], onDelete: SetNull)
 
   @@index([itemId])
   @@index([inspectorId])
+  @@index([locationId])
 }
 
 model WorkOrder {
