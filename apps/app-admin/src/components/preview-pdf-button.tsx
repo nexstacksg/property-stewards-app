@@ -10,9 +10,10 @@ interface PreviewPdfButtonProps {
   href: string
   fileName: string
   label?: string
+  className?: string
 }
 
-export function PreviewPdfButton({ href, fileName, label = "Preview PDF" }: PreviewPdfButtonProps) {
+export function PreviewPdfButton({ href, fileName, label = "Preview PDF", className }: PreviewPdfButtonProps) {
   const [isLoading, setIsLoading] = useState(false)
 
   const handleGenerate = async () => {
@@ -44,7 +45,7 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF" }: Prev
   }
 
   return (
-    <Button onClick={handleGenerate} variant="outline" disabled={isLoading} type="button">
+    <Button onClick={handleGenerate} variant="outline" disabled={isLoading} type="button" className={className}>
       {isLoading ? (
         <>
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />

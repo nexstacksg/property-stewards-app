@@ -166,12 +166,15 @@ model ContractRemark {
   body        String
   createdOn   DateTime @default(now())
   createdById String?
+  type        ContractRemarkType   @default(FOLLOW_UP)
+  status      ContractRemarkStatus @default(OPEN)
 
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   createdBy  User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([contractId])
   @@index([createdOn])
+  @@index([status])
 }
 
 model ContractChecklist {
@@ -487,6 +490,16 @@ enum ContractStatus {
 enum ContractType {
   INSPECTION
   REPAIR
+}
+
+enum ContractRemarkType {
+  FYI
+  FOLLOW_UP
+}
+
+enum ContractRemarkStatus {
+  OPEN
+  COMPLETED
 }
 
 enum MarketingSource {
