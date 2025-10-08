@@ -8,7 +8,7 @@ CREATE TABLE "public"."ContractChecklistLocation" (
     "status" "public"."ChecklistItemStatus" NOT NULL DEFAULT 'PENDING',
     "order" INTEGER,
     "createdOn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedOn" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedOn" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "ContractChecklistLocation_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "ContractChecklistLocation_itemId_fkey"
       FOREIGN KEY ("itemId") REFERENCES "public"."ContractChecklistItem"("id")

@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments } from "@/lib/media-utils"
 import ItemEntriesDialog from "@/components/item-entries-dialog"
 import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
 
@@ -46,6 +47,9 @@ async function getWorkOrder(id: string) {
                           username: true,
                           email: true
                         }
+                      },
+                      media: {
+                        orderBy: { order: 'asc' }
                       },
                       task: {
                         select: {
@@ -133,6 +137,7 @@ function getWorkOrderStatusIcon(status: string) {
     default: return null
   }
 }
+
 
 export default async function WorkOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params
@@ -462,29 +467,41 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
 
                       const uploadTarget = item?.contractChecklistId ? 'item' : 'task'
 
-                      const itemPhotos = Array.isArray(item.photos) ? item.photos : []
                       const taskPhotosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
-                      const taskPhotos = taskPhotosSource.flatMap((task: any) =>
-                        Array.isArray(task?.photos) ? task.photos : [],
+                      const taskPhotoAttachments = mergeMediaLists(
+                        taskPhotosSource.map((task: any) => stringsToAttachments(task?.photos))
                       )
-                      const contributionPhotos = (item.contributions || []).flatMap((entry: any) => {
-                        const entryPhotos = Array.isArray(entry.photos) ? entry.photos : []
-                        const taskPhotosFromEntry = entry.task && Array.isArray(entry.task.photos) ? entry.task.photos : []
-                        return [...entryPhotos, ...taskPhotosFromEntry]
-                      })
-                      const combinedPhotos = Array.from(new Set([...itemPhotos, ...taskPhotos, ...contributionPhotos]))
+                      const contributionPhotoAttachments = mergeMediaLists(
+                        (item.contributions || []).map((entry: any) =>
+                          mergeMediaLists([
+                            extractEntryMedia(entry, 'PHOTO'),
+                            stringsToAttachments(entry?.task?.photos)
+                          ])
+                        )
+                      )
+                      const combinedPhotos = mergeMediaLists([
+                        stringsToAttachments(item.photos),
+                        taskPhotoAttachments,
+                        contributionPhotoAttachments
+                      ])
 
-                      const itemVideos = Array.isArray(item.videos) ? item.videos : []
                       const taskVideosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
-                      const taskVideos = taskVideosSource.flatMap((task: any) =>
-                        Array.isArray(task?.videos) ? task.videos : [],
+                      const taskVideoAttachments = mergeMediaLists(
+                        taskVideosSource.map((task: any) => stringsToAttachments(task?.videos))
                       )
-                      const contributionVideos = (item.contributions || []).flatMap((entry: any) => {
-                        const entryVideos = Array.isArray(entry.videos) ? entry.videos : []
-                        const taskVideosFromEntry = entry.task && Array.isArray(entry.task.videos) ? entry.task.videos : []
-                        return [...entryVideos, ...taskVideosFromEntry]
-                      })
-                      const combinedVideos = Array.from(new Set([...itemVideos, ...taskVideos, ...contributionVideos]))
+                      const contributionVideoAttachments = mergeMediaLists(
+                        (item.contributions || []).map((entry: any) =>
+                          mergeMediaLists([
+                            extractEntryMedia(entry, 'VIDEO'),
+                            stringsToAttachments(entry?.task?.videos)
+                          ])
+                        )
+                      )
+                      const combinedVideos = mergeMediaLists([
+                        stringsToAttachments(item.videos),
+                        taskVideoAttachments,
+                        contributionVideoAttachments
+                      ])
 
                       return (
                         <TableRow key={item.id}>

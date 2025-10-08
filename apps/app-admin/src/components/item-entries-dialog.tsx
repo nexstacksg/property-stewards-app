@@ -11,7 +11,8 @@ import {
   DialogTrigger
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import WorkOrderItemMedia from "@/components/work-order-item-media"
+import WorkOrderItemMedia, { MediaAttachment as WorkOrderMediaAttachment } from "@/components/work-order-item-media"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments } from "@/lib/media-utils"
 import { useRouter } from "next/navigation"
 import { Trash2, Upload, X } from "lucide-react"
 
@@ -45,12 +46,26 @@ type Entry = {
   task?: Task | null
   photos?: string[] | null
   videos?: string[] | null
+  media?: EntryMedia[] | null
+}
+
+type EntryMedia = {
+  id: string
+  url: string
+  caption?: string | null
+  type: 'PHOTO' | 'VIDEO'
+  order?: number | null
 }
 
 type DisplayEntry = Entry & {
   task: Task | undefined
-  photos: string[]
-  videos: string[]
+  photos: WorkOrderMediaAttachment[]
+  videos: WorkOrderMediaAttachment[]
+}
+
+type PendingMediaFile = {
+  file: File
+  caption: string
 }
 
 type Props = {
@@ -104,8 +119,8 @@ export default function ItemEntriesDialog({
   const [submitting, setSubmitting] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([])
-  const [videoFiles, setVideoFiles] = useState<File[]>([])
+  const [photoFiles, setPhotoFiles] = useState<PendingMediaFile[]>([])
+  const [videoFiles, setVideoFiles] = useState<PendingMediaFile[]>([])
 
   useEffect(() => {
     setLocalEntries(entries)
@@ -218,15 +233,15 @@ export default function ItemEntriesDialog({
     const files = Array.from(event.target.files || [])
     if (files.length === 0) return
 
-    const newPhotos: File[] = []
-    const newVideos: File[] = []
+    const newPhotos: PendingMediaFile[] = []
+    const newVideos: PendingMediaFile[] = []
     files.forEach((file) => {
       if (file.type.startsWith("image/")) {
-        newPhotos.push(file)
+        newPhotos.push({ file, caption: "" })
         return
       }
       if (file.type.startsWith("video/")) {
-        newVideos.push(file)
+        newVideos.push({ file, caption: "" })
       }
     })
 
@@ -244,6 +259,18 @@ export default function ItemEntriesDialog({
     setPhotoFiles([])
     setVideoFiles([])
     if (mediaInputRef.current) mediaInputRef.current.value = ""
+  }
+
+  const updatePhotoCaption = (index: number, caption: string) => {
+    setPhotoFiles((prev) =>
+      prev.map((entry, i) => (i === index ? { ...entry, caption } : entry))
+    )
+  }
+
+  const updateVideoCaption = (index: number, caption: string) => {
+    setVideoFiles((prev) =>
+      prev.map((entry, i) => (i === index ? { ...entry, caption } : entry))
+    )
   }
 
   const removePhotoAt = (index: number) => {
@@ -300,8 +327,14 @@ export default function ItemEntriesDialog({
       if (trimmedRemark.length > 0) {
         formData.set("remark", trimmedRemark)
       }
-      photoFiles.forEach((file) => formData.append("photos", file))
-      videoFiles.forEach((file) => formData.append("videos", file))
+      photoFiles.forEach(({ file, caption }) => {
+        formData.append('photos', file)
+        formData.append('photoCaptions', caption || '')
+      })
+      videoFiles.forEach(({ file, caption }) => {
+        formData.append('videos', file)
+        formData.append('videoCaptions', caption || '')
+      })
 
       const response = await fetch(`/api/checklist-items/${itemId}/remarks`, {
         method: "POST",
@@ -383,16 +416,17 @@ export default function ItemEntriesDialog({
   const displayEntries: DisplayEntry[] = useMemo(() => {
     return localEntries.map((entry) => {
       const task = localTasks.find((task) => (task.entries || []).some((linked) => linked.id === entry.id))
-      const entryPhotos: string[] = Array.isArray(entry.photos) ? entry.photos : []
-      const taskPhotos: string[] = task && Array.isArray(task.photos) ? task.photos : []
-      const entryVideos: string[] = Array.isArray(entry.videos) ? entry.videos : []
-      const taskVideos: string[] = task && Array.isArray(task.videos) ? task.videos : []
-
       return {
         ...entry,
         task,
-        photos: Array.from(new Set([...entryPhotos, ...taskPhotos])),
-        videos: Array.from(new Set([...entryVideos, ...taskVideos])),
+        photos: mergeMediaLists([
+          extractEntryMedia(entry, 'PHOTO'),
+          stringsToAttachments(task?.photos)
+        ]),
+        videos: mergeMediaLists([
+          extractEntryMedia(entry, 'VIDEO'),
+          stringsToAttachments(task?.videos)
+        ]),
       }
     })
   }, [localEntries, localTasks])
@@ -557,41 +591,69 @@ export default function ItemEntriesDialog({
                       </div>
                     </div>
                     {(photoFiles.length > 0 || videoFiles.length > 0) && (
-                      <div className="mt-3 space-y-2 text-sm">
-                        {photoFiles.map((file, index) => (
+                      <div className="mt-3 space-y-3 text-sm">
+                        {photoFiles.map((entry, index) => (
                           <div
-                            key={`photo-${index}-${file.name}`}
-                            className="flex items-center justify-between gap-3 rounded border border-transparent bg-background px-2 py-1 text-muted-foreground"
+                            key={`photo-${index}-${entry.file.name}`}
+                            className="rounded border border-transparent bg-background px-2 py-2 text-muted-foreground"
                           >
-                            <span className="truncate">Photo: {file.name || `photo-${index + 1}`}</span>
-                            <button
-                              type="button"
-                              onClick={() => removePhotoAt(index)}
-                              className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="truncate">Photo: {entry.file.name || `photo-${index + 1}`}</span>
+                              <button
+                                type="button"
+                                onClick={() => removePhotoAt(index)}
+                                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                disabled={submitting}
+                                aria-label={`Remove ${entry.file.name || 'photo'}`}
+                              >
+                                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span className="sr-only">Remove file</span>
+                              </button>
+                            </div>
+                            <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`photo-caption-${itemId}-${index}`}>
+                              Caption (optional)
+                            </label>
+                            <input
+                              id={`photo-caption-${itemId}-${index}`}
+                              type="text"
+                              className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={entry.caption}
+                              onChange={(event) => updatePhotoCaption(index, event.target.value)}
+                              placeholder="Describe this photo"
                               disabled={submitting}
-                              aria-label={`Remove ${file.name || 'photo'}`}
-                            >
-                              <X className="h-3.5 w-3.5" aria-hidden="true" />
-                              <span className="sr-only">Remove file</span>
-                            </button>
+                            />
                           </div>
                         ))}
-                        {videoFiles.map((file, index) => (
+                        {videoFiles.map((entry, index) => (
                           <div
-                            key={`video-${index}-${file.name}`}
-                            className="flex items-center justify-between gap-3 rounded border border-transparent bg-background px-2 py-1 text-muted-foreground"
+                            key={`video-${index}-${entry.file.name}`}
+                            className="rounded border border-transparent bg-background px-2 py-2 text-muted-foreground"
                           >
-                            <span className="truncate">Video: {file.name || `video-${index + 1}`}</span>
-                            <button
-                              type="button"
-                              onClick={() => removeVideoAt(index)}
-                              className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="truncate">Video: {entry.file.name || `video-${index + 1}`}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeVideoAt(index)}
+                                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                disabled={submitting}
+                                aria-label={`Remove ${entry.file.name || 'video'}`}
+                              >
+                                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span className="sr-only">Remove file</span>
+                              </button>
+                            </div>
+                            <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`video-caption-${itemId}-${index}`}>
+                              Caption (optional)
+                            </label>
+                            <input
+                              id={`video-caption-${itemId}-${index}`}
+                              type="text"
+                              className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={entry.caption}
+                              onChange={(event) => updateVideoCaption(index, event.target.value)}
+                              placeholder="Describe this video"
                               disabled={submitting}
-                              aria-label={`Remove ${file.name || 'video'}`}
-                            >
-                              <X className="h-3.5 w-3.5" aria-hidden="true" />
-                              <span className="sr-only">Remove file</span>
-                            </button>
+                            />
                           </div>
                         ))}
                       </div>

@@ -256,11 +256,32 @@ model ItemEntry {
   inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
   user            User?                  @relation(fields: [userId], references: [id])
   task            ChecklistTask?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  media           ItemEntryMedia[]
 
   @@index([itemId])
   @@index([inspectorId])
   @@index([userId])
   @@index([taskId])
+}
+
+model ItemEntryMedia {
+  id        String               @id @default(cuid())
+  entryId   String
+  url       String
+  caption   String?
+  type      ItemEntryMediaType
+  order     Int                  @default(0)
+  createdOn DateTime             @default(now())
+
+  entry ItemEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@index([type])
+}
+
+enum ItemEntryMediaType {
+  PHOTO
+  VIDEO
 }
 
 model ChecklistTask {

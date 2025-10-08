@@ -64,6 +64,8 @@ export async function POST(
     let workOrderId = 'unknown'
     let photoFiles: File[] = []
     let videoFiles: File[] = []
+    let photoCaptions: string[] = []
+    let videoCaptions: string[] = []
 
     if (contentType.includes('multipart/form-data')) {
       const form = await request.formData()
@@ -75,9 +77,15 @@ export async function POST(
       photoFiles = form
         .getAll('photos')
         .filter((value): value is File => value instanceof File && value.size > 0)
+      const rawPhotoCaptions = form.getAll('photoCaptions')
+      photoCaptions = rawPhotoCaptions
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
       videoFiles = form
         .getAll('videos')
         .filter((value): value is File => value instanceof File && value.size > 0)
+      const rawVideoCaptions = form.getAll('videoCaptions')
+      videoCaptions = rawVideoCaptions
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
     } else {
       const body = await request.json()
       remark = typeof body.remark === 'string' ? body.remark.trim() : undefined
@@ -85,6 +93,14 @@ export async function POST(
       condition = typeof body.condition === 'string' ? body.condition : undefined
       if (typeof body.workOrderId === 'string' && body.workOrderId.trim().length > 0) {
         workOrderId = body.workOrderId.trim()
+      }
+      if (Array.isArray(body.photoCaptions)) {
+        photoCaptions = body.photoCaptions
+          .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
+      }
+      if (Array.isArray(body.videoCaptions)) {
+        videoCaptions = body.videoCaptions
+          .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
       }
     }
 
@@ -188,6 +204,31 @@ export async function POST(
     const videoUrls = await Promise.all(videoFiles.map((file) => uploadFile(file, workOrderId, entry.id, 'videos')))
 
     if (photoUrls.length > 0 || videoUrls.length > 0) {
+      const mediaCreateData: Array<{ entryId: string; url: string; caption: string | null; type: 'PHOTO' | 'VIDEO'; order: number }> = []
+
+      if (photoUrls.length > 0) {
+        const existingPhotoCount = await prisma.itemEntryMedia.count({ where: { entryId: entry.id, type: 'PHOTO' } })
+        photoUrls.forEach((url, index) => {
+          const rawCaption = photoCaptions[index] || ''
+          const caption = rawCaption.trim().length > 0 ? rawCaption.trim() : null
+          mediaCreateData.push({ entryId: entry.id, url, caption, type: 'PHOTO', order: existingPhotoCount + index })
+        })
+      }
+
+      if (videoUrls.length > 0) {
+        const existingVideoCount = await prisma.itemEntryMedia.count({ where: { entryId: entry.id, type: 'VIDEO' } })
+        videoUrls.forEach((url, index) => {
+          const rawCaption = videoCaptions[index] || ''
+          const caption = rawCaption.trim().length > 0 ? rawCaption.trim() : null
+          mediaCreateData.push({ entryId: entry.id, url, caption, type: 'VIDEO', order: existingVideoCount + index })
+        })
+      }
+
+      if (mediaCreateData.length > 0) {
+        await prisma.itemEntryMedia.createMany({ data: mediaCreateData })
+      }
+
+      // Maintain legacy arrays for compatibility
       await prisma.itemEntry.update({
         where: { id: entry.id },
         data: {
@@ -209,6 +250,9 @@ export async function POST(
       include: {
         inspector: { select: { id: true, name: true } },
         user: { select: { id: true, username: true, email: true } },
+        media: {
+          orderBy: { order: 'asc' }
+        },
         task: {
           select: {
             id: true,
