@@ -658,15 +658,15 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       }) as any[]
     }
 
-    const sorted = [...items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    const sorted = [...items].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
 
-    const result = sorted.map(item => {
+    const result = sorted.map((item: any) => {
       const hasLocations = Array.isArray(item.locations) && item.locations.length > 0
       const locationSummaries = hasLocations
-        ? item.locations.map(loc => {
-            const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+        ? item.locations.map((loc: any) => {
+            const tasks: any[] = Array.isArray(loc.tasks) ? loc.tasks : []
             const totalTasks = tasks.length
-            const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+            const completedTasks = tasks.filter((task: any) => task.status === 'COMPLETED').length
             const isCompleted = loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
             return {
               id: loc.id,
@@ -694,7 +694,7 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       }
 
       const isCompleted = hasLocations
-        ? locationSummaries.length > 0 && locationSummaries.every(loc => loc.status === 'COMPLETED')
+        ? locationSummaries.length > 0 && locationSummaries.every((loc: any) => loc.status === 'COMPLETED')
         : item.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
 
       return {
@@ -705,7 +705,7 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
         totalTasks,
         completedTasks,
         contractChecklistItemId: item.id,
-        subLocations: locationSummaries.sort((a, b) => a.order - b.order)
+        subLocations: locationSummaries.sort((a: any, b: any) => a.order - b.order)
       }
     })
 
@@ -784,7 +784,7 @@ export async function getChecklistLocationsForItem(itemId: string) {
     }
 
     return locations
-      .map((loc, index) => {
+      .map((loc: any, index: number) => {
         const totalTasks = totals.get(loc.id) ?? 0
         const completedTasks = completed.get(loc.id) ?? 0
         return {
@@ -796,7 +796,7 @@ export async function getChecklistLocationsForItem(itemId: string) {
           completedTasks
         }
       })
-      .filter(loc => loc.totalTasks > 0)
+      .filter((loc: any) => loc.totalTasks > 0)
   } catch (error) {
     console.error('Error fetching checklist locations:', error)
     return []
@@ -963,9 +963,9 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
 
       const filterBySubLocation = subLocationId && subLocationId.trim().length > 0
 
-      for (const loc of orderedLocations) {
+      for (const loc of orderedLocations as any[]) {
         if (filterBySubLocation && loc.id !== subLocationId) continue
-        const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+        const tasks: any[] = Array.isArray(loc.tasks) ? loc.tasks : []
         if (tasks.length === 0) {
           output.push({
             id: loc.id,
