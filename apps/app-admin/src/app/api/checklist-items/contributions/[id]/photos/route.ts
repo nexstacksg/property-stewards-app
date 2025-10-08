@@ -13,6 +13,8 @@ export async function POST(
     const form = await request.formData()
     const file = form.get('file') as File | null
     const workOrderId = (form.get('workOrderId') as string | null) || 'unknown'
+    const rawCaption = form.get('caption')
+    const caption = typeof rawCaption === 'string' && rawCaption.trim().length > 0 ? rawCaption.trim() : null
 
     if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
     const contentType = file.type || 'application/octet-stream'
@@ -61,11 +63,25 @@ export async function POST(
       return NextResponse.json({ error: 'Contribution not found' }, { status: 404 })
     }
 
+    const existingPhotoCount = await prisma.itemEntryMedia.count({ where: { entryId: entry.id, type: 'PHOTO' } })
+    await prisma.itemEntryMedia.create({
+      data: {
+        entryId: entry.id,
+        url: publicUrl,
+        caption,
+        type: 'PHOTO',
+        order: existingPhotoCount,
+      }
+    })
+
     const updatedEntry = await prisma.itemEntry.update({
       where: { id: entry.id },
       data: { photos: { push: publicUrl } },
       include: {
         inspector: { select: { id: true, name: true } },
+        media: {
+          orderBy: { order: 'asc' }
+        },
         task: {
           select: {
             id: true,
