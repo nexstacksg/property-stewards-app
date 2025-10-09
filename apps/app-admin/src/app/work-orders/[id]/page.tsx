@@ -280,7 +280,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
           <div className="min-w-0 space-y-1">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               <h1 className="text-2xl font-bold leading-tight sm:text-3xl">
-                Work Order #{workOrder.id.slice(-8).toUpperCase()}
+                Work Order #{workOrder.id}
               </h1>
               <div className="flex items-center gap-1 text-sm sm:text-base">
                 {getWorkOrderStatusIcon(workOrder.status)}
@@ -314,7 +314,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
             <div className="space-y-4">
               {/* Meta row */}
               <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                <Link href={`/contracts/${workOrder.contractId}`} className="font-mono text-sm text-primary hover:underline">#{workOrder.contract.id.slice(-8).toUpperCase()}</Link>
+                <Link href={`/contracts/${workOrder.contractId}`} className="font-mono text-sm text-primary hover:underline">#{workOrder.contract.id }</Link>
                 <Badge variant={getWorkOrderStatusVariant(workOrder.status)}>{workOrder.status}</Badge>
                 {workOrder.contract.servicePackage && (
                   <Badge variant="outline">{workOrder.contract.servicePackage}</Badge>

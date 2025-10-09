@@ -227,7 +227,7 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
                     {inspector.workOrders.map((workOrder) => (
                       <TableRow key={workOrder.id}>
                         <TableCell className="font-medium">
-                          #{workOrder.id.slice(-8).toUpperCase()}
+                          #{workOrder.id }
                         </TableCell>
                         <TableCell>
                           <Link 

@@ -355,7 +355,7 @@ export default function WorkOrdersPage() {
                                 <div className="flex flex-wrap items-start justify-between gap-3">
                                   <div className="space-y-1">
                                     <Link href={`/work-orders/${workOrder.id}`} className="text-base font-semibold hover:text-primary">
-                                      Work Order #{workOrder.id.slice(-8).toUpperCase()}
+                                      Work Order #{workOrder.id }
                                     </Link>
                                     <p className="text-sm text-muted-foreground">
                                       {formatTime(workOrder.scheduledStartDateTime)} – {formatTime(workOrder.scheduledEndDateTime)}

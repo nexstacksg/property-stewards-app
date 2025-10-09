@@ -96,7 +96,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
 
   const imageCache = new Map<string, Buffer>()
 
-  const workOrderLabels = workOrders.map((wo: any) => wo.id.slice(-8).toUpperCase())
+  const workOrderLabels = workOrders.map((wo: any) => wo.id )
   const combinedHeading = `Work Orders: ${workOrderLabels.join(' -- ')}`
   const scheduleStart = workOrders
     .map((wo: any) => (wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime).getTime() : undefined))
@@ -138,7 +138,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     doc.text(`Actual: ${actualRange}`)
   }
   const workOrderStatusSummary = workOrders
-    .map((wo: any) => `${wo.id.slice(-8).toUpperCase()}: ${formatEnum(wo.status) || wo.status}`)
+    .map((wo: any) => `${wo.id}: ${formatEnum(wo.status) || wo.status}`)
     .join(' | ')
   if (workOrderStatusSummary) {
     doc.text(`Statuses: ${workOrderStatusSummary}`)

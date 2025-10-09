@@ -295,7 +295,7 @@ export default async function DashboardPage() {
                         href={`/contracts/${remark.contract.id}`}
                         className="font-mono text-xs text-primary hover:underline"
                       >
-                        #{remark.contract.id.slice(-8).toUpperCase()}
+                        #{remark.contract.id}
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-md text-sm">

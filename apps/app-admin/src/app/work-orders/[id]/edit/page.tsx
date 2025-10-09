@@ -253,7 +253,7 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
                     <div>
                       <Label className="text-xs">Contract</Label>
                       <p className="font-medium">
-                        #{contract?.id.slice(-8).toUpperCase()}
+                        #{contract?.id }
                       </p>
                     </div>
                     <div>
@@ -481,7 +481,7 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
               <CardContent className="space-y-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Work Order ID</p>
-                  <p className="font-mono text-sm">#{workOrderId?.slice(-8).toUpperCase()}</p>
+                  <p className="font-mono text-sm">#{workOrderId }</p>
                 </div>
 
                 <div>

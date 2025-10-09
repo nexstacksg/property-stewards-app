@@ -163,7 +163,7 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                         href={`/contracts/${contract.id}`}
                         className="block text-sm text-primary hover:underline"
                       >
-                        #{contract.id.slice(-8).toUpperCase()} - {contract.customer.name}
+                        #{contract.id } - {contract.customer.name}
                       </Link>
                     ))}
                   </div>

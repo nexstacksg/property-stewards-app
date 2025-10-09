@@ -59,6 +59,8 @@ export async function POST(
     const contentType = request.headers.get('content-type') || ''
 
     let remark: string | undefined
+    let cause: string | undefined
+    let resolution: string | undefined
     let taskId: string | undefined
     let condition: string | undefined
     let workOrderId = 'unknown'
@@ -70,6 +72,8 @@ export async function POST(
     if (contentType.includes('multipart/form-data')) {
       const form = await request.formData()
       remark = toStringValue(form.get('remark'))
+      cause = toStringValue(form.get('cause'))
+      resolution = toStringValue(form.get('resolution'))
       taskId = toStringValue(form.get('taskId'))
       condition = toStringValue(form.get('condition'))
       const rawWorkOrderId = toStringValue(form.get('workOrderId'))
@@ -89,6 +93,8 @@ export async function POST(
     } else {
       const body = await request.json()
       remark = typeof body.remark === 'string' ? body.remark.trim() : undefined
+      cause = typeof body.cause === 'string' ? body.cause.trim() : undefined
+      resolution = typeof body.resolution === 'string' ? body.resolution.trim() : undefined
       taskId = typeof body.taskId === 'string' ? body.taskId : undefined
       condition = typeof body.condition === 'string' ? body.condition : undefined
       if (typeof body.workOrderId === 'string' && body.workOrderId.trim().length > 0) {
@@ -190,6 +196,16 @@ export async function POST(
       remarks: trimmedRemark.length > 0 ? trimmedRemark : null,
     }
 
+    if (typeof cause === 'string') {
+      const trimmedCause = cause.trim()
+      entryData.cause = trimmedCause.length > 0 ? trimmedCause : null
+    }
+
+    if (typeof resolution === 'string') {
+      const trimmedResolution = resolution.trim()
+      entryData.resolution = trimmedResolution.length > 0 ? trimmedResolution : null
+    }
+
     if (typeof normalizedCondition !== 'undefined') {
       entryData.condition = normalizedCondition ?? null
     }
@@ -281,52 +297,125 @@ export async function PATCH(
     const { entryId } = await params
     const body = await request.json()
     const remark = typeof body.remark === 'string' ? body.remark.trim() : undefined
+    const causeValue = typeof body.cause === 'string' ? body.cause.trim() : undefined
+    const resolutionValue = typeof body.resolution === 'string' ? body.resolution.trim() : undefined
     const conditionValue = normalizeCondition(body.condition)
 
-    if (!remark && typeof conditionValue === 'undefined') {
+    const rawMediaUpdates = Array.isArray(body.mediaUpdates) ? body.mediaUpdates : []
+    const mediaUpdates = rawMediaUpdates
+      .map((entry: any) => {
+        if (!entry || typeof entry !== 'object') return null
+        const id = typeof entry.id === 'string' ? entry.id : null
+        if (!id) return null
+        if (entry.caption === null) {
+          return { id, caption: null }
+        }
+        if (typeof entry.caption === 'string') {
+          const trimmed = entry.caption.trim()
+          return { id, caption: trimmed.length > 0 ? trimmed : null }
+        }
+        return { id, caption: null }
+      })
+      .filter((entry:any): entry is { id: string; caption: string | null } => Boolean(entry))
+
+    if (!remark && typeof conditionValue === 'undefined' && mediaUpdates.length === 0 && typeof causeValue === 'undefined' && typeof resolutionValue === 'undefined') {
       return NextResponse.json({ error: 'No updates provided' }, { status: 400 })
     }
 
-    const updateData: any = {}
-    if (typeof remark === 'string') {
-      updateData.remarks = remark.length > 0 ? remark : null
-    }
-    if (typeof conditionValue !== 'undefined') {
-      if (conditionValue && !ALLOWED_CONDITIONS.includes(conditionValue)) {
-        return NextResponse.json({ error: 'Invalid condition value' }, { status: 400 })
-      }
-      updateData.condition = conditionValue ?? null
+    if (typeof conditionValue !== 'undefined' && conditionValue && !ALLOWED_CONDITIONS.includes(conditionValue)) {
+      return NextResponse.json({ error: 'Invalid condition value' }, { status: 400 })
     }
 
-    const updatedEntry = await prisma.itemEntry.update({
-      where: { id: entryId },
-      data: updateData,
-      include: {
-        inspector: { select: { id: true, name: true } },
-        user: { select: { id: true, username: true, email: true } },
-        task: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            photos: true,
-            videos: true,
-            condition: true,
+    const updatedEntry = await prisma.$transaction(async (tx) => {
+      const existing = await tx.itemEntry.findUnique({ where: { id: entryId }, select: { id: true, taskId: true } })
+      if (!existing) {
+        throw new Error('NOT_FOUND')
+      }
+
+      const updateData: any = {}
+      if (typeof remark === 'string') {
+        updateData.remarks = remark.length > 0 ? remark : null
+      }
+      if (typeof causeValue === 'string') {
+        updateData.cause = causeValue.length > 0 ? causeValue : null
+      }
+      if (typeof resolutionValue === 'string') {
+        updateData.resolution = resolutionValue.length > 0 ? resolutionValue : null
+      }
+      if (typeof conditionValue !== 'undefined') {
+        updateData.condition = conditionValue ?? null
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await tx.itemEntry.update({
+          where: { id: entryId },
+          data: updateData,
+        })
+      }
+
+      if (mediaUpdates.length > 0) {
+        const mediaIds = mediaUpdates.map((entry:any) => entry.id)
+        const existingMedia = await tx.itemEntryMedia.findMany({
+          where: { entryId, id: { in: mediaIds } },
+          select: { id: true },
+        })
+        const existingSet = new Set(existingMedia.map((item) => item.id))
+        const missing = mediaIds.filter((id:any) => !existingSet.has(id))
+        if (missing.length > 0) {
+          throw new Error('MEDIA_NOT_FOUND')
+        }
+
+        await Promise.all(
+          mediaUpdates.map((update:any) =>
+            tx.itemEntryMedia.update({ where: { id: update.id }, data: { caption: update.caption } })
+          )
+        )
+      }
+
+      const entry = await tx.itemEntry.findUnique({
+        where: { id: entryId },
+        include: {
+          inspector: { select: { id: true, name: true } },
+          user: { select: { id: true, username: true, email: true } },
+          media: {
+            orderBy: { order: 'asc' }
+          },
+          task: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              photos: true,
+              videos: true,
+              condition: true,
+            },
           },
         },
-      },
-    })
-
-    if (typeof conditionValue !== 'undefined' && updatedEntry.task) {
-      await prisma.checklistTask.update({
-        where: { id: updatedEntry.task.id },
-        data: { condition: conditionValue ?? null }
       })
-      updatedEntry.task.condition = conditionValue ?? null
-    }
+
+      if (!entry) {
+        throw new Error('NOT_FOUND')
+      }
+
+      if (typeof conditionValue !== 'undefined' && entry.task) {
+        await tx.checklistTask.update({
+          where: { id: entry.task.id },
+          data: { condition: conditionValue ?? null }
+        })
+        entry.task.condition = conditionValue ?? null
+      }
+
+      return entry
+    })
 
     return NextResponse.json(updatedEntry)
   } catch (error) {
+    if (error instanceof Error && error.message === 'NOT_FOUND') {
+      return NextResponse.json({ error: 'Remark not found' }, { status: 404 })
+    }
+    if (error instanceof Error && error.message === 'MEDIA_NOT_FOUND') {
+      return NextResponse.json({ error: 'Media item not found for this remark' }, { status: 400 })
+    }
     console.error('Error updating remark:', error)
     return NextResponse.json({ error: 'Failed to update remark' }, { status: 500 })
   }

@@ -198,7 +198,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           <div className="min-w-0 space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
               <h1 className="text-2xl font-bold leading-tight sm:text-3xl">
-                Contract #{contract.id.slice(-8).toUpperCase()}
+                Contract #{contract.id}
               </h1>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={getContractStatusVariant(contract.status)}>{contract.status}</Badge>
@@ -341,7 +341,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                   <div className="flex flex-wrap gap-2 mt-1">
                     {referenceContracts.map((refId: string) => (
                       <Link key={refId} href={`/contracts/${refId}`} className="font-mono text-xs text-primary hover:underline">
-                        #{refId.slice(-8).toUpperCase()}
+                        #{refId }
                       </Link>
                     ))}
                   </div>
@@ -413,7 +413,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                     {contract.workOrders.map((workOrder: any) => (
                       <TableRow key={workOrder.id}>
                         <TableCell className="font-medium">
-                          #{workOrder.id.slice(-8).toUpperCase()}
+                          #{workOrder.id }
                         </TableCell>
                         <TableCell>
                           {workOrder.inspectors && workOrder.inspectors.length > 0 ? (
