@@ -283,41 +283,29 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         return `Got it — I saved your remark.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
       }
 
-      // e) Task selection by number (or Mark ALL tasks complete)
+      // e) Task selection by number (last option = Go back one step)
       if (selectedNumber && selectedNumber > 0) {
         const tasksRes = await executeTool('getTasksForLocation', { workOrderId: ctx.workOrderId, location: ctx.locationName, contractChecklistItemId: ctx.itemId, subLocationId: ctx.subLocationId }, undefined, phone)
         const data = safeParseJSON(tasksRes)
         const tasks = Array.isArray(data?.tasks) ? data.tasks : []
         if (tasks.length === 0) return null
-        const allDoneNumber = tasks.length + 1
-        if (selectedNumber > allDoneNumber) {
+        const backNumber = tasks.length + 1
+        if (selectedNumber > backNumber) {
           return `That task number isn't valid.\n\n${formatTasksResponse(ctx.locationName, tasksRes)}`
         }
-        if (selectedNumber === allDoneNumber) {
-          const completeAll = await executeTool('completeTask', { phase: 'start', workOrderId: ctx.workOrderId, taskId: 'complete_all_tasks' }, undefined, phone)
-          const c = safeParseJSON(completeAll)
-          if (!c?.success) return c?.error || 'Failed to complete all tasks. Please try again.'
-          // Reset current location context so the next numeric input is treated as a fresh location selection
-          try {
-            await updateSessionState(phone, {
-              currentLocation: undefined,
-              currentLocationId: undefined,
-              currentSubLocationId: undefined,
-              currentSubLocationName: undefined,
-              taskFlowStage: undefined,
-              currentTaskId: undefined,
-              currentTaskName: undefined,
-              currentTaskItemId: undefined,
-              currentTaskEntryId: undefined,
-              currentTaskCondition: undefined,
-              currentTaskLocationId: undefined,
-              currentTaskLocationName: undefined
-            })
-          } catch {}
+        if (selectedNumber === backNumber) {
+          // Go back to sub-locations if present; otherwise to locations
+          if (ctx.subLocationId) {
+            const subs = await executeTool('getSubLocations', { workOrderId: ctx.workOrderId, contractChecklistItemId: ctx.itemId, locationName: ctx.locationName }, undefined, phone)
+            const subData = safeParseJSON(subs)
+            const formatted: string[] = subData?.subLocationsFormatted || []
+            const header = `You're back at ${ctx.locationName}. Here are the sub-locations:`
+            if (formatted.length > 0) return [header, '', ...formatted, '', 'Next: reply with your sub-location choice.'].join('\n')
+          }
           const locs = await executeTool('getJobLocations', { jobId: ctx.workOrderId }, undefined, phone)
           const locData = safeParseJSON(locs)
           const formatted: string[] = locData?.locationsFormatted || []
-          const header = 'Location completed. Here are the available locations:'
+          const header = 'Here are the locations available for inspection:'
           return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
         }
         const chosen = tasks[selectedNumber - 1]
@@ -362,10 +350,9 @@ function formatTasksResponse(locationName: string, toolOutput: string): string |
     const status = t.displayStatus === 'done' ? ' (Done)' : ''
     lines.push(`[${t.number}] ${t.description}${status}`)
   }
-  lines.push(`[${tasks.length + 1}] Mark ALL tasks complete and finish this location.`)
-  const next = typeof data.nextPrompt === 'string' && data.nextPrompt.length > 0
-    ? data.nextPrompt
-    : `Reply with the task number or [${tasks.length + 1}] to mark all tasks complete.`
+  // Replace old "mark all complete" with "Go back" option
+  lines.push(`[${tasks.length + 1}] Go back`)
+  const next = `Reply with the task number to continue, or [${tasks.length + 1}] to go back.`
   lines.push('')
   lines.push(`Next: ${next}`)
   return lines.join('\n')
