@@ -568,8 +568,24 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             const requiresPhoto = condition !== 'NOT_APPLICABLE'
             const requiresCauseResolution = condition === 'FAIR' || condition === 'UNSATISFACTORY'
             const photoCount = entryRecord?.photos?.length ?? 0
-            const causeText = entryRecord?.cause?.trim() ?? ''
-            const resolutionText = entryRecord?.resolution?.trim() ?? ''
+            let causeText = entryRecord?.cause?.trim() ?? ''
+            let resolutionText = entryRecord?.resolution?.trim() ?? ''
+            if ((!causeText || !resolutionText) && entryRecord?.remarks) {
+              try {
+                const m = entryRecord.remarks.match(/Cause:\s*(.*)\nResolution:\s*(.*)/i)
+                if (m) {
+                  causeText = causeText || m[1].trim()
+                  resolutionText = resolutionText || m[2].trim()
+                }
+              } catch {}
+            }
+            if ((!causeText || !resolutionText) && sessionId) {
+              try {
+                const latest2 = await getSessionState(sessionId)
+                if (!causeText && latest2.pendingTaskCause) causeText = latest2.pendingTaskCause
+                if (!resolutionText && latest2.pendingTaskResolution) resolutionText = latest2.pendingTaskResolution
+              } catch {}
+            }
 
             if (requiresPhoto && photoCount === 0) {
               return JSON.stringify({ success: false, error: 'Please send at least one photo for this status before marking the task complete.' })
