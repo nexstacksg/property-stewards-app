@@ -1,6 +1,6 @@
 import Link from "next/link"
 
-import { ContractRemarkStatus, ContractRemarkType } from "@prisma/client"
+import { ContractRemarkStatus } from "@prisma/client"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"

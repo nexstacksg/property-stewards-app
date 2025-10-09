@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { detectHasMedia, sendWhatsAppResponse, buildInstantReply } from './utils'
+import { detectHasMedia, sendWhatsAppResponse } from './utils'
 import { handleMediaMessage, finalizePendingMediaWithRemark } from './media'
 // Note: assistant module is loaded lazily to reduce cold-start
 import { tryHandleWithoutAI } from './fast-path'
-import { createInstantController, type InstantController } from './instant'
 import { getSessionState } from '@/lib/chat-session'
 import { getMemcacheClient } from '@/lib/memcache'
 
@@ -36,8 +35,6 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
-  let instantCtrl: InstantController | null = null
-  let instantReplyMessage: string | null = null
 
   try {
     // Verify webhook secret
@@ -71,8 +68,7 @@ export async function POST(request: NextRequest) {
     const phoneNumber = rawPhone?.replace(/[\s+-]/g, '').replace(/^0+/, '').replace('@c.us', '') || ''
     const message = data.body || data.message?.text?.body || ''
 
-    // Initialize instant controller with phone context now that we know it
-    instantCtrl = createInstantController(phoneNumber)
+    // No instant acknowledgement; we send only the final response
 
     if (process.env.NODE_ENV !== 'production') {
       console.log('📋 Message summary:', { id: messageId, phone: phoneNumber, type: data.type, messageType: data.messageType, hasBody: !!data.body, bodyLength: message?.length || 0, hasMedia: !!(data.media || data.message?.imageMessage || data.message?.videoMessage), event })
@@ -104,23 +100,11 @@ export async function POST(request: NextRequest) {
     if (processed?.responded) return NextResponse.json({ success: true })
     processedMessages.set(messageId, { timestamp: Date.now(), responseId: `resp-${Date.now()}`, responded: false })
 
-    // Schedule instant acknowledgement (and cancel if final is ready first)
-    try {
-      const instantReply = buildInstantReply(message || '', hasMedia)
-      if (instantReply && instantCtrl) {
-        instantReplyMessage = instantReply
-        instantCtrl.schedule(instantReply)
-      }
-    } catch (error) {
-      console.error('⚠️ Error preparing instant acknowledgement:', error)
-    }
-
     // Media handling
     if (hasMedia) {
       if (process.env.NODE_ENV !== 'production') console.log('🔄 Processing media message...')
       const mediaResponse = await handleMediaMessage(data, phoneNumber)
       if (mediaResponse) {
-        if (instantCtrl) await instantCtrl.beforeFinal()
         await sendWhatsAppResponse(phoneNumber, mediaResponse)
         if (mediaResponse.includes('successfully')) {
           const { postAssistantMessageIfThread } = await import('./assistant')
@@ -144,7 +128,6 @@ export async function POST(request: NextRequest) {
       try {
         const finalizeResult = await finalizePendingMediaWithRemark(phoneNumber, message, sessionMetadata)
         if (finalizeResult) {
-          if (instantCtrl) await instantCtrl.beforeFinal()
           await sendWhatsAppResponse(phoneNumber, finalizeResult.message)
           if (finalizeResult.message.includes('successfully')) {
             const { postAssistantMessageIfThread } = await import('./assistant')
@@ -163,7 +146,6 @@ export async function POST(request: NextRequest) {
     // Fast-path: handle common structured inputs without invoking the AI
     const fastHandled = await tryHandleWithoutAI(phoneNumber, message, sessionMetadata)
     if (fastHandled) {
-      if (instantCtrl) await instantCtrl.beforeFinal()
       await sendWhatsAppResponse(phoneNumber, fastHandled)
       const msgData = processedMessages.get(messageId)
       if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
@@ -175,8 +157,6 @@ export async function POST(request: NextRequest) {
       const { processWithAssistant } = await import('./assistant')
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media')
       if (assistantResponse && assistantResponse.trim()) {
-        if (instantCtrl) await instantCtrl.beforeFinal()
-        instantReplyMessage = null
         await sendWhatsAppResponse(phoneNumber, assistantResponse)
         const msgData = processedMessages.get(messageId)
         if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
@@ -184,7 +164,6 @@ export async function POST(request: NextRequest) {
       }
     } catch (error) {
       console.error('❌ Error in assistant processing:', error)
-      if (instantCtrl) await instantCtrl.beforeFinal()
       await sendWhatsAppResponse(phoneNumber, 'Sorry, I encountered an error processing your request. Please try again.')
       const msgData = processedMessages.get(messageId)
       if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }

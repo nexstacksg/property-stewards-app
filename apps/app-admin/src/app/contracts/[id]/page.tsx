@@ -550,6 +550,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           customerName={contract.customer?.name}
           customerEmail={contract.customer?.email}
           customerPhone={contract.customer?.phone}
+          contactPersons={contactPersons}
         />
 
           {/* Financial Summary */}
