@@ -75,7 +75,22 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
-        return JSON.stringify({ success: true, jobs: jobs.map((job, index) => ({ id: job.id, jobNumber: index + 1, selectionNumber: `[${index + 1}]`, property: job.property_address, customer: job.customer_name, time: job.scheduled_date.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }), status: job.status, priority: job.priority })), count: jobs.length })
+        const jobsFormatted = jobs.map((job: any, index: number) => {
+          const raw = job.scheduled_date
+          const date = raw instanceof Date ? raw : (raw ? new Date(raw) : null)
+          const time = date ? date.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''
+          return {
+            id: job.id,
+            jobNumber: index + 1,
+            selectionNumber: `[${index + 1}]`,
+            property: job.property_address,
+            customer: job.customer_name,
+            time,
+            status: job.status,
+            priority: job.priority
+          }
+        })
+        return JSON.stringify({ success: true, jobs: jobsFormatted, count: jobs.length })
       }
       case 'confirmJobSelection': {
         const workOrder = await getWorkOrderById(args.jobId) as any
@@ -109,7 +124,10 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
       }
       case 'startJob': {
+        const perf = process.env.WHATSAPP_PERF_LOG === 'true'
+        const t0 = Date.now()
         await updateWorkOrderStatus(args.jobId, 'in_progress')
+        if (perf) console.log('[perf] tool:startJob updateWorkOrderStatus:', Date.now() - t0, 'ms')
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' })
           try {
@@ -121,8 +139,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             }
           } catch {}
         }
-        const locations = await getLocationsWithCompletionStatus(args.jobId) as any[]
-        const progress = await getWorkOrderProgress(args.jobId) as any
+        const t1 = Date.now()
+        const includeProgress = (process.env.WHATSAPP_PROGRESS_ON_START ?? 'false').toLowerCase() !== 'false'
+        const [locations, progress] = await Promise.all([
+          getLocationsWithCompletionStatus(args.jobId) as Promise<any[]>,
+          includeProgress ? (getWorkOrderProgress(args.jobId) as Promise<any>) : Promise.resolve(null)
+        ])
+        if (perf) console.log('[perf] tool:startJob locations:', Date.now() - t1, 'ms', 'includeProgress=', includeProgress)
         const locationsFormatted = locations.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, locations: locations.map(loc => loc.displayName), locationsFormatted, locationsDetail: locations, progress })
       }
@@ -257,7 +280,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
-        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to mark them all done) when you're ready.`
+        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to go back) when you're ready.`
         const firstTask = tasks[0]
         if (sessionId && firstTask?.locationId) {
           await updateSessionState(sessionId, {
