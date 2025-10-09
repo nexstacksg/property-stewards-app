@@ -381,6 +381,7 @@ model ContractReport {
 model ChecklistTag {
   id        String   @id @default(cuid())
   label     String   @unique
+  taskTemplates Json?
   createdOn DateTime @default(now())
   updatedOn DateTime @updatedAt
 

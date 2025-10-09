@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChecklistTagLibrary } from "@/components/checklists/checklist-tag-library"
+import { ChecklistTagLibrary, type ChecklistTag } from "@/components/checklists/checklist-tag-library"
 import type { ChecklistDraftItem, ChecklistTemplate } from "../types"
 
 interface ChecklistEditorProps {
@@ -22,7 +22,7 @@ interface ChecklistEditorProps {
   onCancelEdit: () => void
   onSaveEdit: () => void
   onRowEditChange: (updates: Partial<ChecklistDraftItem>) => void
-  onApplyTag: (label: string) => void
+  onApplyTag: (tag: ChecklistTag) => void
 }
 
 export function ChecklistEditor({

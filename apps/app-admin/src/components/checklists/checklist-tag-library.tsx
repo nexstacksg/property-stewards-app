@@ -6,13 +6,19 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-interface ChecklistTag {
+export interface ChecklistTagTaskTemplate {
+  label: string
+  subtasks?: string[]
+}
+
+export interface ChecklistTag {
   id: string
   label: string
+  taskTemplates?: ChecklistTagTaskTemplate[] | null
 }
 
 interface ChecklistTagLibraryProps {
-  onApplyTag: (label: string) => void
+  onApplyTag: (tag: ChecklistTag) => void
 }
 
 export function ChecklistTagLibrary({ onApplyTag }: ChecklistTagLibraryProps) {
@@ -72,10 +78,8 @@ export function ChecklistTagLibrary({ onApplyTag }: ChecklistTagLibraryProps) {
     }
   }
 
-  const handleApply = (label: string) => {
-    const trimmed = label.trim()
-    if (!trimmed) return
-    onApplyTag(trimmed)
+  const handleApply = (tag: ChecklistTag) => {
+    onApplyTag(tag)
   }
 
   return (
@@ -117,8 +121,8 @@ export function ChecklistTagLibrary({ onApplyTag }: ChecklistTagLibraryProps) {
               key={tag.id}
               variant="secondary"
               className="cursor-pointer select-none"
-              onDoubleClick={() => handleApply(tag.label)}
-              onClick={() => handleApply(tag.label)}
+              onDoubleClick={() => handleApply(tag)}
+              onClick={() => handleApply(tag)}
               title="Click to apply this tag"
             >
               {tag.label}

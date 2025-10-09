@@ -38,7 +38,8 @@ import type {
   Customer,
   MarketingSource,
 } from "@/components/contracts/types"
-import { ChecklistTagLibrary } from "@/components/checklists/checklist-tag-library"
+import { ChecklistTagLibrary, type ChecklistTag } from "@/components/checklists/checklist-tag-library"
+import { showToast } from "@/lib/toast"
 import { parseActionIntoTasks } from "@/lib/utils/taskParser"
 
 const CATEGORIES = [
@@ -510,30 +511,75 @@ function NewContractPageContent() {
     )
   }
 
-  const applyTagToChecklist = (label: string) => {
-    const trimmed = label.trim()
-    if (!trimmed) return
+  const buildTasksFromTag = (tag: ChecklistTag) => {
+    const rawTemplates = tag.taskTemplates as unknown
+    const templates = Array.isArray(rawTemplates)
+      ? rawTemplates
+      : rawTemplates && typeof rawTemplates === 'object' && Array.isArray((rawTemplates as any).templates)
+      ? (rawTemplates as any).templates
+      : []
+    if (templates.length === 0) {
+      return [{ name: tag.label, details: "" }]
+    }
+
+    return templates.map((entry) => {
+      const name = entry.label?.trim() || tag.label
+      const details = Array.isArray(entry.subtasks) && entry.subtasks.length > 0
+        ? entry.subtasks.map((item) => item.trim()).filter(Boolean).join(', ')
+        : ''
+      return { name, details }
+    })
+  }
+
+  const applyTagToChecklist = (tag: ChecklistTag) => {
+    const tasksToAdd = buildTasksFromTag(tag)
+    if (tasksToAdd.length === 0) return
+
+    if (rowEditIndex === null && !showLocationForm) {
+      showToast({
+        title: "Select a location first",
+        description: "Pick or add a checklist location before applying a tag.",
+        variant: "error",
+      })
+      return
+    }
 
     if (rowEditIndex !== null) {
       setRowEditItem((previous) =>
         previous
           ? {
               ...previous,
-              item: trimmed,
+              tasks: [...(previous.tasks ?? []), ...tasksToAdd],
+              description: buildActionFromTasks([...(previous.tasks ?? []), ...tasksToAdd]),
             }
           : previous,
       )
       return
     }
 
-    setShowLocationForm(true)
-    setNewTaskEditIndex(null)
-    setNewTaskDraft(null)
-    setNewLocation((prev) => ({
-      ...createEmptyLocation(checklistItems.length + 1),
-      item: trimmed,
-      category: prev.category || DEFAULT_CATEGORY,
-    }))
+    if (showLocationForm) {
+      setNewLocation((previous) => ({
+        ...previous,
+        tasks: [...(previous.tasks ?? []), ...tasksToAdd],
+        description: buildActionFromTasks([...(previous.tasks ?? []), ...tasksToAdd]),
+      }))
+      return
+    }
+
+    if (!showLocationForm) {
+      setShowLocationForm(true)
+      setNewTaskEditIndex(null)
+      setNewTaskDraft(null)
+      setNewLocation(() => {
+        const base = createEmptyLocation(checklistItems.length + 1)
+        const tasks = [...(base.tasks ?? []), ...tasksToAdd]
+        return {
+          ...base,
+          tasks,
+          description: buildActionFromTasks(tasks),
+        }
+      })
+    }
   }
 
   const beginAddContactPerson = () => {
