@@ -309,7 +309,7 @@ export default function ContractsPage() {
                   {currentContracts.map((contract) => (
                     <TableRow key={contract.id}>
                       <TableCell className="font-medium">
-                        #{contract.id.slice(-8).toUpperCase()}
+                        #{contract.id }
                       </TableCell>
                       <TableCell>
                         <Link 

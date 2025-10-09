@@ -377,7 +377,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
             )
             .map((contract: any) => ({
               id: contract.id,
-              label: `#${contract.id.slice(-8).toUpperCase()} • ${contract.status}`,
+              label: `#${contract.id } • ${contract.status}`,
             }))
         : []
       setAvailableReferences(options)

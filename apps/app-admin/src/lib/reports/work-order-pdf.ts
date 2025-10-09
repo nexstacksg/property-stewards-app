@@ -1206,7 +1206,7 @@ export async function appendWorkOrderSection(
   }
 
   const headingLabel =
-    options.heading ?? `Work Order ${workOrder.id.slice(-8).toUpperCase()} (${formatEnum(workOrder.status)})`
+    options.heading ?? `Work Order ${workOrder.id } (${formatEnum(workOrder.status)})`
 
   doc.font("Helvetica-Bold").fontSize(14).text(headingLabel, { align: "left" })
   doc.moveDown(0.25)

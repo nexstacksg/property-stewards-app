@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
+import { generateContractId, generateWorkOrderId } from '../src/lib/id-generator'
+
 const prisma = new PrismaClient()
 
 type SeedSubTask = {
@@ -347,6 +349,7 @@ async function main() {
   // Create Contracts
   const contract1 = await prisma.contract.create({
     data: {
+      id: await generateContractId(prisma),
       customerId: customer1.id,
       addressId: address1.id,
       value: 850.00,
@@ -367,6 +370,7 @@ async function main() {
 
   const contract2 = await prisma.contract.create({
     data: {
+      id: await generateContractId(prisma),
       customerId: customer2.id,
       addressId: address2.id,
       value: 650.00,
@@ -382,6 +386,7 @@ async function main() {
 
   const contract3 = await prisma.contract.create({
     data: {
+      id: await generateContractId(prisma),
       customerId: customer3.id,
       addressId: address3.id,
       value: 550.00,
@@ -397,6 +402,7 @@ async function main() {
 
   const contract4 = await prisma.contract.create({
     data: {
+      id: await generateContractId(prisma),
       customerId: customer1.id,
       addressId: address4.id,
       value: 1200.00,
@@ -711,6 +717,7 @@ async function main() {
   // Create Work Orders
   const workOrder1 = await prisma.workOrder.create({
     data: {
+      id: await generateWorkOrderId(prisma),
       contractId: contract1.id,
       inspectors: { connect: [{ id: inspector1.id }] },
       scheduledStartDateTime: new Date('2024-08-25T10:00:00Z'),
@@ -726,6 +733,7 @@ async function main() {
 
   const workOrder2 = await prisma.workOrder.create({
     data: {
+      id: await generateWorkOrderId(prisma),
       contractId: contract2.id,
       inspectors: { connect: [{ id: inspector2.id }] },
       scheduledStartDateTime: new Date('2024-08-27T14:00:00Z'),
@@ -736,6 +744,7 @@ async function main() {
 
   const workOrder3 = await prisma.workOrder.create({
     data: {
+      id: await generateWorkOrderId(prisma),
       contractId: contract3.id,
       inspectors: { connect: [{ id: inspector3.id }] },
       scheduledStartDateTime: new Date('2024-08-28T09:00:00Z'),
@@ -746,6 +755,7 @@ async function main() {
 
   const workOrder4 = await prisma.workOrder.create({
     data: {
+      id: await generateWorkOrderId(prisma),
       contractId: contract4.id,
       inspectors: { connect: [{ id: inspector2.id }, { id: inspector1.id }] },
       scheduledStartDateTime: new Date('2024-08-30T10:00:00Z'),

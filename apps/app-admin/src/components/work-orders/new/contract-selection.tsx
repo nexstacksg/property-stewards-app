@@ -34,7 +34,7 @@ export function ContractSelection({
             <div>
               <Label className="text-xs">Selected Contract</Label>
               <p className="font-medium">
-                Contract #{selectedContract.id.slice(-8).toUpperCase()}
+                Contract #{selectedContract.id }
               </p>
               <div className="mt-2 space-y-1">
                 <div className="flex items-center gap-2 text-sm">
@@ -105,7 +105,7 @@ export function ContractSelection({
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-medium">
-                    Contract #{contract.id.slice(-8).toUpperCase()}
+                    Contract #{contract.id }
                   </p>
                   <p className="text-sm text-muted-foreground">
                     {contract.customer.name}

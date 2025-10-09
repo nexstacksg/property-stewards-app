@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
+import { generateWorkOrderId } from '@/lib/id-generator'
 
 type LocationSeed = {
   name: string
   subtasks: string[]
+}
+
+const MAX_TRANSACTION_ATTEMPTS = 3
+
+const isRetryableTransactionError = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034'
+
+type WorkOrderTransactionResult = {
+  workOrder: Awaited<ReturnType<typeof prisma.workOrder.create>>
+  contractChecklistId?: string
 }
 
 function extractActionStrings(value: unknown): string[] {
@@ -382,104 +394,129 @@ export async function POST(request: NextRequest) {
       : []
 
     // Create work order in a transaction (with extended timeout)
-    const transactionResult = await prisma.$transaction(async (tx) => {
-      // First, ensure contract checklist exists
-      let contractChecklist = contract.contractChecklist
-      
-      if (!contractChecklist && contract.basedOnChecklist) {
-        contractChecklist = await tx.contractChecklist.create({
-          data: {
-            contractId
-          }
-        })
+    let transactionResult: WorkOrderTransactionResult | null = null
 
-        if (itemsFromTemplate.length > 0 && contractChecklist) {
-          for (const templateItem of itemsFromTemplate) {
-            const createdItem = await tx.contractChecklistItem.create({
-              data: {
-                contractChecklistId: contractChecklist.id,
-                name: templateItem.name,
-                remarks: templateItem.remarks,
-                order: templateItem.order,
-              }
-            })
+    for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
+      try {
+        transactionResult = await prisma.$transaction(
+          async (tx) => {
+            // First, ensure contract checklist exists
+            let contractChecklist = contract.contractChecklist
 
-            let locationOrder = 1
-            for (const seed of templateItem.locations) {
-              const location = await tx.contractChecklistLocation.create({
+            if (!contractChecklist && contract.basedOnChecklist) {
+              contractChecklist = await tx.contractChecklist.create({
                 data: {
-                  itemId: createdItem.id,
-                  name: seed.name,
-                  status: 'PENDING',
-                  order: locationOrder++,
+                  contractId,
                 },
               })
 
-              for (const subtaskName of seed.subtasks) {
-                await tx.checklistTask.create({
-                  data: {
-                    itemId: createdItem.id,
-                    locationId: location.id,
-                    name: subtaskName,
-                    status: 'PENDING',
-                  },
-                })
-              }
-            }
-          }
-        }
-      }
+              if (itemsFromTemplate.length > 0 && contractChecklist) {
+                for (const templateItem of itemsFromTemplate) {
+                  const createdItem = await tx.contractChecklistItem.create({
+                    data: {
+                      contractChecklistId: contractChecklist.id,
+                      name: templateItem.name,
+                      remarks: templateItem.remarks,
+                      order: templateItem.order,
+                    },
+                  })
 
-      // Create the work order
-      const newWorkOrder = await tx.workOrder.create({
-        data: {
-          contractId,
-          scheduledStartDateTime: new Date(scheduledStartDateTime),
-          scheduledEndDateTime: new Date(scheduledEndDateTime),
-          remarks,
-          status: 'SCHEDULED',
-          inspectors: {
-            connect: inspectorIds.map((id: string) => ({ id }))
-          }
-        },
-        include: {
-          contract: {
-            include: {
-              customer: true,
-              address: true,
-              contractChecklist: {
-                include: {
-                  items: {
-                    orderBy: { order: 'asc' },
-                    include: {
-                      locations: {
-                        orderBy: { order: 'asc' },
-                        include: {
-                          tasks: {
-                            orderBy: { createdOn: 'asc' }
-                          }
-                        }
+                  let locationOrder = 1
+                  for (const seed of templateItem.locations) {
+                    const location = await tx.contractChecklistLocation.create({
+                      data: {
+                        itemId: createdItem.id,
+                        name: seed.name,
+                        status: 'PENDING',
+                        order: locationOrder++,
                       },
-                      checklistTasks: {
-                        orderBy: { createdOn: 'asc' },
-                        include: {
-                          location: true,
-                        }
-                      }
+                    })
+
+                    for (const subtaskName of seed.subtasks) {
+                      await tx.checklistTask.create({
+                        data: {
+                          itemId: createdItem.id,
+                          locationId: location.id,
+                          name: subtaskName,
+                          status: 'PENDING',
+                        },
+                      })
                     }
                   }
                 }
               }
             }
-          },
-          inspectors: true
-        }
-      })
-      
-      return { workOrder: newWorkOrder, contractChecklistId: contractChecklist?.id }
-    }, { timeout: 60000, maxWait: 20000 })
 
-    if (transactionResult?.contractChecklistId) {
+            // Create the work order
+            const generatedId = await generateWorkOrderId(tx)
+            const newWorkOrder = await tx.workOrder.create({
+              data: {
+                id: generatedId,
+                contractId,
+                scheduledStartDateTime: new Date(scheduledStartDateTime),
+                scheduledEndDateTime: new Date(scheduledEndDateTime),
+                remarks,
+                status: 'SCHEDULED',
+                inspectors: {
+                  connect: inspectorIds.map((id: string) => ({ id })),
+                },
+              },
+              include: {
+                contract: {
+                  include: {
+                    customer: true,
+                    address: true,
+                    contractChecklist: {
+                      include: {
+                        items: {
+                          orderBy: { order: 'asc' },
+                          include: {
+                            locations: {
+                              orderBy: { order: 'asc' },
+                              include: {
+                                tasks: {
+                                  orderBy: { createdOn: 'asc' },
+                                },
+                              },
+                            },
+                            checklistTasks: {
+                              orderBy: { createdOn: 'asc' },
+                              include: {
+                                location: true,
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+                inspectors: true,
+              },
+            })
+
+            return { workOrder: newWorkOrder, contractChecklistId: contractChecklist?.id }
+          },
+          {
+            timeout: 60000,
+            maxWait: 20000,
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          },
+        )
+        break
+      } catch (transactionError) {
+        if (isRetryableTransactionError(transactionError) && attempt < MAX_TRANSACTION_ATTEMPTS - 1) {
+          continue
+        }
+        throw transactionError
+      }
+    }
+
+    if (!transactionResult) {
+      throw new Error('Unable to create work order after retrying transaction')
+    }
+
+    if (transactionResult.contractChecklistId) {
       const checklistItems = await prisma.contractChecklistItem.findMany({
         where: { contractChecklistId: transactionResult.contractChecklistId },
         select: { id: true, name: true, remarks: true }
