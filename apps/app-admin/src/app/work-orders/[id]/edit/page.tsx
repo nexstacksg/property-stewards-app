@@ -481,7 +481,7 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
               <CardContent className="space-y-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Work Order ID</p>
-                  <p className="font-mono text-sm">#{workOrderId? }</p>
+                  <p className="font-mono text-sm">#{workOrderId }</p>
                 </div>
 
                 <div>
