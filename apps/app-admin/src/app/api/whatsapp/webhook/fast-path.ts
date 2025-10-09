@@ -31,11 +31,40 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
     const lower = msg.toLowerCase()
     const match = /^\s*(?:\[\s*(\d{1,2})\s*\]|option\s+(\d{1,2})|(\d{1,2}))\s*([).,;-])?\s*$/.exec(msg)
     const selectedNumber = match ? Number(match[1] || match[2] || match[3]) : null
+    const isGoBackText = ['go back', 'back', 'b'].includes(lower.trim())
 
     const wantsJobs = isJobsIntent(lower)
 
     // 1) Jobs list (no AI)
     if (wantsJobs) {
+      // Reset job/location/task context so a new selection starts fresh
+      try {
+        await updateSessionState(phone, {
+          jobStatus: 'none',
+          workOrderId: undefined,
+          customerName: undefined,
+          propertyAddress: undefined,
+          postalCode: undefined,
+          currentLocation: undefined,
+          currentLocationId: undefined,
+          currentSubLocationId: undefined,
+          currentSubLocationName: undefined,
+          currentItemId: undefined,
+          currentTaskId: undefined,
+          currentTaskName: undefined,
+          currentTaskItemId: undefined,
+          currentTaskEntryId: undefined,
+          currentTaskCondition: undefined,
+          currentTaskLocationId: undefined,
+          currentTaskLocationName: undefined,
+          currentLocationCondition: undefined,
+          taskFlowStage: undefined,
+          pendingTaskRemarks: undefined,
+          pendingTaskCause: undefined,
+          pendingTaskResolution: undefined,
+          locationSubLocations: undefined
+        })
+      } catch {}
       const t0 = Date.now()
       const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
       perfLog('tool:getTodayJobs', Date.now() - t0)
@@ -61,8 +90,8 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       return lines.join('\n')
     }
 
-    // 2) Number selection routing (job/location/sub-location)
-    if (selectedNumber && selectedNumber > 0) {
+    // 2) Number selection routing (job/location/sub-location) or textual "go back"
+    if ((selectedNumber && selectedNumber > 0) || isGoBackText) {
       // If we are confirming a job, treat [1]/[2] as yes/no
       if (session?.jobStatus === 'confirming' && session?.workOrderId) {
         if (selectedNumber === 1) {
@@ -150,6 +179,15 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       }
 
       // If job is started and no currentLocation picked yet → location selection
+      if (isGoBackText && session?.workOrderId && session?.currentLocation && !session?.currentSubLocationId) {
+        // textual go back from sub-location stage → locations list
+        const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
+        const locData = safeParseJSON(locRes)
+        const formattedLocations: string[] = locData?.locationsFormatted || []
+        const header = 'Here are the locations available for inspection:'
+        return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
+      }
+
       if (session?.workOrderId && !session?.currentLocation) {
         const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
         const locData = safeParseJSON(locRes)
@@ -170,7 +208,8 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
             return formatTasksResponse(chosen.name, tasksRes)
           }
           const header = `You've selected ${chosen.name}. Here are the available sub-locations:`
-          return [header, '', ...formatted, '', 'Next: reply with your sub-location choice.'].join('\n')
+          const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+          return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
         }
         const tasksRes = await executeTool('getTasksForLocation', { workOrderId: session.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phone)
         return formatTasksResponse(chosen.name, tasksRes)
@@ -178,6 +217,14 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
       // If location is set but sub-location not chosen and we have sub-location options cached
       if (session?.workOrderId && session?.currentLocation && !session?.currentSubLocationId) {
+        if (isGoBackText) {
+          // textual go back → locations
+          const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
+          const locData = safeParseJSON(locRes)
+          const formattedLocations: string[] = locData?.locationsFormatted || []
+          const header = 'Here are the locations available for inspection:'
+          return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
+        }
         const latest = await getSessionState(phone)
         const currentItemId = latest?.currentLocationId
         let subOptions: Array<{ id: string; name: string; status: string }> | undefined
@@ -191,9 +238,27 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           if (match && Array.isArray(match.subLocations)) subOptions = match.subLocations
         }
         if (Array.isArray(subOptions) && subOptions.length > 0) {
-          if (selectedNumber > subOptions.length) {
+          const backNumber = subOptions.length + 1
+          if (selectedNumber === backNumber) {
+            // Go back to locations
+            try {
+              await updateSessionState(phone, {
+                currentLocation: undefined,
+                currentLocationId: undefined,
+                currentSubLocationId: undefined,
+                currentSubLocationName: undefined,
+              })
+            } catch {}
+            const locRes2 = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
+            const locData2 = safeParseJSON(locRes2)
+            const formattedLocations: string[] = locData2?.locationsFormatted || []
+            const header = 'Here are the locations available for inspection:'
+            return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
+          }
+          if (selectedNumber > backNumber) {
             const formatted = subOptions.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
-            return `That sub-location number isn't valid.\n\n${formatted.join('\n')}\n\nNext: reply with your sub-location choice.`
+            const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+            return `That sub-location number isn't valid.\n\n${withBack.join('\n')}\n\nNext: reply with your sub-location choice, or [${withBack.length}] to go back.`
           }
           const chosen = subOptions[selectedNumber - 1]
           const tasksRes = await executeTool('getTasksForLocation', { workOrderId: session.workOrderId, location: session.currentLocation, contractChecklistItemId: currentItemId, subLocationId: chosen.id }, undefined, phone)
@@ -246,6 +311,23 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         subLocationId: latest.currentSubLocationId,
         stage: latest.taskFlowStage,
         currentTaskId: latest.currentTaskId
+      }
+
+      if (isGoBackText) {
+        // From tasks flow: go back to sub-locations if present; else locations
+        if (ctx.subLocationId) {
+          const subs = await executeTool('getSubLocations', { workOrderId: ctx.workOrderId, contractChecklistItemId: ctx.itemId, locationName: ctx.locationName }, undefined, phone)
+          const subData = safeParseJSON(subs)
+          const formatted: string[] = subData?.subLocationsFormatted || []
+          const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+          const header = `You're back at ${ctx.locationName}. Here are the sub-locations:`
+          return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
+        }
+        const locs = await executeTool('getJobLocations', { jobId: ctx.workOrderId }, undefined, phone)
+        const locData = safeParseJSON(locs)
+        const formattedLocations: string[] = locData?.locationsFormatted || []
+        const header = 'Here are the locations available for inspection:'
+        return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
       }
 
       // a) Finalize step ([1] completed, [2] not yet)
