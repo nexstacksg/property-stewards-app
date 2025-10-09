@@ -264,6 +264,9 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const setCond = await executeTool('completeTask', { phase: 'set_condition', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, conditionNumber: selectedNumber }, undefined, phone)
         const s = safeParseJSON(setCond)
         if (!s?.success && typeof s?.error === 'string') return s.error
+        if (s?.taskFlowStage === 'cause' || s?.message?.toLowerCase().includes('cause')) {
+          return 'Please describe the cause for this issue.'
+        }
         return `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption. Or type 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
       }
 
@@ -275,7 +278,21 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         return `Okay, skipping media for now.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
       }
 
-      // d) Remarks while in media/remarks stage
+      // d) Cause/Resolution/Remarks while in media/remarks stage
+      if (ctx.stage === 'cause' && msg && !selectedNumber) {
+        const res = await executeTool('completeTask', { phase: 'set_cause', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, cause: msg }, undefined, phone)
+        const r = safeParseJSON(res)
+        if (!r?.success && typeof r?.error === 'string') return r.error
+        return r?.message || 'Thanks. Please provide the resolution.'
+      }
+
+      if (ctx.stage === 'resolution' && msg && !selectedNumber) {
+        const res = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, resolution: msg }, undefined, phone)
+        const r = safeParseJSON(res)
+        if (!r?.success && typeof r?.error === 'string') return r.error
+        return r?.message || `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption), or type 'skip' to continue.`
+      }
+
       if ((ctx.stage === 'remarks' || ctx.stage === 'media') && msg && !selectedNumber) {
         const setRemarks = await executeTool('completeTask', { phase: 'set_remarks', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, remarks: msg }, undefined, phone)
         const r = safeParseJSON(setRemarks)

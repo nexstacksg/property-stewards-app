@@ -51,8 +51,10 @@ export type ChatSessionState = {
   currentTaskLocationId?: string
   currentTaskLocationName?: string
   currentLocationCondition?: string
-  taskFlowStage?: 'condition' | 'media' | 'remarks' | 'confirm'
+  taskFlowStage?: 'condition' | 'media' | 'remarks' | 'confirm' | 'cause' | 'resolution'
   pendingTaskRemarks?: string | null
+  pendingTaskCause?: string | null
+  pendingTaskResolution?: string | null
   pendingMediaUploads?: PendingMediaUpload[]
   locationSubLocations?: Record<string, Array<{ id: string; name: string; status: string }>> // keyed by ContractChecklistItem ID
 

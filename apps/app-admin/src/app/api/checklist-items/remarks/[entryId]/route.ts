@@ -98,19 +98,19 @@ export async function PATCH(
       }
 
       if (mediaUpdates.length > 0) {
-        const mediaIds = mediaUpdates.map((entry:any) => entry.id)
+        const mediaIds = mediaUpdates.map((entry) => entry.id)
         const existingMedia = await tx.itemEntryMedia.findMany({
           where: { entryId, id: { in: mediaIds } },
           select: { id: true },
         })
         const existingSet = new Set(existingMedia.map((item) => item.id))
-        const missing = mediaIds.filter((id:any) => !existingSet.has(id))
+        const missing = mediaIds.filter((id) => !existingSet.has(id))
         if (missing.length > 0) {
           throw new Error('MEDIA_NOT_FOUND')
         }
 
         await Promise.all(
-          mediaUpdates.map((update : any) =>
+          mediaUpdates.map((update) =>
             tx.itemEntryMedia.update({ where: { id: update.id }, data: { caption: update.caption } })
           )
         )
