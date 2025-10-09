@@ -247,12 +247,24 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
           }
         }
         handledByTaskFlow = true
+        // Prepare confirmation line for cause/resolution when applicable
+        let crLine = ''
+        try {
+          const cond = (metadata.currentTaskCondition || '').toUpperCase()
+          if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
+            const entry = await prisma.itemEntry.findUnique({ where: { id: currentTaskEntryId }, select: { cause: true, resolution: true } })
+            const cause = (entry?.cause || metadata.pendingTaskCause || '').trim()
+            const resolution = (entry?.resolution || metadata.pendingTaskResolution || '').trim()
+            if (cause || resolution) crLine = `\n📝 Cause: ${cause || '-'} | Resolution: ${resolution || '-'}`
+          }
+        } catch {}
+
         if (mediaRemark) {
           await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: mediaRemark })
-          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
+          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
         }
         await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: undefined })
-        return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
+        return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
       }
     } catch (error) {
       console.error('❌ Failed to save media to task entry, falling back to item storage', error)

@@ -357,7 +357,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const skip = await executeTool('completeTask', { phase: 'skip_media', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId }, undefined, phone)
         const sk = safeParseJSON(skip)
         if (!sk?.success && typeof sk?.error === 'string') return sk.error
-        return `Okay, skipping media for now.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
+        return sk?.message || `Okay, skipping media for now.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
       }
 
       // d) Cause/Resolution/Remarks while in media/remarks stage
