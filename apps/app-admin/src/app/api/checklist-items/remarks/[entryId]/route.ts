@@ -15,6 +15,9 @@ function normalizeCondition(value: unknown) {
 const entryInclude = {
   inspector: { select: { id: true, name: true } },
   user: { select: { id: true, username: true, email: true } },
+  media: {
+    orderBy: { order: 'asc' },
+  },
   task: {
     select: {
       id: true,
@@ -35,9 +38,34 @@ export async function PATCH(
     const { entryId } = await params
     const body = await request.json()
     const remark = typeof body.remark === 'string' ? body.remark.trim() : undefined
+    const causeValue = typeof body.cause === 'string' ? body.cause.trim() : undefined
+    const resolutionValue = typeof body.resolution === 'string' ? body.resolution.trim() : undefined
     const normalizedCondition = normalizeCondition(body.condition)
 
-    if (!remark && typeof normalizedCondition === 'undefined') {
+    const rawMediaUpdates = Array.isArray(body.mediaUpdates) ? body.mediaUpdates : []
+    const mediaUpdates = rawMediaUpdates
+      .map((entry: any) => {
+        if (!entry || typeof entry !== 'object') return null
+        const id = typeof entry.id === 'string' ? entry.id : null
+        if (!id) return null
+        if (entry.caption === null) {
+          return { id, caption: null }
+        }
+        if (typeof entry.caption === 'string') {
+          const trimmed = entry.caption.trim()
+          return { id, caption: trimmed.length > 0 ? trimmed : null }
+        }
+        return { id, caption: null }
+      })
+      .filter((entry: any): entry is { id: string; caption: string | null } => Boolean(entry))
+
+    if (
+      !remark
+      && typeof normalizedCondition === 'undefined'
+      && typeof causeValue === 'undefined'
+      && typeof resolutionValue === 'undefined'
+      && mediaUpdates.length === 0
+    ) {
       return NextResponse.json({ error: 'No updates provided' }, { status: 400 })
     }
 
@@ -45,30 +73,80 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid condition value' }, { status: 400 })
     }
 
-    const updateData: any = {}
-    if (typeof remark === 'string') {
-      updateData.remarks = remark.length > 0 ? remark : null
-    }
-    if (typeof normalizedCondition !== 'undefined') {
-      updateData.condition = normalizedCondition ?? null
-    }
+    const updatedEntry = await prisma.$transaction(async (tx) => {
+      const existing = await tx.itemEntry.findUnique({ where: { id: entryId }, select: { id: true, taskId: true } })
+      if (!existing) {
+        throw new Error('NOT_FOUND')
+      }
 
-    const updatedEntry = await prisma.itemEntry.update({
-      where: { id: entryId },
-      data: updateData,
-      include: entryInclude,
-    })
+      const updateData: any = {}
+      if (typeof remark === 'string') {
+        updateData.remarks = remark.length > 0 ? remark : null
+      }
+      if (typeof causeValue === 'string') {
+        updateData.cause = causeValue.length > 0 ? causeValue : null
+      }
+      if (typeof resolutionValue === 'string') {
+        updateData.resolution = resolutionValue.length > 0 ? resolutionValue : null
+      }
+      if (typeof normalizedCondition !== 'undefined') {
+        updateData.condition = normalizedCondition ?? null
+      }
 
-    if (typeof normalizedCondition !== 'undefined' && updatedEntry.task) {
-      await prisma.checklistTask.update({
-        where: { id: updatedEntry.task.id },
-        data: { condition: normalizedCondition ?? null }
+      if (Object.keys(updateData).length > 0) {
+        await tx.itemEntry.update({ where: { id: entryId }, data: updateData })
+      }
+
+      if (mediaUpdates.length > 0) {
+        const mediaIds = mediaUpdates.map((entry:any) => entry.id)
+        const existingMedia = await tx.itemEntryMedia.findMany({
+          where: { entryId, id: { in: mediaIds } },
+          select: { id: true },
+        })
+        const existingSet = new Set(existingMedia.map((item) => item.id))
+        const missing = mediaIds.filter((id:any) => !existingSet.has(id))
+        if (missing.length > 0) {
+          throw new Error('MEDIA_NOT_FOUND')
+        }
+
+        await Promise.all(
+          mediaUpdates.map((update : any) =>
+            tx.itemEntryMedia.update({ where: { id: update.id }, data: { caption: update.caption } })
+          )
+        )
+      }
+
+      const entry = await tx.itemEntry.findUnique({
+        where: { id: entryId },
+        include: entryInclude,
       })
-      updatedEntry.task.condition = normalizedCondition ?? null
-    }
+
+      if (!entry) {
+        throw new Error('NOT_FOUND')
+      }
+
+      if (typeof normalizedCondition !== 'undefined' && entry.task) {
+        const updatedTask = await tx.checklistTask.update({
+          where: { id: entry.task.id },
+          data: { condition: normalizedCondition ?? null }
+        })
+        entry.task = {
+          ...entry.task,
+          condition: updatedTask.condition,
+        }
+      }
+
+      return entry
+    })
 
     return NextResponse.json(updatedEntry)
   } catch (error) {
+    if (error instanceof Error && error.message === 'NOT_FOUND') {
+      return NextResponse.json({ error: 'Remark not found' }, { status: 404 })
+    }
+    if (error instanceof Error && error.message === 'MEDIA_NOT_FOUND') {
+      return NextResponse.json({ error: 'Media item not found for this remark' }, { status: 400 })
+    }
     console.error('Error updating remark:', error)
     return NextResponse.json({ error: 'Failed to update remark' }, { status: 500 })
   }

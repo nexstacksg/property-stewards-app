@@ -147,7 +147,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
         uploadedAt: new Date().toISOString(),
         condition: normalizedCondition || null
       }
-      const nextPending = [...pendingUploads.filter(entry => entry.url !== publicUrl), pendingEntry]
+      const nextPending = [...pendingUploads.filter((entry: PendingMediaUpload) => entry.url !== publicUrl), pendingEntry]
       await updateSessionState(phoneNumber, { pendingMediaUploads: nextPending })
       return 'Please add a quick remark describing this photo so I can log it properly—I’ll save it once I have your note.'
     }
@@ -160,6 +160,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       currentLocationId,
       currentSubLocationId,
       currentSubLocationName,
+      primaryLocationName,
       isTaskFlowMedia,
       activeTaskId,
       activeTaskItemId,
@@ -183,6 +184,7 @@ type PersistMediaParams = {
   currentLocationId?: string
   currentSubLocationId?: string | null
   currentSubLocationName?: string | null
+  primaryLocationName?: string | null
   isTaskFlowMedia: boolean
   activeTaskId?: string | null
   activeTaskItemId?: string | null
@@ -202,6 +204,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
     currentLocationId,
     currentSubLocationId,
     currentSubLocationName,
+    primaryLocationName,
     isTaskFlowMedia,
     activeTaskId,
     activeTaskItemId,
@@ -312,6 +315,7 @@ export async function finalizePendingMediaWithRemark(phoneNumber: string, remark
     currentLocationId: target.locationId,
     currentSubLocationId: target.subLocationId,
     currentSubLocationName: target.subLocation,
+    primaryLocationName: target.location,
     isTaskFlowMedia: Boolean(target.isTaskFlow),
     activeTaskId: target.taskId,
     activeTaskItemId: target.taskItemId,

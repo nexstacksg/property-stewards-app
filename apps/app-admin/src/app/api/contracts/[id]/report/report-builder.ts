@@ -11,12 +11,13 @@ import {
   formatDateTime
 } from "@/lib/reports/work-order-pdf"
 
-const WATERMARK_OPACITY = 0.05
+const WATERMARK_OPACITY = 0.15
 
 export type ReportBuildOptions = {
   titleOverride?: string | null
   versionLabel: string
   generatedOn: Date
+  allowedConditions?: string[] | null
 }
 
 function applyWatermark(doc: any, logoBuffer?: Buffer) {
@@ -95,7 +96,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
 
   const imageCache = new Map<string, Buffer>()
 
-  const workOrderLabels = workOrders.map((wo: any) => wo.id.slice(-8).toUpperCase())
+  const workOrderLabels = workOrders.map((wo: any) => wo.id )
   const combinedHeading = `Work Orders: ${workOrderLabels.join(' -- ')}`
   const scheduleStart = workOrders
     .map((wo: any) => (wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime).getTime() : undefined))
@@ -137,7 +138,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     doc.text(`Actual: ${actualRange}`)
   }
   const workOrderStatusSummary = workOrders
-    .map((wo: any) => `${wo.id.slice(-8).toUpperCase()}: ${formatEnum(wo.status) || wo.status}`)
+    .map((wo: any) => `${wo.id}: ${formatEnum(wo.status) || wo.status}`)
     .join(' | ')
   if (workOrderStatusSummary) {
     doc.text(`Statuses: ${workOrderStatusSummary}`)
@@ -168,7 +169,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   await appendWorkOrderSection(doc, combinedWorkOrder, imageCache, {
     heading: 'Inspection Checklist',
     includeMeta: false,
-    filterByWorkOrderId: null
+    filterByWorkOrderId: null,
+    allowedConditions: options.allowedConditions ?? undefined,
   })
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Download, Mail, MessageCircle, Loader2, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
 
@@ -20,9 +20,15 @@ interface ReportActionsProps {
   customerEmail?: string | null
   customerName?: string | null
   customerPhone?: string | null
+  contactPersons?: Array<{
+    id: string
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+  }>
 }
 
-export function ReportActions({ contractId, report, customerEmail, customerName, customerPhone }: ReportActionsProps) {
+export function ReportActions({ contractId, report, customerEmail, customerName, customerPhone, contactPersons = [] }: ReportActionsProps) {
   const normalizeToE164 = (raw?: string | null) => {
     if (!raw) return null
     const trimmed = raw.trim()
@@ -58,19 +64,73 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
   const [whatsAppDialogOpen, setWhatsAppDialogOpen] = useState(false)
   const [emailTo, setEmailTo] = useState(customerEmail ?? "")
   const [emailCc, setEmailCc] = useState("")
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([])
+
+  const contactOptions = contactPersons
+  const contactsWithEmail = useMemo(
+    () => contactPersons.filter((person) => Boolean(person.email && person.email.trim())),
+    [contactPersons]
+  )
+  const contactPersonsWithPhone = useMemo(() => {
+    return contactPersons.reduce<Array<{ id: string; name?: string | null; email?: string | null; phone?: string | null; normalizedPhone: string }>>(
+      (acc, person) => {
+        const normalizedPhone = normalizeToE164(person.phone)
+        if (!normalizedPhone) return acc
+        acc.push({ ...person, normalizedPhone })
+        return acc
+      },
+      []
+    )
+  }, [contactPersons])
+
+  useEffect(() => {
+    if (!emailDialogOpen) {
+      setSelectedContactIds([])
+      setEmailTo(customerEmail ?? "")
+      setEmailCc("")
+    }
+  }, [emailDialogOpen, customerEmail])
   const buildDefaultRecipients = () => {
     const fallback = '+959767210712'
-    const normalizedPhone = normalizeToE164(customerPhone) || fallback
-    return [createRecipient(customerName?.trim() || '', normalizedPhone)]
+    const normalizedPhone = normalizeToE164(customerPhone)
+    return [createRecipient(customerName?.trim() || '', normalizedPhone || fallback)]
   }
 
   const [whatsAppRecipients, setWhatsAppRecipients] = useState<Array<{ id: string; name: string; phone: string }>>(buildDefaultRecipients)
+  const [includeContactPersonIds, setIncludeContactPersonIds] = useState<string[]>(() =>
+    contactPersonsWithPhone.map((person) => person.id)
+  )
+
+  useEffect(() => {
+    setIncludeContactPersonIds(contactPersonsWithPhone.map((person) => person.id))
+  }, [contactPersonsWithPhone])
+
+  useEffect(() => {
+    if (!whatsAppDialogOpen) {
+      setWhatsAppRecipients(buildDefaultRecipients())
+      setIncludeContactPersonIds(contactPersonsWithPhone.map((person) => person.id))
+    }
+  }, [whatsAppDialogOpen, contactPersonsWithPhone, customerName, customerPhone])
 
   const parseEmails = (value: string) =>
     value
       .split(/[,\n;]/)
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0)
+
+  const buildEmailRecipients = () => {
+    const typedTo = parseEmails(emailTo)
+    const selectedEmails = contactsWithEmail
+      .filter((person) => selectedContactIds.includes(person.id))
+      .map((person) => person.email!.trim())
+    const toSet = new Set<string>([...typedTo, ...selectedEmails])
+    if (toSet.size === 0 && customerEmail && customerEmail.trim()) {
+      toSet.add(customerEmail.trim())
+    }
+    const to = Array.from(toSet)
+    const cc = Array.from(new Set(parseEmails(emailCc)))
+    return { to, cc }
+  }
 
   const handleSend = async (
     channel: "email" | "whatsapp",
@@ -91,10 +151,13 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
       const endpoint = `/api/contracts/${contractId}/reports/${report.id}/${channel}`
 
       const payload = channel === "email"
-        ? {
-            to: parseEmails(emailTo).length ? parseEmails(emailTo) : undefined,
-            cc: parseEmails(emailCc)
-          }
+        ? (() => {
+            const { to, cc } = buildEmailRecipients()
+            if (to.length === 0) {
+              throw new Error('Add at least one email recipient before sending.')
+            }
+            return { to, cc }
+          })()
         : {
             phone: overrides?.phone,
             message: overrides?.message
@@ -155,7 +218,7 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
     return lines.join('\n\n')
   }
 
-  const hasPrimaryEmail = parseEmails(emailTo).length > 0 || (!!customerEmail && !emailTo.trim())
+  const hasPrimaryEmail = buildEmailRecipients().to.length > 0
 
   const addRecipient = () => {
     setWhatsAppRecipients((prev) => [...prev, createRecipient()])
@@ -174,14 +237,31 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
   }
 
   const handleSendWhatsApp = async () => {
-    const validRecipients = whatsAppRecipients
-      .map((recipient) => ({
-        ...recipient,
-        normalizedPhone: normalizeToE164(recipient.phone) ?? null
+    const selectedContactRecipients = contactPersonsWithPhone
+      .filter((person) => includeContactPersonIds.includes(person.id))
+      .map((person) => ({
+        id: person.id,
+        name: person.name || '',
+        phone: person.normalizedPhone,
+        normalizedPhone: person.normalizedPhone,
       }))
-      .filter((recipient) => recipient.normalizedPhone)
 
-    if (validRecipients.length === 0) {
+    const manualRecipients = whatsAppRecipients
+      .map((recipient) => {
+        const normalizedPhone = normalizeToE164(recipient.phone)
+        return normalizedPhone
+          ? { ...recipient, normalizedPhone }
+          : null
+      })
+      .filter((recipient): recipient is { id: string; name: string; phone: string; normalizedPhone: string } => recipient !== null)
+
+    const uniqueRecipients = Array.from(
+      new Map(
+        [...selectedContactRecipients, ...manualRecipients].map((recipient) => [recipient.normalizedPhone, recipient])
+      ).values()
+    )
+
+    if (uniqueRecipients.length === 0) {
       showToast({
         title: 'Phone numbers missing',
         description: 'Please provide at least one valid WhatsApp number.',
@@ -192,7 +272,7 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
 
     try {
       setIsMessaging(true)
-      for (const recipient of validRecipients) {
+      for (const recipient of uniqueRecipients) {
         const personalizedMessage = (() => {
           const nameLine = recipient.name?.trim().length
             ? `Hi ${recipient.name.trim()},`
@@ -214,11 +294,12 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
 
       showToast({
         title: 'WhatsApp message sent',
-        description: `${validRecipients.length} recipient${validRecipients.length > 1 ? 's' : ''} notified.`,
+        description: `${uniqueRecipients.length} recipient${uniqueRecipients.length > 1 ? 's' : ''} notified.`,
         variant: 'success'
       })
 
       setWhatsAppRecipients(buildDefaultRecipients())
+      setIncludeContactPersonIds(contactPersonsWithPhone.map((person) => person.id))
       setWhatsAppDialogOpen(false)
     } finally {
       setIsMessaging(false)
@@ -239,6 +320,7 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
         onClick={() => {
           setEmailTo(customerEmail ?? "")
           setEmailCc("")
+          setSelectedContactIds([])
           setEmailDialogOpen(true)
         }}
         aria-label="Send report via email"
@@ -278,6 +360,47 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
                 placeholder="Optional comma-separated emails"
               />
             </div>
+            {contactOptions.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Contract Contact Persons</p>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {contactPersons.map((person) => {
+                    const hasEmail = Boolean(person.email && person.email.trim())
+                    const isSelected = selectedContactIds.includes(person.id)
+                    return (
+                      <label
+                        key={person.id}
+                        className={`flex items-start gap-3 rounded-md border p-3 text-sm ${hasEmail ? 'cursor-pointer hover:bg-muted/40' : 'opacity-60 cursor-not-allowed'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          disabled={!hasEmail}
+                          checked={isSelected && hasEmail}
+                          onChange={(event) => {
+                            const checked = event.target.checked
+                            setSelectedContactIds((prev) => {
+                              if (!hasEmail) return prev
+                              if (checked) {
+                                return prev.includes(person.id) ? prev : [...prev, person.id]
+                              }
+                              return prev.filter((id) => id !== person.id)
+                            })
+                          }}
+                        />
+                        <div className="space-y-1">
+                          <p className="font-medium">{person.name || 'Unnamed contact'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {hasEmail ? person.email : 'No email available'}
+                            {person.phone ? ` • ${person.phone}` : ''}
+                          </p>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => setEmailDialogOpen(false)} disabled={isEmailing}>Cancel</Button>
@@ -295,6 +418,44 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
             <DialogDescription>Version {versionLabel}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {contactPersonsWithPhone.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Contract Contact Persons</p>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {contactPersonsWithPhone.map((person) => {
+                    const checked = includeContactPersonIds.includes(person.id)
+                    return (
+                      <label
+                        key={person.id}
+                        className="flex items-start gap-3 rounded-md border p-3 text-sm cursor-pointer hover:bg-muted/40"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked={checked}
+                          onChange={(event) => {
+                            const value = event.target.checked
+                            setIncludeContactPersonIds((prev) => {
+                              if (value) {
+                                return prev.includes(person.id) ? prev : [...prev, person.id]
+                              }
+                              return prev.filter((id) => id !== person.id)
+                            })
+                          }}
+                        />
+                        <div className="space-y-1">
+                          <p className="font-medium">{person.name || 'Unnamed contact'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {person.normalizedPhone}
+                            {person.email ? ` • ${person.email}` : ''}
+                          </p>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             {whatsAppRecipients.map((recipient, index) => {
               const disableRemove = whatsAppRecipients.length === 1
               return (

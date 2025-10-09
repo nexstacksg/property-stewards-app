@@ -13,7 +13,8 @@ export async function GET(
       include: {
         inspector: true,
         user: { select: { id: true, username: true, email: true } },
-        tasks: true,
+        media: { orderBy: { order: 'asc' } },
+        task: true,
       },
       orderBy: { createdOn: 'asc' }
     })
@@ -46,7 +47,13 @@ export async function POST(
     const contribution = await prisma.itemEntry.upsert({
       where: { itemId_inspectorId: { itemId: id, inspectorId } },
       update: { remarks },
-      create: { itemId: id, inspectorId, remarks }
+      create: { itemId: id, inspectorId, remarks },
+      include: {
+        inspector: true,
+        user: { select: { id: true, username: true, email: true } },
+        media: { orderBy: { order: 'asc' } },
+        task: true,
+      }
     })
     return NextResponse.json(contribution)
   } catch (error) {

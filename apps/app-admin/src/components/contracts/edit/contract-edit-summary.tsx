@@ -44,7 +44,7 @@ export function ContractEditSummary({
         <div>
           <p className="text-sm text-muted-foreground">Contract ID</p>
           <p className="font-mono text-sm">
-            #{contractId ? contractId.slice(-8).toUpperCase() : ""}
+            #{contractId ? contractId  : ""}
           </p>
         </div>
 

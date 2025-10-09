@@ -232,7 +232,7 @@ function NewContractPageContent() {
             .filter((contract: any) => contract && typeof contract.id === "string")
             .map((contract: any) => ({
               id: contract.id,
-              label: `#${contract.id.slice(-8).toUpperCase()} • ${contract.status}`,
+              label: `#${contract.id } • ${contract.status}`,
             }))
         : []
       setAvailableReferences(options)

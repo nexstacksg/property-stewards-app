@@ -27,6 +27,12 @@ interface ContractGeneratedReportsProps {
   customerName?: string | null
   customerEmail?: string | null
   customerPhone?: string | null
+  contactPersons?: Array<{
+    id: string
+    name?: string | null
+    email?: string | null
+    phone?: string | null
+  }>
   pageSize?: number
 }
 
@@ -38,6 +44,7 @@ export function ContractGeneratedReports({
   customerName,
   customerEmail,
   customerPhone,
+  contactPersons = [],
   pageSize = DEFAULT_PAGE_SIZE,
 }: ContractGeneratedReportsProps) {
   const [page, setPage] = useState(1)
@@ -110,6 +117,7 @@ export function ContractGeneratedReports({
                           customerEmail={customerEmail}
                           customerPhone={customerPhone}
                           customerName={customerName}
+                          contactPersons={contactPersons}
                         />
                       </TableCell>
                     </TableRow>

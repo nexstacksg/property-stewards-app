@@ -9,6 +9,7 @@ import { createContractReportBuffer } from "@/app/api/contracts/[id]/report/repo
 import { getAuthSecret } from "@/lib/auth-secret"
 import { verifyJwt } from "@/lib/jwt"
 import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from "@/lib/s3-client"
+import { Condition } from "@prisma/client"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -57,10 +58,22 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
   })
 }
 
+const CONDITION_VALUES = new Set(Object.values(Condition))
+
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params
-  const body = await request.json().catch(() => ({})) as { title?: string }
+  const body = await request.json().catch(() => ({})) as { title?: string; conditions?: unknown }
   const titleInput = typeof body.title === "string" ? body.title.trim() : ""
+
+  const conditionsInput = Array.isArray(body.conditions)
+    ? body.conditions
+        .map((value) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
+        .filter((value) => CONDITION_VALUES.has(value as Condition))
+    : Array.from(CONDITION_VALUES)
+
+  const allowedConditions = conditionsInput.length > 0
+    ? Array.from(new Set(conditionsInput))
+    : Array.from(CONDITION_VALUES)
 
   const contract = await getContractWithWorkOrders(id)
   if (!contract) {
@@ -79,13 +92,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const nextVersion = computeVersionIncrement(latest)
   const generatedOn = new Date()
   const currentUserId = await resolveCurrentUserId()
+
   const title = titleInput.length ? titleInput : "Inspection Report"
   const versionLabel = `v${nextVersion}`
 
   const pdfBuffer = await createContractReportBuffer(contract, {
     titleOverride: title,
     versionLabel,
-    generatedOn
+    generatedOn,
+    allowedConditions,
   })
 
   const storageKey = buildStorageKey(contract, nextVersion)

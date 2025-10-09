@@ -11,9 +11,10 @@ import {
   DialogTrigger
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import WorkOrderItemMedia from "@/components/work-order-item-media"
+import WorkOrderItemMedia, { MediaAttachment as WorkOrderMediaAttachment } from "@/components/work-order-item-media"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments } from "@/lib/media-utils"
 import { useRouter } from "next/navigation"
-import { Trash2, Upload, X } from "lucide-react"
+import { Pencil, Trash2, Upload, X } from "lucide-react"
 
 const CONDITION_OPTIONS = [
   { value: "", label: "Select condition" },
@@ -38,6 +39,8 @@ type Task = {
 type Entry = {
   id: string
   remarks?: string | null
+  cause?: string | null
+  resolution?: string | null
   includeInReport?: boolean | null
   inspector?: { id: string; name: string } | null
   user?: { id: string; username?: string | null; email?: string | null } | null
@@ -45,12 +48,26 @@ type Entry = {
   task?: Task | null
   photos?: string[] | null
   videos?: string[] | null
+  media?: EntryMedia[] | null
+}
+
+type EntryMedia = {
+  id: string
+  url: string
+  caption?: string | null
+  type: 'PHOTO' | 'VIDEO'
+  order?: number | null
 }
 
 type DisplayEntry = Entry & {
   task: Task | undefined
-  photos: string[]
-  videos: string[]
+  photos: WorkOrderMediaAttachment[]
+  videos: WorkOrderMediaAttachment[]
+}
+
+type PendingMediaFile = {
+  file: File
+  caption: string
 }
 
 type Props = {
@@ -100,12 +117,22 @@ export default function ItemEntriesDialog({
   const [selectedTaskId, setSelectedTaskId] = useState<string>("")
   const [selectedCondition, setSelectedCondition] = useState<string>("")
   const [remarkText, setRemarkText] = useState<string>("")
+  const [causeText, setCauseText] = useState<string>("")
+  const [resolutionText, setResolutionText] = useState<string>("")
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([])
-  const [videoFiles, setVideoFiles] = useState<File[]>([])
+  const [photoFiles, setPhotoFiles] = useState<PendingMediaFile[]>([])
+  const [videoFiles, setVideoFiles] = useState<PendingMediaFile[]>([])
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
+  const [editingRemarkText, setEditingRemarkText] = useState<string>("")
+  const [editingCondition, setEditingCondition] = useState<string>("")
+  const [editingCauseText, setEditingCauseText] = useState<string>("")
+  const [editingResolutionText, setEditingResolutionText] = useState<string>("")
+  const [editingError, setEditingError] = useState<string | null>(null)
+  const [editingSubmitting, setEditingSubmitting] = useState(false)
+  const [editingMediaCaptions, setEditingMediaCaptions] = useState<Record<string, string>>({})
 
   useEffect(() => {
     setLocalEntries(entries)
@@ -208,25 +235,151 @@ export default function ItemEntriesDialog({
     setSelectedTaskId("")
     setSelectedCondition("")
     setRemarkText("")
+    setCauseText("")
+    setResolutionText("")
     setFormError(null)
     setPhotoFiles([])
     setVideoFiles([])
     if (mediaInputRef.current) mediaInputRef.current.value = ""
   }
 
+  const cancelEditing = () => {
+    setEditingEntryId(null)
+    setEditingRemarkText("")
+    setEditingCondition("")
+    setEditingCauseText("")
+    setEditingResolutionText("")
+    setEditingError(null)
+    setEditingSubmitting(false)
+    setEditingMediaCaptions({})
+  }
+
+  const beginEditingEntry = (entry: DisplayEntry) => {
+    resetForm()
+    setEditingEntryId(entry.id)
+    setEditingRemarkText(entry.remarks ?? "")
+    const initialCondition = entry.condition ?? entry.task?.condition ?? "GOOD"
+    setEditingCondition(initialCondition || "")
+    setEditingCauseText(entry.cause ?? "")
+    setEditingResolutionText(entry.resolution ?? "")
+    setEditingError(null)
+    const mediaCaptions: Record<string, string> = {}
+    entry.media?.forEach((mediaItem) => {
+      mediaCaptions[mediaItem.id] = mediaItem.caption?.trim() || ""
+    })
+    setEditingMediaCaptions(mediaCaptions)
+  }
+
+  const handleUpdateRemark: React.FormEventHandler<HTMLFormElement> = async (event) => {
+    event.preventDefault()
+    if (!editingEntryId) return
+
+    const trimmedRemark = editingRemarkText.trim()
+    const trimmedCause = editingCauseText.trim()
+    const trimmedResolution = editingResolutionText.trim()
+    const normalizedCondition = editingCondition.trim().toUpperCase()
+
+    if (!normalizedCondition) {
+      setEditingError('Please select a status for this remark.')
+      return
+    }
+
+    const requiresRemark = normalizedCondition !== 'GOOD'
+      && normalizedCondition !== 'NOT_APPLICABLE'
+      && normalizedCondition !== 'UN_OBSERVABLE'
+
+    if (requiresRemark && trimmedRemark.length === 0) {
+      setEditingError('Remarks are required for this status.')
+      return
+    }
+
+    const mediaUpdates: Array<{ id: string; caption: string | null }> = []
+    const currentEntry = localEntries.find((entry) => entry.id === editingEntryId)
+    if (currentEntry?.media) {
+      currentEntry.media.forEach((mediaItem) => {
+        const existingCaption = mediaItem.caption?.trim() || ""
+        const nextRaw = editingMediaCaptions[mediaItem.id] ?? existingCaption
+        const nextCaption = nextRaw.trim()
+        const normalizedNext = nextCaption.length > 0 ? nextCaption : null
+        if (normalizedNext !== (mediaItem.caption ?? null)) {
+          mediaUpdates.push({ id: mediaItem.id, caption: normalizedNext })
+        }
+      })
+    }
+
+    setEditingSubmitting(true)
+    setEditingError(null)
+    try {
+      const response = await fetch(`/api/checklist-items/remarks/${editingEntryId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          remark: trimmedRemark,
+          cause: trimmedCause,
+          resolution: trimmedResolution,
+          condition: normalizedCondition,
+          mediaUpdates,
+        }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to update remark')
+      }
+
+      const updated: Entry = await response.json()
+
+      setLocalEntries((prev) =>
+        prev.map((entry) => {
+          if (entry.id !== updated.id) return entry
+          return {
+            ...entry,
+            remarks: typeof updated.remarks === 'string' ? updated.remarks : null,
+            cause: typeof updated.cause === 'string' ? updated.cause : null,
+            resolution: typeof updated.resolution === 'string' ? updated.resolution : null,
+            condition: typeof updated.condition === 'string' ? updated.condition : updated.condition ?? null,
+            includeInReport: typeof updated.includeInReport === 'boolean' ? updated.includeInReport : entry.includeInReport,
+            inspector: updated.inspector ?? entry.inspector,
+            user: updated.user ?? entry.user,
+            task: updated.task ? { ...entry.task, ...updated.task } : entry.task,
+            media: Array.isArray(updated.media) ? updated.media : entry.media,
+          }
+        })
+      )
+
+      if (updated.task) {
+        const updatedTask = updated.task
+        setLocalTasks((prev) =>
+          prev.map((task) =>
+            task.id === updatedTask.id
+              ? { ...task, condition: updatedTask.condition ?? null }
+              : task
+          )
+        )
+      }
+
+      router.refresh()
+      cancelEditing()
+    } catch (error) {
+      setEditingError((error as Error).message)
+    } finally {
+      setEditingSubmitting(false)
+    }
+  }
+
   const handleMediaSelection: React.ChangeEventHandler<HTMLInputElement> = (event) => {
     const files = Array.from(event.target.files || [])
     if (files.length === 0) return
 
-    const newPhotos: File[] = []
-    const newVideos: File[] = []
+    const newPhotos: PendingMediaFile[] = []
+    const newVideos: PendingMediaFile[] = []
     files.forEach((file) => {
       if (file.type.startsWith("image/")) {
-        newPhotos.push(file)
+        newPhotos.push({ file, caption: "" })
         return
       }
       if (file.type.startsWith("video/")) {
-        newVideos.push(file)
+        newVideos.push({ file, caption: "" })
       }
     })
 
@@ -244,6 +397,18 @@ export default function ItemEntriesDialog({
     setPhotoFiles([])
     setVideoFiles([])
     if (mediaInputRef.current) mediaInputRef.current.value = ""
+  }
+
+  const updatePhotoCaption = (index: number, caption: string) => {
+    setPhotoFiles((prev) =>
+      prev.map((entry, i) => (i === index ? { ...entry, caption } : entry))
+    )
+  }
+
+  const updateVideoCaption = (index: number, caption: string) => {
+    setVideoFiles((prev) =>
+      prev.map((entry, i) => (i === index ? { ...entry, caption } : entry))
+    )
   }
 
   const removePhotoAt = (index: number) => {
@@ -267,6 +432,8 @@ export default function ItemEntriesDialog({
     }
 
     const trimmedRemark = remarkText.trim()
+    const trimmedCause = causeText.trim()
+    const trimmedResolution = resolutionText.trim()
     const normalizedCondition = selectedCondition.trim().toUpperCase()
 
     if (!normalizedCondition) {
@@ -300,8 +467,20 @@ export default function ItemEntriesDialog({
       if (trimmedRemark.length > 0) {
         formData.set("remark", trimmedRemark)
       }
-      photoFiles.forEach((file) => formData.append("photos", file))
-      videoFiles.forEach((file) => formData.append("videos", file))
+      if (trimmedCause.length > 0) {
+        formData.set('cause', trimmedCause)
+      }
+      if (trimmedResolution.length > 0) {
+        formData.set('resolution', trimmedResolution)
+      }
+      photoFiles.forEach(({ file, caption }) => {
+        formData.append('photos', file)
+        formData.append('photoCaptions', caption || '')
+      })
+      videoFiles.forEach(({ file, caption }) => {
+        formData.append('videos', file)
+        formData.append('videoCaptions', caption || '')
+      })
 
       const response = await fetch(`/api/checklist-items/${itemId}/remarks`, {
         method: "POST",
@@ -358,6 +537,9 @@ export default function ItemEntriesDialog({
     setDeletingEntryId(entryId)
     try {
       await fetch(`/api/checklist-items/remarks/${entryId}`, { method: 'DELETE' })
+      if (editingEntryId === entryId) {
+        cancelEditing()
+      }
       setLocalEntries((prev) => prev.filter((entry) => entry.id !== entryId))
       setLocalTasks((prev) =>
         prev.map((task) => {
@@ -383,16 +565,17 @@ export default function ItemEntriesDialog({
   const displayEntries: DisplayEntry[] = useMemo(() => {
     return localEntries.map((entry) => {
       const task = localTasks.find((task) => (task.entries || []).some((linked) => linked.id === entry.id))
-      const entryPhotos: string[] = Array.isArray(entry.photos) ? entry.photos : []
-      const taskPhotos: string[] = task && Array.isArray(task.photos) ? task.photos : []
-      const entryVideos: string[] = Array.isArray(entry.videos) ? entry.videos : []
-      const taskVideos: string[] = task && Array.isArray(task.videos) ? task.videos : []
-
       return {
         ...entry,
         task,
-        photos: Array.from(new Set([...entryPhotos, ...taskPhotos])),
-        videos: Array.from(new Set([...entryVideos, ...taskVideos])),
+        photos: mergeMediaLists([
+          extractEntryMedia(entry, 'PHOTO'),
+          stringsToAttachments(task?.photos)
+        ]),
+        videos: mergeMediaLists([
+          extractEntryMedia(entry, 'VIDEO'),
+          stringsToAttachments(task?.videos)
+        ]),
       }
     })
   }, [localEntries, localTasks])
@@ -407,6 +590,7 @@ export default function ItemEntriesDialog({
     setOpen(nextOpen)
     if (!nextOpen) {
       resetForm()
+      cancelEditing()
     }
   }
 
@@ -435,6 +619,7 @@ export default function ItemEntriesDialog({
               type="button"
               size="sm"
               onClick={() => {
+                cancelEditing()
                 setFormError(null)
                 setSelectedLocationId("")
                 setSelectedTaskId("")
@@ -445,7 +630,7 @@ export default function ItemEntriesDialog({
                 if (mediaInputRef.current) mediaInputRef.current.value = ""
                 setAddingRemark(true)
               }}
-              disabled={!hasSelectableTasks || submitting}
+              disabled={!hasSelectableTasks || submitting || Boolean(editingEntryId) || editingSubmitting}
               title={
                 !hasSelectableTasks
                   ? "No subtasks available for remarks"
@@ -522,6 +707,30 @@ export default function ItemEntriesDialog({
                   disabled={submitting}
                 />
               </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor={`cause-text-${itemId}`}>Cause</Label>
+                  <textarea
+                    id={`cause-text-${itemId}`}
+                    className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                    value={causeText}
+                    onChange={(event) => setCauseText(event.target.value)}
+                    placeholder="Describe the suspected cause (optional)"
+                    disabled={submitting}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`resolution-text-${itemId}`}>Resolution</Label>
+                  <textarea
+                    id={`resolution-text-${itemId}`}
+                    className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                    value={resolutionText}
+                    onChange={(event) => setResolutionText(event.target.value)}
+                    placeholder="Outline the recommended resolution (optional)"
+                    disabled={submitting}
+                  />
+                </div>
+              </div>
               <div className="space-y-3">
                 <div className="space-y-2">
                   <Label>Attachments</Label>
@@ -557,41 +766,69 @@ export default function ItemEntriesDialog({
                       </div>
                     </div>
                     {(photoFiles.length > 0 || videoFiles.length > 0) && (
-                      <div className="mt-3 space-y-2 text-sm">
-                        {photoFiles.map((file, index) => (
+                      <div className="mt-3 space-y-3 text-sm">
+                        {photoFiles.map((entry, index) => (
                           <div
-                            key={`photo-${index}-${file.name}`}
-                            className="flex items-center justify-between gap-3 rounded border border-transparent bg-background px-2 py-1 text-muted-foreground"
+                            key={`photo-${index}-${entry.file.name}`}
+                            className="rounded border border-transparent bg-background px-2 py-2 text-muted-foreground"
                           >
-                            <span className="truncate">Photo: {file.name || `photo-${index + 1}`}</span>
-                            <button
-                              type="button"
-                              onClick={() => removePhotoAt(index)}
-                              className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="truncate">Photo: {entry.file.name || `photo-${index + 1}`}</span>
+                              <button
+                                type="button"
+                                onClick={() => removePhotoAt(index)}
+                                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                disabled={submitting}
+                                aria-label={`Remove ${entry.file.name || 'photo'}`}
+                              >
+                                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span className="sr-only">Remove file</span>
+                              </button>
+                            </div>
+                            <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`photo-caption-${itemId}-${index}`}>
+                              Caption (optional)
+                            </label>
+                            <input
+                              id={`photo-caption-${itemId}-${index}`}
+                              type="text"
+                              className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={entry.caption}
+                              onChange={(event) => updatePhotoCaption(index, event.target.value)}
+                              placeholder="Describe this photo"
                               disabled={submitting}
-                              aria-label={`Remove ${file.name || 'photo'}`}
-                            >
-                              <X className="h-3.5 w-3.5" aria-hidden="true" />
-                              <span className="sr-only">Remove file</span>
-                            </button>
+                            />
                           </div>
                         ))}
-                        {videoFiles.map((file, index) => (
+                        {videoFiles.map((entry, index) => (
                           <div
-                            key={`video-${index}-${file.name}`}
-                            className="flex items-center justify-between gap-3 rounded border border-transparent bg-background px-2 py-1 text-muted-foreground"
+                            key={`video-${index}-${entry.file.name}`}
+                            className="rounded border border-transparent bg-background px-2 py-2 text-muted-foreground"
                           >
-                            <span className="truncate">Video: {file.name || `video-${index + 1}`}</span>
-                            <button
-                              type="button"
-                              onClick={() => removeVideoAt(index)}
-                              className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="truncate">Video: {entry.file.name || `video-${index + 1}`}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeVideoAt(index)}
+                                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                disabled={submitting}
+                                aria-label={`Remove ${entry.file.name || 'video'}`}
+                              >
+                                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span className="sr-only">Remove file</span>
+                              </button>
+                            </div>
+                            <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`video-caption-${itemId}-${index}`}>
+                              Caption (optional)
+                            </label>
+                            <input
+                              id={`video-caption-${itemId}-${index}`}
+                              type="text"
+                              className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={entry.caption}
+                              onChange={(event) => updateVideoCaption(index, event.target.value)}
+                              placeholder="Describe this video"
                               disabled={submitting}
-                              aria-label={`Remove ${file.name || 'video'}`}
-                            >
-                              <X className="h-3.5 w-3.5" aria-hidden="true" />
-                              <span className="sr-only">Remove file</span>
-                            </button>
+                            />
                           </div>
                         ))}
                       </div>
@@ -636,9 +873,11 @@ export default function ItemEntriesDialog({
                 const mediaContext = task?.name || locationName || createdBy || null
                 const mediaLabel = buildMediaLabel(itemName, mediaContext)
                 const showByline = Boolean(createdBy) && headline !== createdBy
+                const isEditing = editingEntryId === entry.id
+                const cardClasses = `rounded-md border p-3 ${isEditing ? 'border-primary/60 bg-primary/5' : ''}`
 
                 return (
-                  <div key={entry.id} className="rounded-md border p-3">
+                  <div key={entry.id} className={cardClasses}>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-sm font-medium">{headline}</p>
@@ -653,30 +892,167 @@ export default function ItemEntriesDialog({
                         ) : null}
                       </div>
                       <div className="flex flex-col items-end gap-2 sm:self-start">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleDeleteEntry(entry.id)}
-                          disabled={deletingEntryId === entry.id}
-                          title="Delete remark"
-                        >
-                          <Trash2 className={`h-4 w-4 ${deletingEntryId === entry.id ? 'animate-pulse text-destructive' : ''}`} />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => {
+                              if (isEditing) {
+                                cancelEditing()
+                              } else {
+                                beginEditingEntry(entry)
+                              }
+                            }}
+                            disabled={submitting || editingSubmitting || deletingEntryId === entry.id}
+                            title={isEditing ? 'Cancel edit' : 'Edit remark'}
+                          >
+                            <Pencil className={`h-4 w-4 ${isEditing ? 'text-primary' : ''}`} />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleDeleteEntry(entry.id)}
+                            disabled={deletingEntryId === entry.id || editingSubmitting}
+                            title="Delete remark"
+                          >
+                            <Trash2 className={`h-4 w-4 ${deletingEntryId === entry.id ? 'animate-pulse text-destructive' : ''}`} />
+                          </Button>
+                        </div>
                         <label className="flex items-center gap-2 text-xs text-muted-foreground select-none">
                           <input
                             type="checkbox"
                             checked={Boolean(entry.includeInReport)}
                             onChange={(event) => toggleInclude(entry.id, event.target.checked)}
+                            disabled={editingSubmitting}
                           />
                           Use in final report
                         </label>
                       </div>
                     </div>
-                    {entry.remarks ? (
+                    {isEditing ? (
+                      <form onSubmit={handleUpdateRemark} className="mt-3 space-y-3 rounded-md border bg-background p-3 shadow-sm">
+                        {editingError && (
+                          <p className="text-sm text-destructive">{editingError}</p>
+                        )}
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-condition-${entry.id}`}>Condition</Label>
+                            <select
+                              id={`edit-condition-${entry.id}`}
+                              className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={editingCondition}
+                              onChange={(event) => setEditingCondition(event.target.value)}
+                              disabled={editingSubmitting}
+                            >
+                              {CONDITION_OPTIONS.map((option) => (
+                                <option key={option.value || 'empty'} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2 sm:col-span-2">
+                            <Label htmlFor={`edit-remark-${entry.id}`}>Remarks</Label>
+                            <textarea
+                              id={`edit-remark-${entry.id}`}
+                              className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={editingRemarkText}
+                              onChange={(event) => setEditingRemarkText(event.target.value)}
+                              disabled={editingSubmitting}
+                              placeholder="Update the note for this subtask"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-cause-${entry.id}`}>Cause</Label>
+                            <textarea
+                              id={`edit-cause-${entry.id}`}
+                              className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={editingCauseText}
+                              onChange={(event) => setEditingCauseText(event.target.value)}
+                              disabled={editingSubmitting}
+                              placeholder="Describe the suspected cause (optional)"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`edit-resolution-${entry.id}`}>Resolution</Label>
+                            <textarea
+                              id={`edit-resolution-${entry.id}`}
+                              className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={editingResolutionText}
+                              onChange={(event) => setEditingResolutionText(event.target.value)}
+                              disabled={editingSubmitting}
+                              placeholder="Outline the recommended resolution (optional)"
+                            />
+                          </div>
+                        </div>
+                        {(entry.media && entry.media.length > 0) ? (
+                          <div className="space-y-3">
+                            <Label>Edit Media Captions</Label>
+                            <div className="space-y-4">
+                              {(entry.media || []).map((mediaItem) => {
+                                const isPhoto = mediaItem.type === 'PHOTO'
+                                const captionValue = editingMediaCaptions[mediaItem.id] ?? mediaItem.caption ?? ''
+                                return (
+                                  <div key={mediaItem.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
+                                    <div className="flex items-start gap-3">
+                                      {isPhoto ? (
+                                        <img
+                                          src={mediaItem.url}
+                                          alt={captionValue ? `${captionValue} preview` : 'Photo preview'}
+                                          className="h-20 w-20 rounded object-cover border"
+                                        />
+                                      ) : (
+                                        <video src={mediaItem.url} className="h-20 w-32 rounded border" controls={false} muted />
+                                      )}
+                                      <div className="flex-1 space-y-2">
+                                        
+                                        <input
+                                          type="text"
+                                          className="mt-2 w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                                          value={captionValue}
+                                          onChange={(event) =>
+                                            setEditingMediaCaptions((prev) => ({
+                                              ...prev,
+                                              [mediaItem.id]: event.target.value,
+                                            }))
+                                          }
+                                          placeholder="Add a caption"
+                                          disabled={editingSubmitting}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" onClick={cancelEditing} disabled={editingSubmitting}>
+                            Cancel
+                          </Button>
+                          <Button type="submit" disabled={editingSubmitting}>
+                            {editingSubmitting ? 'Saving...' : 'Update Remark'}
+                          </Button>
+                        </div>
+                      </form>
+                    ) : entry.remarks ? (
                       <p className="text-sm text-muted-foreground mt-2">
-                        {entry.remarks}
+                        <span className="font-medium text-foreground">Remarks:</span> {entry.remarks}
+                      </p>
+                    ) : null}
+                    {!isEditing && entry.cause ? (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        <span className="font-medium text-foreground">Cause:</span> {entry.cause}
+                      </p>
+                    ) : null}
+                    {!isEditing && entry.resolution ? (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        <span className="font-medium text-foreground">Resolution:</span> {entry.resolution}
                       </p>
                     ) : null}
                     <div className="mt-2">

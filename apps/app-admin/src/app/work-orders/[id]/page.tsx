@@ -10,7 +10,6 @@ import {
   Eye,
   User,
   MapPin,
-  Calendar,
   Clock,
   CheckCircle,
   XCircle,
@@ -22,8 +21,20 @@ import {
 } from "lucide-react"
 import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments, type MediaAttachment } from "@/lib/media-utils"
 import ItemEntriesDialog from "@/components/item-entries-dialog"
 import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
+
+type ChecklistDisplayItem = {
+  item: any
+  index: number
+  locationSummaries: string[]
+  fallbackNames: string[]
+  uploadTarget: 'item' | 'task'
+  combinedPhotos: MediaAttachment[]
+  combinedVideos: MediaAttachment[]
+  remarkLabel: string
+}
 
 async function getWorkOrder(id: string) {
   const workOrder = await prisma.workOrder.findUnique({
@@ -46,6 +57,9 @@ async function getWorkOrder(id: string) {
                           username: true,
                           email: true
                         }
+                      },
+                      media: {
+                        orderBy: { order: 'asc' }
                       },
                       task: {
                         select: {
@@ -134,6 +148,7 @@ function getWorkOrderStatusIcon(status: string) {
   }
 }
 
+
 export default async function WorkOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params
   const workOrder = await getWorkOrder(resolvedParams.id) as any
@@ -170,20 +185,104 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
     totalSubItems += subItemCount
   })
 
+  const checklistDisplayItems: ChecklistDisplayItem[] = (checklistItems as any[]).map((item: any, index: number) => {
+    const locations = Array.isArray(item.locations) ? item.locations : []
+    const locationTasks = locations.flatMap((location: any) =>
+      Array.isArray(location?.tasks) ? location.tasks : [],
+    )
+
+    const fallbackTasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
+
+    const locationSummaries: string[] = locations
+      .map((location: any) => {
+        const name = typeof location?.name === 'string' ? location.name.trim() : ''
+        const subtasks = Array.isArray(location?.tasks)
+          ? location.tasks
+              .map((task: any) => (typeof task?.name === 'string' ? task.name.trim() : ''))
+              .filter((entry: string) => entry.length > 0)
+          : []
+        if (name && subtasks.length > 0) {
+          return `${name}: ${subtasks.join(', ')}`
+        }
+        if (name) return name
+        if (subtasks.length > 0) return subtasks.join(', ')
+        return ''
+      })
+      .filter((entry: string) => entry.length > 0)
+
+    const fallbackNames: string[] = fallbackTasks
+      .map((task: any) => (typeof task?.name === 'string' ? task.name.trim() : ''))
+      .filter((entry: string) => entry.length > 0)
+
+    const uploadTarget = item?.contractChecklistId ? 'item' : 'task'
+
+    const taskPhotosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
+    const taskPhotoAttachments = mergeMediaLists(
+      taskPhotosSource.map((task: any) => stringsToAttachments(task?.photos))
+    )
+    const contributionPhotoAttachments = mergeMediaLists(
+      (item.contributions || []).map((entry: any) =>
+        mergeMediaLists([
+          extractEntryMedia(entry, 'PHOTO'),
+          stringsToAttachments(entry?.task?.photos)
+        ])
+      )
+    )
+    const combinedPhotos = mergeMediaLists([
+      stringsToAttachments(item.photos),
+      taskPhotoAttachments,
+      contributionPhotoAttachments
+    ])
+
+    const taskVideosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
+    const taskVideoAttachments = mergeMediaLists(
+      taskVideosSource.map((task: any) => stringsToAttachments(task?.videos))
+    )
+    const contributionVideoAttachments = mergeMediaLists(
+      (item.contributions || []).map((entry: any) =>
+        mergeMediaLists([
+          extractEntryMedia(entry, 'VIDEO'),
+          stringsToAttachments(entry?.task?.videos)
+        ])
+      )
+    )
+    const combinedVideos = mergeMediaLists([
+      stringsToAttachments(item.videos),
+      taskVideoAttachments,
+      contributionVideoAttachments
+    ])
+
+    const remarkCount = Array.isArray(item.contributions) ? item.contributions.length : 0
+    const remarkLabel = `Remarks (${remarkCount})`
+
+    return {
+      item,
+      index,
+      locationSummaries,
+      fallbackNames,
+      uploadTarget,
+      combinedPhotos,
+      combinedVideos,
+      remarkLabel,
+    } as ChecklistDisplayItem
+  })
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-4 py-6 space-y-6 sm:px-6 lg:px-10 lg:py-8">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col items-start gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-start gap-3 sm:items-center sm:gap-4">
           <Link href="/work-orders">
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" className="shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-bold">Work Order #{workOrder.id.slice(-8).toUpperCase()}</h1>
-              <div className="flex items-center gap-1">
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <h1 className="text-2xl font-bold leading-tight sm:text-3xl">
+                Work Order #{workOrder.id}
+              </h1>
+              <div className="flex items-center gap-1 text-sm sm:text-base">
                 {getWorkOrderStatusIcon(workOrder.status)}
                 <Badge variant={getWorkOrderStatusVariant(workOrder.status)}>
                   {workOrder.status}
@@ -193,7 +292,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
             <p className="text-muted-foreground mt-1">Work Order Details</p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full justify-end gap-2 self-stretch lg:w-auto lg:self-auto lg:justify-start">
           <Link href={`/work-orders/${workOrder.id}/edit`}>
             <Button>
               <Edit className="h-4 w-4 mr-2" />
@@ -210,12 +309,12 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
           <CardDescription>Key information and schedule</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-8 md:grid-cols-2">
+          <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
             {/* Left: Work Order Information */}
             <div className="space-y-4">
               {/* Meta row */}
-              <div className="flex flex-wrap items-center gap-3">
-                <Link href={`/contracts/${workOrder.contractId}`} className="font-mono text-sm text-primary hover:underline">#{workOrder.contract.id.slice(-8).toUpperCase()}</Link>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <Link href={`/contracts/${workOrder.contractId}`} className="font-mono text-sm text-primary hover:underline">#{workOrder.contract.id }</Link>
                 <Badge variant={getWorkOrderStatusVariant(workOrder.status)}>{workOrder.status}</Badge>
                 {workOrder.contract.servicePackage && (
                   <Badge variant="outline">{workOrder.contract.servicePackage}</Badge>
@@ -259,27 +358,27 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
             </div>
 
             {/* Right: Schedule, Inspectors & Sign-off */}
-            <div className="md:border-l md:pl-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
+            <div className="space-y-4 border-t pt-4 md:border-0 md:pt-0 md:pl-6">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Scheduled Start</p>
                   <p className="mt-1 font-medium">{formatDateTime(workOrder.scheduledStartDateTime)}</p>
                 </div>
-                <div>
+                <div className="space-y-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">Scheduled End</p>
                   <p className="mt-1 font-medium">{formatDateTime(workOrder.scheduledEndDateTime)}</p>
                 </div>
               </div>
               {(workOrder.actualStart || workOrder.actualEnd) && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {workOrder.actualStart && (
-                    <div>
+                    <div className="space-y-1">
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Actual Start</p>
                       <p className="mt-1 font-medium">{formatDateTime(workOrder.actualStart)}</p>
                     </div>
                   )}
                   {workOrder.actualEnd && (
-                    <div>
+                    <div className="space-y-1">
                       <p className="text-xs uppercase tracking-wide text-muted-foreground">Actual End</p>
                       <p className="mt-1 font-medium">{formatDateTime(workOrder.actualEnd)}</p>
                     </div>
@@ -287,7 +386,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                 </div>
               )}
               {/* Inspectors (compact chips) */}
-              <div>
+              <div className="space-y-2">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Inspectors</p>
                 {workOrder.inspectors?.length ? (
                   <div className="mt-1 flex flex-wrap gap-2">
@@ -353,7 +452,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               </div>
 
               {/* Statistics - Moved to top */}
-              <div className="grid gap-4 md:grid-cols-4 mb-6">
+              <div className="grid gap-4 mb-6 sm:grid-cols-2 xl:grid-cols-4">
                 <Card>
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
@@ -414,123 +513,56 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               {checklistItems.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No checklist items assigned</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>#</TableHead>
-                      <TableHead>Item</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Media</TableHead>
-                      <TableHead>Remarks</TableHead>
-                      <TableHead>Details</TableHead>
-                      <TableHead>Edit</TableHead>
-
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {checklistItems.map((item: any, index: number) => {
-                      const locations = Array.isArray(item.locations) ? item.locations : []
-                      const locationTasks = locations.flatMap((location: any) =>
-                        Array.isArray(location?.tasks) ? location.tasks : [],
-                      )
-
-                      const fallbackTasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
-
-                      const locationSummaries = locations
-                        .map((location: any) => {
-                          const name = typeof location?.name === 'string' ? location.name.trim() : ''
-                          const subtasks = Array.isArray(location?.tasks)
-                            ? location.tasks
-                                .map((task: any) => (typeof task?.name === 'string' ? task.name.trim() : ''))
-                                .filter((entry: string) => entry.length > 0)
-                            : []
-                          if (name && subtasks.length > 0) {
-                            return `${name}: ${subtasks.join(', ')}`
-                          }
-                          if (name) return name
-                          if (subtasks.length > 0) return subtasks.join(', ')
-                          return ''
-                        })
-                        .filter((entry: string) => entry.length > 0)
-
-                      const fallbackNames = fallbackTasks
-                        .map((task: any) => (typeof task?.name === 'string' ? task.name.trim() : ''))
-                        .filter((entry: string) => entry.length > 0)
-
-                      const description = typeof item.description === 'string' ? item.description.trim() : ''
-                      const checklistRemarks = typeof item.remarks === 'string' ? item.remarks.trim() : ''
-
-                      const uploadTarget = item?.contractChecklistId ? 'item' : 'task'
-
-                      const itemPhotos = Array.isArray(item.photos) ? item.photos : []
-                      const taskPhotosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
-                      const taskPhotos = taskPhotosSource.flatMap((task: any) =>
-                        Array.isArray(task?.photos) ? task.photos : [],
-                      )
-                      const contributionPhotos = (item.contributions || []).flatMap((entry: any) => {
-                        const entryPhotos = Array.isArray(entry.photos) ? entry.photos : []
-                        const taskPhotosFromEntry = entry.task && Array.isArray(entry.task.photos) ? entry.task.photos : []
-                        return [...entryPhotos, ...taskPhotosFromEntry]
-                      })
-                      const combinedPhotos = Array.from(new Set([...itemPhotos, ...taskPhotos, ...contributionPhotos]))
-
-                      const itemVideos = Array.isArray(item.videos) ? item.videos : []
-                      const taskVideosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
-                      const taskVideos = taskVideosSource.flatMap((task: any) =>
-                        Array.isArray(task?.videos) ? task.videos : [],
-                      )
-                      const contributionVideos = (item.contributions || []).flatMap((entry: any) => {
-                        const entryVideos = Array.isArray(entry.videos) ? entry.videos : []
-                        const taskVideosFromEntry = entry.task && Array.isArray(entry.task.videos) ? entry.task.videos : []
-                        return [...entryVideos, ...taskVideosFromEntry]
-                      })
-                      const combinedVideos = Array.from(new Set([...itemVideos, ...taskVideos, ...contributionVideos]))
-
+                <>
+                  <div className="space-y-4 lg:hidden">
+                    {checklistDisplayItems.map(({ item, index, locationSummaries, fallbackNames, uploadTarget, combinedPhotos, combinedVideos, remarkLabel }) => {
+                      const isCompleted = item.status === 'COMPLETED'
                       return (
-                        <TableRow key={item.id}>
-                          <TableCell className="text-muted-foreground">
-                            {index + 1}
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{item.name || item.item}</p>
+                        <Card key={item.id} className="p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <p className="text-xs uppercase text-muted-foreground">Item {index + 1}</p>
+                              <h3 className="text-base font-semibold leading-snug break-words">
+                                {item.name || item.item}
+                              </h3>
                               {item.category && (
-                                <Badge variant="outline" className="text-xs mt-1">
+                                <Badge variant="outline" className="text-xs">
                                   {item.category}
                                 </Badge>
                               )}
-                              {locationSummaries.length > 0 && (
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  {locationSummaries.map((summary) => `• ${summary}`).join('  ')}
-                                </p>
-                              )}
-                              {locationSummaries.length === 0 && fallbackNames.length > 0 && (
-                                <p className="text-sm text-muted-foreground mt-1">
-                                  {fallbackNames.map((name) => `• ${name}`).join('  ')}
-                                </p>
-                              )}
-                              {/* {description && (
-                                <p className="text-sm text-muted-foreground mt-1">{description}</p>
-                              )}
-                              {checklistRemarks && (
-                                <p className="text-sm text-muted-foreground/80 italic mt-1">
-                                  {checklistRemarks}
-                                </p>
-                              )} */}
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            {item.status === 'COMPLETED' ? (
-                              <Badge variant="success">
-                                <CheckCircle className="h-3 w-3 mr-1" />
-                                Completed
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary">Pending</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2 relative z-10">
+                            <Badge variant={isCompleted ? 'success' : 'secondary'} className="shrink-0">
+                              {isCompleted ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <CheckCircle className="h-3 w-3" />
+                                  Completed
+                                </span>
+                              ) : (
+                                'Pending'
+                              )}
+                            </Badge>
+                          </div>
+                          {locationSummaries.length > 0 && (
+                            <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                              {locationSummaries.map((summary) => (
+                                <p key={summary} className="leading-snug">
+                                  • {summary}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          {locationSummaries.length === 0 && fallbackNames.length > 0 && (
+                            <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                              {fallbackNames.map((name) => (
+                                <p key={name} className="leading-snug">
+                                  • {name}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                          <div className="mt-4 space-y-4">
+                            <div className="flex flex-col gap-2">
+                              <p className="text-xs uppercase text-muted-foreground">Media</p>
                               <WorkOrderItemMedia
                                 itemId={item.id}
                                 workOrderId={workOrder.id}
@@ -541,9 +573,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 uploadTarget={uploadTarget}
                               />
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2 relative z-10">
+                            <div className="flex flex-wrap items-center gap-2">
                               <ItemEntriesDialog
                                 itemId={item.id}
                                 workOrderId={workOrder.id}
@@ -551,31 +581,121 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 tasks={item.checklistTasks || []}
                                 locations={item.locations || []}
                                 itemName={item.name || item.item}
+                                triggerLabel={remarkLabel}
                               />
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Link href={`/checklist-items/${item.id}`}>
-                              <Button variant="ghost" size="icon" aria-label="View checklist item details">
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                            </Link>
-                          </TableCell>
-                          <TableCell>
-                            <div className="relative z-10 inline-flex">
+                              <Link href={`/checklist-items/${item.id}`} className="flex-1 sm:flex-none">
+                                <Button variant="outline" size="sm" className="w-full sm:w-auto">
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  View Details
+                                </Button>
+                              </Link>
                               <EditChecklistItemDialog
                                 itemId={item.id}
                                 initialName={item.name || item.item}
                                 initialRemarks={item.remarks || item.description}
                                 initialStatus={item.status || (item.enteredOn ? 'COMPLETED' : 'PENDING')}
+                                triggerVariant="outline"
                               />
                             </div>
-                          </TableCell>
-                        </TableRow>
+                          </div>
+                        </Card>
                       )
                     })}
-                  </TableBody>
-                </Table>
+                  </div>
+                  <div className="hidden lg:block">
+                    <div className="overflow-x-auto">
+                      <Table className="min-w-[960px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-16">#</TableHead>
+                            <TableHead>Item</TableHead>
+                            <TableHead className="w-40">Status</TableHead>
+                            <TableHead className="w-48">Media</TableHead>
+                            <TableHead className="w-40">Remarks</TableHead>
+                            <TableHead className="w-32">Details</TableHead>
+                            <TableHead className="w-24">Edit</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {checklistDisplayItems.map(({ item, index, locationSummaries, fallbackNames, uploadTarget, combinedPhotos, combinedVideos, remarkLabel }) => (
+                            <TableRow key={item.id}>
+                              <TableCell className="text-muted-foreground">{index + 1}</TableCell>
+                              <TableCell className="align-top">
+                                <div className="space-y-1">
+                                  <p className="font-medium leading-snug">{item.name || item.item}</p>
+                                  {item.category && (
+                                    <Badge variant="outline" className="text-xs">
+                                      {item.category}
+                                    </Badge>
+                                  )}
+                                  {locationSummaries.length > 0 && (
+                                    <p className="text-sm text-muted-foreground">
+                                      {locationSummaries.map((summary) => `• ${summary}`).join('  ')}
+                                    </p>
+                                  )}
+                                  {locationSummaries.length === 0 && fallbackNames.length > 0 && (
+                                    <p className="text-sm text-muted-foreground">
+                                      {fallbackNames.map((name) => `• ${name}`).join('  ')}
+                                    </p>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="align-top">
+                                {item.status === 'COMPLETED' ? (
+                                  <Badge variant="success">
+                                    <CheckCircle className="h-3 w-3 mr-1" />
+                                    Completed
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary">Pending</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <WorkOrderItemMedia
+                                  itemId={item.id}
+                                  workOrderId={workOrder.id}
+                                  photos={combinedPhotos}
+                                  videos={combinedVideos}
+                                  itemName={item.name || item.item}
+                                  enableUpload
+                                  uploadTarget={uploadTarget}
+                                />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <ItemEntriesDialog
+                                  itemId={item.id}
+                                  workOrderId={workOrder.id}
+                                  entries={item.contributions || []}
+                                  tasks={item.checklistTasks || []}
+                                  locations={item.locations || []}
+                                  itemName={item.name || item.item}
+                                  triggerLabel={remarkLabel}
+                                />
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <Link href={`/checklist-items/${item.id}`}>
+                                  <Button variant="ghost" size="icon" aria-label="View checklist item details">
+                                    <Eye className="h-4 w-4" />
+                                  </Button>
+                                </Link>
+                              </TableCell>
+                              <TableCell className="align-top">
+                                <div className="inline-flex">
+                                  <EditChecklistItemDialog
+                                    itemId={item.id}
+                                    initialName={item.name || item.item}
+                                    initialRemarks={item.remarks || item.description}
+                                    initialStatus={item.status || (item.enteredOn ? 'COMPLETED' : 'PENDING')}
+                                  />
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

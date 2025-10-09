@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { cacheGetLargeArray, cacheDel, cacheSetLargeArray } from '@/lib/memcache'
+import { cacheGetLargeArray, cacheGetJSON, cacheSetJSON, cacheDel, cacheSetLargeArray, cacheSetLargeArrayNoFlush } from '@/lib/memcache'
 import { WorkOrderStatus, Status, Prisma } from '@prisma/client'
 
 // Simple in-memory cache with TTL
@@ -47,6 +47,7 @@ const workOrderCache = new SimpleCache(60) // 1 minute for work orders
 const locationCache = new SimpleCache(120) // 2 minutes for locations
 
 const DEFAULT_TTL_SECONDS = Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600)
+const DEFAULT_TZ_OFFSET_HOURS = Number(process.env.LOCAL_TZ_OFFSET_HOURS ?? 8)
 
 // Debug helper; set INSPECTOR_DEBUG=0 to silence
 function debugLog(...args: any[]) {
@@ -71,6 +72,10 @@ async function getCachedWorkOrders() {
   return (await cacheGetLargeArray<any>('mc:work-orders:all')) || null
 }
 
+async function getCachedWorkOrdersForInspector(inspectorId: string) {
+  return (await cacheGetLargeArray<any>(`mc:work-orders:inspector:${inspectorId}`)) || null
+}
+
 
 async function getCachedCustomers() {
   return (await cacheGetLargeArray<any>('mc:customers:all')) || null
@@ -82,6 +87,264 @@ async function getCachedAddresses() {
 
 async function getCachedChecklistItems() {
   return (await cacheGetLargeArray<any>('mc:contract-checklist-items:all')) || null
+}
+
+function formatDateKey(date: Date, tzOffsetHours: number = DEFAULT_TZ_OFFSET_HOURS) {
+  const local = new Date(date.getTime() + tzOffsetHours * 60 * 60 * 1000)
+  const year = local.getUTCFullYear()
+  const month = String(local.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(local.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getTodayCacheKey() {
+  return formatDateKey(new Date())
+}
+
+function getYesterdayCacheKey() {
+  const yesterday = new Date()
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1)
+  return formatDateKey(yesterday)
+}
+
+function normalizeWorkOrderCacheEntry(workOrder: any) {
+  return {
+    id: workOrder.id,
+    inspectorId: Array.isArray(workOrder.inspectors) && workOrder.inspectors.length > 0 ? workOrder.inspectors[0].id : null,
+    inspectorIds: Array.isArray(workOrder.inspectors) ? workOrder.inspectors.map((ins: any) => ins.id) : [],
+    contractId: workOrder.contractId,
+    status: workOrder.status,
+    scheduledStartDateTime: workOrder.scheduledStartDateTime,
+    scheduledEndDateTime: workOrder.scheduledEndDateTime,
+    remarks: workOrder.remarks,
+    customer: workOrder.contract?.customer
+      ? { id: workOrder.contract.customer.id, name: workOrder.contract.customer.name }
+      : null,
+    address: workOrder.contract?.address
+      ? {
+          id: workOrder.contract.address.id,
+          address: workOrder.contract.address.address,
+          postalCode: workOrder.contract.address.postalCode,
+          propertyType: workOrder.contract.address.propertyType
+        }
+      : null
+  }
+}
+
+function normalizeChecklistItemCacheEntry(item: any) {
+  return {
+    id: item.id,
+    name: item.name,
+    remarks: item.remarks,
+    photos: item.photos,
+    videos: item.videos,
+    enteredOn: item.enteredOn,
+    enteredById: item.enteredById,
+    order: item.order,
+    checklistTasks: Array.isArray(item.checklistTasks)
+      ? item.checklistTasks.map((task: any) => ({
+          id: task.id,
+          name: task.name,
+          status: task.status,
+          condition: task.condition,
+          photos: task.photos,
+          videos: task.videos,
+          entryIds: Array.isArray(task.entries) ? task.entries.map((entry: any) => entry.id) : []
+        }))
+      : [],
+    locations: Array.isArray(item.locations)
+      ? item.locations.map((location: any, index: number) => ({
+          id: location.id,
+          name: location.name,
+          status: location.status,
+          order: location.order ?? index + 1,
+          tasks: Array.isArray(location.tasks)
+            ? location.tasks.map((task: any) => ({
+                id: task.id,
+                name: task.name,
+                status: task.status,
+                condition: task.condition,
+                photos: task.photos,
+                videos: task.videos
+              }))
+            : []
+        }))
+      : [],
+    status: item.status,
+    condition: item.condition,
+    contributions: Array.isArray(item.contributions)
+      ? item.contributions.map((entry: any) => ({
+          id: entry.id,
+          inspectorId: entry.inspectorId,
+          inspector: entry.inspector,
+          user: entry.user,
+          remarks: entry.remarks,
+          includeInReport: entry.includeInReport,
+          condition: entry.condition,
+          photos: entry.photos,
+          videos: entry.videos,
+          taskId: entry.taskId,
+          task: entry.task,
+          createdOn: entry.createdOn,
+          updatedOn: entry.updatedOn
+        }))
+      : [],
+    workOrderIds: Array.isArray(item.contractChecklist?.contract?.workOrders)
+      ? item.contractChecklist.contract.workOrders.map((w: any) => w.id)
+      : []
+  }
+}
+
+async function upsertWorkOrderCaches(prismaWorkOrder: any, previousInspectorIds: string[] = [], cachedAll?: any[]) {
+  try {
+    const normalized = normalizeWorkOrderCacheEntry(prismaWorkOrder)
+    const ttlOptions = { ttlSeconds: DEFAULT_TTL_SECONDS }
+
+    let workOrdersAll = cachedAll ?? (await getCachedWorkOrders())
+    if (workOrdersAll) {
+      const next = workOrdersAll.filter((wo: any) => wo.id !== normalized.id)
+      next.push(normalized)
+      await cacheSetLargeArrayNoFlush('mc:work-orders:all', next, undefined, ttlOptions)
+      workOrdersAll = next
+    }
+
+    const newInspectorIds: string[] = Array.isArray(normalized.inspectorIds)
+      ? normalized.inspectorIds
+      : normalized.inspectorId
+      ? [normalized.inspectorId]
+      : []
+
+    const affectedInspectorIds = new Set<string>([...previousInspectorIds, ...newInspectorIds])
+    const todayKey = getTodayCacheKey()
+    const yesterdayKey = getYesterdayCacheKey()
+
+    for (const inspectorId of affectedInspectorIds) {
+      if (!inspectorId) continue
+      let inspectorWorkOrders = await getCachedWorkOrdersForInspector(inspectorId)
+      if (inspectorWorkOrders) {
+        inspectorWorkOrders = inspectorWorkOrders.filter((wo: any) => wo.id !== normalized.id)
+        if (newInspectorIds.includes(inspectorId)) inspectorWorkOrders.push(normalized)
+        await cacheSetLargeArrayNoFlush(`mc:work-orders:inspector:${inspectorId}`, inspectorWorkOrders, undefined, ttlOptions)
+      } else if (newInspectorIds.includes(inspectorId)) {
+        await cacheSetLargeArrayNoFlush(`mc:work-orders:inspector:${inspectorId}`, [normalized], undefined, ttlOptions)
+      }
+
+      try { await cacheDel(`mc:work-orders:today:${inspectorId}:${todayKey}`) } catch {}
+      try { await cacheDel(`mc:work-orders:today:${inspectorId}:${yesterdayKey}`) } catch {}
+    }
+  } catch (error) {
+    console.error('Failed to update work order caches:', error)
+  }
+}
+
+async function refreshChecklistItemCache(itemId: string) {
+  try {
+    const item = await prisma.contractChecklistItem.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        name: true,
+        remarks: true,
+        photos: true,
+        videos: true,
+        enteredOn: true,
+        enteredById: true,
+        order: true,
+        status: true,
+        condition: true,
+        checklistTasks: {
+          orderBy: { createdOn: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            condition: true,
+            photos: true,
+            videos: true,
+            entries: { select: { id: true } }
+          }
+        },
+        locations: {
+          orderBy: { order: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            order: true,
+            tasks: {
+              orderBy: { createdOn: 'asc' },
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                condition: true,
+                photos: true,
+                videos: true
+              }
+            }
+          }
+        },
+        contributions: {
+          select: {
+            id: true,
+            inspectorId: true,
+            inspector: { select: { id: true, name: true, mobilePhone: true } },
+            user: { select: { id: true, username: true, email: true } },
+            remarks: true,
+            includeInReport: true,
+            condition: true,
+            photos: true,
+            videos: true,
+            taskId: true,
+            task: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                condition: true,
+                photos: true,
+                videos: true
+              }
+            },
+            createdOn: true,
+            updatedOn: true
+          }
+        },
+        contractChecklist: {
+          select: {
+            contract: {
+              select: {
+                workOrders: { select: { id: true } }
+              }
+            }
+          }
+        }
+      }
+    }) as any
+
+    const cachedItems = await getCachedChecklistItems()
+    const ttlOptions = { ttlSeconds: DEFAULT_TTL_SECONDS }
+
+    if (!item) {
+      if (cachedItems) {
+        const next = cachedItems.filter((it: any) => it.id !== itemId)
+        await cacheSetLargeArrayNoFlush('mc:contract-checklist-items:all', next, undefined, ttlOptions)
+      }
+      return
+    }
+
+    const normalized = normalizeChecklistItemCacheEntry(item)
+
+    if (cachedItems) {
+      const next = cachedItems.filter((it: any) => it.id !== itemId)
+      next.push(normalized)
+      await cacheSetLargeArrayNoFlush('mc:contract-checklist-items:all', next, undefined, ttlOptions)
+    } else {
+      await cacheSetLargeArrayNoFlush('mc:contract-checklist-items:all', [normalized], undefined, ttlOptions)
+    }
+  } catch (error) {
+    console.error('Failed to refresh checklist item cache:', error)
+  }
 }
 
 export async function getInspectorByPhone(phone: string) {
@@ -117,6 +380,7 @@ export async function getInspectorByPhone(phone: string) {
 
 export async function getTodayJobsForInspector(inspectorId: string) {
   try {
+    const perfStart = Date.now()
     // Compute today in Asia/Singapore (UTC+8) by default
     const tzOffsetHours = Number(process.env.LOCAL_TZ_OFFSET_HOURS ?? 8)
     const now = new Date()
@@ -125,13 +389,44 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     const startOfDay = new Date(sgStartLocal.getTime() - tzOffsetHours * 60 * 60 * 1000)
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1)
 
-    const workOrders = await getCachedWorkOrders()
-    if (!workOrders) {
-      debugLog('getTodayJobsForInspector: workOrders cache missing')
-      return []
+    const dateKey = `${startOfDay.getUTCFullYear()}-${String(startOfDay.getUTCMonth() + 1).padStart(2, '0')}-${String(startOfDay.getUTCDate()).padStart(2, '0')}`
+    const todayCacheKey = `mc:work-orders:today:${inspectorId}:${dateKey}`
+
+    let cacheHit = false
+    try {
+      const cachedToday = await cacheGetJSON<any[]>(todayCacheKey)
+      if (cachedToday && Array.isArray(cachedToday)) {
+        debugLog('getTodayJobsForInspector: returning from per-day cache', inspectorId, cachedToday.length)
+        if (process.env.WHATSAPP_PERF_LOG === 'true') console.log('[perf] svc:getTodayJobsForInspector cache-hit:', Date.now() - perfStart, 'ms')
+        return cachedToday
+      }
+    } catch (error) {
+      console.error('getTodayJobsForInspector: failed to read today cache', error)
     }
-    debugLog('getTodayJobsForInspector: cached workOrders =', workOrders.length)
-    const todays = workOrders
+
+    let scopedWorkOrders = await getCachedWorkOrdersForInspector(inspectorId)
+
+    if (!scopedWorkOrders) {
+      const allWorkOrders = await getCachedWorkOrders()
+      if (allWorkOrders) {
+        scopedWorkOrders = allWorkOrders.filter((wo: any) => Array.isArray(wo.inspectorIds) ? wo.inspectorIds.includes(inspectorId) : wo.inspectorId === inspectorId)
+        try {
+          if (scopedWorkOrders.length > 0) {
+            await cacheSetLargeArray(`mc:work-orders:inspector:${inspectorId}`, scopedWorkOrders, undefined, { ttlSeconds: Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600) })
+          }
+        } catch (error) {
+          console.error('getTodayJobsForInspector: failed to backfill inspector cache', error)
+        }
+      }
+    }
+
+    if (!scopedWorkOrders) {
+      debugLog('getTodayJobsForInspector: inspector cache missing', inspectorId)
+      scopedWorkOrders = []
+    }
+
+    debugLog('getTodayJobsForInspector: workOrders for inspector', inspectorId, scopedWorkOrders.length)
+    const todays = scopedWorkOrders
       .filter((wo: any) => {
         if (wo.inspectorId !== inspectorId) return false
 
@@ -158,7 +453,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       })
     debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 
-    return todays.map((wo: any) => {
+    const mapped = todays.map((wo: any) => {
       const scheduledStart = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
       const scheduledEnd = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
       const primaryDate = scheduledStart || scheduledEnd || new Date()
@@ -175,6 +470,15 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       notes: wo.remarks || ''
     }
     })
+
+    try {
+      await cacheSetJSON(todayCacheKey, mapped, { ttlSeconds: Number(process.env.WHATSAPP_TODAY_CACHE_TTL ?? 300) })
+    } catch (error) {
+      console.error('getTodayJobsForInspector: failed to cache today result', error)
+    }
+
+    if (process.env.WHATSAPP_PERF_LOG === 'true') console.log('[perf] svc:getTodayJobsForInspector:', Date.now() - perfStart, 'ms', 'scopedWo:', Array.isArray(scopedWorkOrders) ? scopedWorkOrders.length : 0, 'result:', mapped.length)
+    return mapped
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
     return []
@@ -223,6 +527,16 @@ export async function getWorkOrderById(workOrderId: string) {
 
 export async function updateWorkOrderStatus(workOrderId: string, status: 'in_progress' | 'completed' | 'cancelled') {
   try {
+    const cachedWorkOrders = await getCachedWorkOrders()
+    const previousCached = cachedWorkOrders?.find((wo: any) => wo.id === workOrderId)
+    const previousInspectorIds = previousCached
+      ? (Array.isArray(previousCached.inspectorIds) && previousCached.inspectorIds.length > 0
+          ? previousCached.inspectorIds
+          : previousCached.inspectorId
+          ? [previousCached.inspectorId]
+          : [])
+      : []
+
     const statusMap = {
       'in_progress': WorkOrderStatus.STARTED,
       'completed': WorkOrderStatus.COMPLETED,
@@ -249,7 +563,16 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
 
     const updated = await prisma.workOrder.update({
       where: { id: workOrderId },
-      data: updateData
+      data: updateData,
+      include: {
+        inspectors: { select: { id: true } },
+        contract: {
+          select: {
+            customer: { select: { id: true, name: true } },
+            address: { select: { id: true, address: true, postalCode: true, propertyType: true } }
+          }
+        }
+      }
     })
 
     // Invalidate relevant caches
@@ -257,6 +580,8 @@ export async function updateWorkOrderStatus(workOrderId: string, status: 'in_pro
     locationCache.invalidate(workOrderId)
     // Also invalidate Memcache collections to avoid stale results
     try { await cacheDel('mc:work-orders:all') } catch {}
+
+    await upsertWorkOrderCaches(updated, previousInspectorIds, cachedWorkOrders || undefined)
 
     return updated
   } catch (error) {
@@ -297,43 +622,55 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
 
 export async function getLocationsWithCompletionStatus(workOrderId: string) {
   try {
-    const items = await prisma.contractChecklistItem.findMany({
-      where: {
-        contractChecklist: {
-          contract: { workOrders: { some: { id: workOrderId } } }
-        }
-      },
-      select: {
-        id: true,
-        name: true,
-        order: true,
-        status: true,
-        checklistTasks: {
-          select: { id: true, status: true }
+    let items: any[] | null = null
+    try {
+      const cached = await getCachedChecklistItems()
+      if (cached) {
+        items = cached.filter((item: any) => Array.isArray(item.workOrderIds) && item.workOrderIds.includes(workOrderId))
+      }
+    } catch (error) {
+      console.error('Error loading checklist items from cache:', error)
+    }
+
+    if (!items || items.length === 0) {
+      items = await prisma.contractChecklistItem.findMany({
+        where: {
+          contractChecklist: {
+            contract: { workOrders: { some: { id: workOrderId } } }
+          }
         },
-        locations: {
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            order: true,
-            tasks: {
-              select: { id: true, status: true }
+        select: {
+          id: true,
+          name: true,
+          order: true,
+          status: true,
+          checklistTasks: {
+            select: { id: true, status: true }
+          },
+          locations: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              order: true,
+              tasks: {
+                select: { id: true, status: true }
+              }
             }
           }
         }
-      }
-    })
+      }) as any[]
+    }
 
-    const sorted = items.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    const sorted = [...items].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
 
-    const result = sorted.map(item => {
+    const result = sorted.map((item: any) => {
       const hasLocations = Array.isArray(item.locations) && item.locations.length > 0
       const locationSummaries = hasLocations
-        ? item.locations.map(loc => {
-            const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+        ? item.locations.map((loc: any) => {
+            const tasks: any[] = Array.isArray(loc.tasks) ? loc.tasks : []
             const totalTasks = tasks.length
-            const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
+            const completedTasks = tasks.filter((task: any) => task.status === 'COMPLETED').length
             const isCompleted = loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
             return {
               id: loc.id,
@@ -361,7 +698,7 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       }
 
       const isCompleted = hasLocations
-        ? locationSummaries.length > 0 && locationSummaries.every(loc => loc.status === 'COMPLETED')
+        ? locationSummaries.length > 0 && locationSummaries.every((loc: any) => loc.status === 'COMPLETED')
         : item.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
 
       return {
@@ -372,7 +709,7 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
         totalTasks,
         completedTasks,
         contractChecklistItemId: item.id,
-        subLocations: locationSummaries.sort((a, b) => a.order - b.order)
+        subLocations: locationSummaries.sort((a: any, b: any) => a.order - b.order)
       }
     })
 
@@ -386,6 +723,35 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 
 export async function getChecklistLocationsForItem(itemId: string) {
   try {
+    try {
+      const cached = await getCachedChecklistItems()
+      if (cached) {
+        const cachedItem = cached.find((it: any) => it.id === itemId)
+        if (cachedItem && Array.isArray(cachedItem.locations)) {
+          const summary = cachedItem.locations
+            .map((loc: any, index: number) => {
+              const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+              const totalTasks = tasks.length
+              const completedTasks = tasks.filter((task: any) => task.status === 'COMPLETED').length
+              if (totalTasks === 0) return null
+              const isCompleted = loc.status === 'COMPLETED' || completedTasks === totalTasks
+              return {
+                id: loc.id,
+                number: index + 1,
+                name: loc.name,
+                status: isCompleted ? 'completed' : 'pending',
+                totalTasks,
+                completedTasks
+              }
+            })
+            .filter(Boolean) as Array<{ id: string; number: number; name: string; status: string; totalTasks: number; completedTasks: number }>
+          if (summary.length > 0) return summary
+        }
+      }
+    } catch (error) {
+      console.error('Error reading checklist locations from cache:', error)
+    }
+
     const locations = await prisma.contractChecklistLocation.findMany({
       where: { itemId },
       orderBy: { order: 'asc' },
@@ -393,26 +759,49 @@ export async function getChecklistLocationsForItem(itemId: string) {
         id: true,
         name: true,
         status: true,
-        order: true,
-        tasks: {
-          select: { id: true, status: true }
-        }
+        order: true
       }
     })
 
-    return locations.map((loc, index) => {
-      const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
-      const totalTasks = tasks.length
-      const completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
-      return {
-        id: loc.id,
-        number: index + 1,
-        name: loc.name,
-        status: loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks) ? 'completed' : 'pending',
-        totalTasks,
-        completedTasks
-      }
+    if (locations.length === 0) return []
+
+    const locationIds = locations.map(loc => loc.id)
+
+    const grouped = await prisma.checklistTask.groupBy({
+      by: ['locationId', 'status'],
+      where: {
+        locationId: { in: locationIds }
+      },
+      _count: { _all: true }
     })
+
+    const totals = new Map<string, number>()
+    const completed = new Map<string, number>()
+    for (const group of grouped) {
+      const locId = group.locationId
+      if (!locId) continue
+      const currentTotal = totals.get(locId) ?? 0
+      totals.set(locId, currentTotal + group._count._all)
+      if (group.status === 'COMPLETED') {
+        const currentCompleted = completed.get(locId) ?? 0
+        completed.set(locId, currentCompleted + group._count._all)
+      }
+    }
+
+    return locations
+      .map((loc: any, index: number) => {
+        const totalTasks = totals.get(loc.id) ?? 0
+        const completedTasks = completed.get(loc.id) ?? 0
+        return {
+          id: loc.id,
+          number: index + 1,
+          name: loc.name,
+          status: loc.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks) ? 'completed' : 'pending',
+          totalTasks,
+          completedTasks
+        }
+      })
+      .filter((loc: any) => loc.totalTasks > 0)
   } catch (error) {
     console.error('Error fetching checklist locations:', error)
     return []
@@ -437,82 +826,100 @@ type NormalisedTask = {
 
 export async function getTasksByLocation(workOrderId: string, location: string, contractChecklistItemId?: string, subLocationId?: string) {
   try {
-    const item = await prisma.contractChecklistItem.findFirst({
-      where: {
-        OR: [
-          { id: contractChecklistItemId || '' },
-          {
-            AND: [
-              { name: location },
-              { contractChecklist: { contract: { workOrders: { some: { id: workOrderId } } } } }
-            ]
-          }
-        ]
-      },
-      select: {
-        id: true,
-        name: true,
-        remarks: true,
-        photos: true,
-        videos: true,
-        status: true,
-        enteredOn: true,
-        enteredById: true,
-        checklistTasks: {
-          orderBy: { createdOn: 'asc' },
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            inspectorId: true,
-            photos: true,
-            videos: true,
-            updatedOn: true,
-            entries: {
-              select: {
-                id: true,
-                remarks: true
-              }
-            },
-            location: {
-              select: {
-                id: true,
-                name: true,
-                status: true,
-                order: true,
-                tasks: {
-                  select: { id: true }
+    let item: any = null
+
+    try {
+      const cached = await getCachedChecklistItems()
+      if (cached) {
+        item = cached.find((it: any) => {
+          if (contractChecklistItemId && it.id === contractChecklistItemId) return true
+          const matchesName = typeof it.name === 'string' && it.name === location
+          const matchesWorkOrder = Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId)
+          return !contractChecklistItemId && matchesName && matchesWorkOrder
+        })
+      }
+    } catch (error) {
+      console.error('Error loading checklist item from cache:', error)
+    }
+
+    if (!item) {
+      item = await prisma.contractChecklistItem.findFirst({
+        where: {
+          OR: [
+            { id: contractChecklistItemId || '' },
+            {
+              AND: [
+                { name: location },
+                { contractChecklist: { contract: { workOrders: { some: { id: workOrderId } } } } }
+              ]
+            }
+          ]
+        },
+        select: {
+          id: true,
+          name: true,
+          remarks: true,
+          photos: true,
+          videos: true,
+          status: true,
+          enteredOn: true,
+          enteredById: true,
+          checklistTasks: {
+            orderBy: { createdOn: 'asc' },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              inspectorId: true,
+              photos: true,
+              videos: true,
+              updatedOn: true,
+              entries: {
+                select: {
+                  id: true,
+                  remarks: true
+                }
+              },
+              location: {
+                select: {
+                  id: true,
+                  name: true,
+                  status: true,
+                  order: true,
+                  tasks: {
+                    select: { id: true }
+                  }
                 }
               }
             }
-          }
-        },
-        locations: {
-          orderBy: { order: 'asc' },
-          select: {
-            id: true,
-            name: true,
-            status: true,
-            order: true,
-            tasks: {
-              orderBy: { createdOn: 'asc' },
-              select: {
-                id: true,
-                name: true,
-                status: true,
-                inspectorId: true,
-                photos: true,
-                videos: true,
-                updatedOn: true,
-                entries: {
-                  select: { remarks: true }
+          },
+          locations: {
+            orderBy: { order: 'asc' },
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              order: true,
+              tasks: {
+                orderBy: { createdOn: 'asc' },
+                select: {
+                  id: true,
+                  name: true,
+                  status: true,
+                  inspectorId: true,
+                  photos: true,
+                  videos: true,
+                  updatedOn: true,
+                  entries: {
+                    select: { remarks: true }
+                  }
                 }
               }
             }
           }
         }
-      }
-    }) as any
+      }) as any
+    }
 
     if (!item) return []
 
@@ -561,9 +968,9 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
 
       const filterBySubLocation = subLocationId && subLocationId.trim().length > 0
 
-      for (const loc of orderedLocations) {
+      for (const loc of orderedLocations as any[]) {
         if (filterBySubLocation && loc.id !== subLocationId) continue
-        const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+        const tasks: any[] = Array.isArray(loc.tasks) ? loc.tasks : []
         if (tasks.length === 0) {
           output.push({
             id: loc.id,
@@ -635,6 +1042,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
 
       locationCache.invalidate(taskId)
       try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+      await refreshChecklistItemCache(taskId)
       return true
     }
 
@@ -675,6 +1083,7 @@ export async function updateTaskStatus(taskId: string, status: 'completed' | 'pe
     // Invalidate cache
     locationCache.invalidate(task.itemId)
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+    await refreshChecklistItemCache(task.itemId)
     return true
   } catch (error) {
     console.error('Error updating task status:', error)
@@ -771,6 +1180,8 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
       select: { id: true, itemId: true, photos: true }
     })
 
+    let targetItemId: string | null = null
+
     if (task) {
       await prisma.checklistTask.update({
         where: { id: taskId },
@@ -780,6 +1191,7 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
           }
         }
       })
+      targetItemId = task.itemId
       locationCache.invalidate(task.itemId)
     } else {
       await prisma.contractChecklistItem.update({
@@ -790,10 +1202,12 @@ export async function addTaskPhoto(taskId: string, photoUrl: string) {
           }
         }
       })
+      targetItemId = taskId
       locationCache.invalidate(taskId)
     }
 
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+    if (targetItemId) await refreshChecklistItemCache(targetItemId)
     return true
   } catch (error) {
     console.error('Error adding task photo:', error)
@@ -808,6 +1222,8 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
       select: { id: true, itemId: true, videos: true }
     })
 
+    let targetItemId: string | null = null
+
     if (task) {
       await prisma.checklistTask.update({
         where: { id: taskId },
@@ -817,6 +1233,7 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
           }
         }
       })
+      targetItemId = task.itemId
       locationCache.invalidate(task.itemId)
     } else {
       await prisma.contractChecklistItem.update({
@@ -827,10 +1244,12 @@ export async function addTaskVideo(taskId: string, videoUrl: string) {
           }
         }
       })
+      targetItemId = taskId
       locationCache.invalidate(taskId)
     }
 
     try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+    if (targetItemId) await refreshChecklistItemCache(targetItemId)
     return true
   } catch (error) {
     console.error('Error adding task video:', error)

@@ -78,6 +78,7 @@ model Inspector {
   workOrders     WorkOrder[]
   itemEntries    ItemEntry[]
   checklistTasks ChecklistTask[]
+  ratings        InspectorContractRating[]
 
   @@index([mobilePhone])
   @@index([status])
@@ -153,6 +154,7 @@ model Contract {
   reports            ContractReport[]
   contactPersons     ContractContactPerson[]
   followUpRemarks    ContractRemark[]
+  inspectorRatings   InspectorContractRating[]
 
   @@index([customerId])
   @@index([addressId])
@@ -166,12 +168,15 @@ model ContractRemark {
   body        String
   createdOn   DateTime @default(now())
   createdById String?
+  type        ContractRemarkType   @default(FOLLOW_UP)
+  status      ContractRemarkStatus @default(OPEN)
 
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   createdBy  User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([contractId])
   @@index([createdOn])
+  @@index([status])
 }
 
 model ContractChecklist {
@@ -244,6 +249,8 @@ model ItemEntry {
   inspectorId     String?
   userId          String?
   remarks         String?
+  cause           String?
+  resolution      String?
   includeInReport Boolean @default(false)
   condition       Condition?
   taskId          String?
@@ -256,11 +263,55 @@ model ItemEntry {
   inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
   user            User?                  @relation(fields: [userId], references: [id])
   task            ChecklistTask?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  media           ItemEntryMedia[]
 
   @@index([itemId])
   @@index([inspectorId])
   @@index([userId])
   @@index([taskId])
+}
+
+// Inspector rating per contract
+model InspectorContractRating {
+  id          String   @id @default(cuid())
+  inspectorId String
+  contractId  String
+  rating      InspectorContractRatingValue
+  createdOn   DateTime @default(now())
+  updatedOn   DateTime @updatedAt
+
+  inspector   Inspector @relation(fields: [inspectorId], references: [id], onDelete: Cascade)
+  contract    Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([inspectorId, contractId])
+  @@index([inspectorId])
+  @@index([contractId])
+}
+
+enum InspectorContractRatingValue {
+  GOOD
+  FAIR
+  BAD
+}
+
+model ItemEntryMedia {
+  id        String               @id @default(cuid())
+  entryId   String
+  url       String
+  caption   String?
+  type      ItemEntryMediaType
+  order     Int                  @default(0)
+  createdOn DateTime             @default(now())
+
+  entry ItemEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@index([type])
+}
+
+enum ItemEntryMediaType {
+  PHOTO
+  VIDEO
 }
 
 model ChecklistTask {
@@ -466,6 +517,16 @@ enum ContractStatus {
 enum ContractType {
   INSPECTION
   REPAIR
+}
+
+enum ContractRemarkType {
+  FYI
+  FOLLOW_UP
+}
+
+enum ContractRemarkStatus {
+  OPEN
+  COMPLETED
 }
 
 enum MarketingSource {

@@ -83,6 +83,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     }
     assistantVersionLoaded = ASSISTANT_VERSION
 
+    // Create run and wait for completion efficiently
     const run = await openai.beta.threads.runs.create(threadId, { assistant_id: assistantId as string })
     let runStatus = await waitForRunCompletion(threadId, run.id)
     let toolCallRounds = 0
@@ -93,7 +94,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       toolCallRounds++
     }
     if (runStatus.status !== 'completed') return 'Sorry, I encountered an issue processing your request. Please try again.'
-    const messages = await openai.beta.threads.messages.list(threadId)
+    const messages = await openai.beta.threads.messages.list(threadId, { limit: 1 })
     const lastMessage = messages.data[0]
     if (lastMessage && lastMessage.role === 'assistant') {
       const content = lastMessage.content[0]

@@ -48,7 +48,7 @@ export function CustomerContractsCard({ contracts }: CustomerContractsCardProps)
             <TableBody>
               {contracts.map((contract) => (
                 <TableRow key={contract.id}>
-                  <TableCell className="font-medium">#{contract.id.slice(-8).toUpperCase()}</TableCell>
+                  <TableCell className="font-medium">#{contract.id }</TableCell>
                   <TableCell>
                     <div>
                       <p className="text-sm">{contract.address.address}</p>

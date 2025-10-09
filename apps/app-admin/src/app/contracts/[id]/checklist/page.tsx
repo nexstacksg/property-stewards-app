@@ -132,7 +132,7 @@ export default async function ContractChecklistPage({ params }: { params: Promis
   }, 0)
   const pendingItems = items.length - completedItems
 
-  const contractLabel = `#${contract.id.slice(-8).toUpperCase()}`
+  const contractLabel = `#${contract.id }`
   const contractTypeLabel = contract.contractType === "REPAIR" ? "Repair" : "Inspection"
 
   return (

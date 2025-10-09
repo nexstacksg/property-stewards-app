@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
+import { generateContractId } from '@/lib/id-generator'
+
+const MAX_TRANSACTION_ATTEMPTS = 3
+
+const isRetryableTransactionError = (error: unknown): boolean =>
+  error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034'
 
 // GET /api/contracts - Get all contracts
 export async function GET(request: NextRequest) {
@@ -137,44 +144,74 @@ export async function POST(request: NextRequest) {
       : []
 
     const sanitizedContactPersons = Array.isArray(contactPersons)
-      ? contactPersons.filter((person: any) => person && typeof person.name === 'string' && person.name.trim().length > 0)
-        .map((person: any) => ({
-          name: person.name.trim(),
-          phone: typeof person.phone === 'string' && person.phone.trim().length > 0 ? person.phone.trim() : undefined,
-          email: typeof person.email === 'string' && person.email.trim().length > 0 ? person.email.trim() : undefined,
-          relation: typeof person.relation === 'string' && person.relation.trim().length > 0 ? person.relation.trim() : undefined
-        }))
+      ? contactPersons
+          .filter((person: any) => person && typeof person.name === 'string' && person.name.trim().length > 0)
+          .map((person: any) => ({
+            name: person.name.trim(),
+            phone: typeof person.phone === 'string' && person.phone.trim().length > 0 ? person.phone.trim() : undefined,
+            email: typeof person.email === 'string' && person.email.trim().length > 0 ? person.email.trim() : undefined,
+            relation: typeof person.relation === 'string' && person.relation.trim().length > 0 ? person.relation.trim() : undefined
+          }))
       : []
 
-    const contract = await prisma.contract.create({
-      data: {
-        customerId,
-        addressId,
-        value,
-        firstPaymentOn: new Date(firstPaymentOn),
-        finalPaymentOn: finalPaymentOn ? new Date(finalPaymentOn) : null,
-        basedOnChecklistId,
-        scheduledStartDate: new Date(scheduledStartDate),
-        scheduledEndDate: new Date(scheduledEndDate),
-        servicePackage,
-        remarks,
-        contractType: normalizedContractType,
-        marketingSource: normalizedMarketingSource as any,
-        referenceIds: sanitizedReferenceIds,
-        status: 'DRAFT',
-        contactPersons: sanitizedContactPersons.length > 0
-          ? {
-              create: sanitizedContactPersons
-            }
-          : undefined
-      },
-      include: {
-        customer: true,
-        address: true,
-        basedOnChecklist: true,
-        contactPersons: true
+    const baseContractData = {
+      customerId,
+      addressId,
+      value,
+      firstPaymentOn: new Date(firstPaymentOn),
+      finalPaymentOn: finalPaymentOn ? new Date(finalPaymentOn) : null,
+      basedOnChecklistId,
+      scheduledStartDate: new Date(scheduledStartDate),
+      scheduledEndDate: new Date(scheduledEndDate),
+      servicePackage,
+      remarks,
+      contractType: normalizedContractType,
+      marketingSource: normalizedMarketingSource ?? undefined,
+      referenceIds: sanitizedReferenceIds,
+      status: 'DRAFT' as const,
+      contactPersons: sanitizedContactPersons.length > 0
+        ? {
+            create: sanitizedContactPersons
+          }
+        : undefined
+    }
+
+    const contractInclude = {
+      customer: true,
+      address: true,
+      basedOnChecklist: true,
+      contactPersons: true
+    }
+
+    let contract: Awaited<ReturnType<typeof prisma.contract.create>> | null = null
+
+    for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
+      try {
+        contract = await prisma.$transaction(
+          async (tx) => {
+            const generatedId = await generateContractId(tx)
+            return tx.contract.create({
+              data: {
+                ...baseContractData,
+                id: generatedId,
+              },
+              include: contractInclude,
+            })
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        )
+        break
+      } catch (transactionError) {
+        if (isRetryableTransactionError(transactionError) && attempt < MAX_TRANSACTION_ATTEMPTS - 1) {
+          continue
+        }
+        throw transactionError
       }
-    })
+    }
+
+    if (!contract) {
+      throw new Error('Unable to create contract after retrying transaction')
+    }
 
     // If a checklist template is specified, create contract checklist
     if (basedOnChecklistId) {

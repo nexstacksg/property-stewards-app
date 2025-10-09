@@ -37,6 +37,9 @@ async function getWorkOrder(id: string) {
                           username: true,
                           email: true
                         }
+                      },
+                      media: {
+                        orderBy: { order: 'asc' }
                       }
                     },
                     orderBy: { createdOn: "asc" }
@@ -52,6 +55,9 @@ async function getWorkOrder(id: string) {
                               username: true,
                               email: true
                             }
+                          },
+                          media: {
+                            orderBy: { order: 'asc' }
                           }
                         },
                         orderBy: { createdOn: "asc" }

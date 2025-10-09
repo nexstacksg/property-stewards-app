@@ -75,7 +75,22 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
-        return JSON.stringify({ success: true, jobs: jobs.map((job, index) => ({ id: job.id, jobNumber: index + 1, selectionNumber: `[${index + 1}]`, property: job.property_address, customer: job.customer_name, time: job.scheduled_date.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }), status: job.status, priority: job.priority })), count: jobs.length })
+        const jobsFormatted = jobs.map((job: any, index: number) => {
+          const raw = job.scheduled_date
+          const date = raw instanceof Date ? raw : (raw ? new Date(raw) : null)
+          const time = date ? date.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''
+          return {
+            id: job.id,
+            jobNumber: index + 1,
+            selectionNumber: `[${index + 1}]`,
+            property: job.property_address,
+            customer: job.customer_name,
+            time,
+            status: job.status,
+            priority: job.priority
+          }
+        })
+        return JSON.stringify({ success: true, jobs: jobsFormatted, count: jobs.length })
       }
       case 'confirmJobSelection': {
         const workOrder = await getWorkOrderById(args.jobId) as any
@@ -109,7 +124,10 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
       }
       case 'startJob': {
+        const perf = process.env.WHATSAPP_PERF_LOG === 'true'
+        const t0 = Date.now()
         await updateWorkOrderStatus(args.jobId, 'in_progress')
+        if (perf) console.log('[perf] tool:startJob updateWorkOrderStatus:', Date.now() - t0, 'ms')
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' })
           try {
@@ -121,8 +139,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             }
           } catch {}
         }
-        const locations = await getLocationsWithCompletionStatus(args.jobId) as any[]
-        const progress = await getWorkOrderProgress(args.jobId) as any
+        const t1 = Date.now()
+        const includeProgress = (process.env.WHATSAPP_PROGRESS_ON_START ?? 'false').toLowerCase() !== 'false'
+        const [locations, progress] = await Promise.all([
+          getLocationsWithCompletionStatus(args.jobId) as Promise<any[]>,
+          includeProgress ? (getWorkOrderProgress(args.jobId) as Promise<any>) : Promise.resolve(null)
+        ])
+        if (perf) console.log('[perf] tool:startJob locations:', Date.now() - t1, 'ms', 'includeProgress=', includeProgress)
         const locationsFormatted = locations.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, locations: locations.map(loc => loc.displayName), locationsFormatted, locationsDetail: locations, progress })
       }
@@ -131,6 +154,21 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId) as any[]
         const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
         const nextPrompt = 'Reply with the number of the location you want to inspect next.'
+        if (sessionId) {
+          const subLocationMap: Record<string, Array<{ id: string; name: string; status: string }>> = {}
+          for (const loc of locationsWithStatus) {
+            if (Array.isArray(loc.subLocations) && loc.subLocations.length > 0) {
+              subLocationMap[loc.contractChecklistItemId] = loc.subLocations.map((sub: any) => ({
+                id: sub.id,
+                name: sub.name,
+                status: sub.status
+              }))
+            }
+          }
+          await updateSessionState(sessionId, {
+            locationSubLocations: Object.keys(subLocationMap).length > 0 ? subLocationMap : undefined
+          })
+        }
         return JSON.stringify({
           success: true,
           locations: locationsWithStatus.map((loc, index) => ({
@@ -190,6 +228,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       }
       case 'getTasksForLocation': {
         const { workOrderId, location, contractChecklistItemId, subLocationId } = args
+        let effectiveSubLocationId = subLocationId as string | undefined
+        let subLocationOptions: Array<{ id: string; name: string; status: string }> | undefined
         if (sessionId) {
           await updateSessionState(sessionId, {
             currentLocation: location,
@@ -202,16 +242,29 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskCondition: undefined,
             taskFlowStage: undefined
           })
-        }
-        const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId, subLocationId) as any[]
-        if ((!subLocationId || subLocationId.length === 0) && tasks.length > 0) {
-          const uniqueLocations = Array.from(new Set(tasks.map((task: any) => task.locationId).filter(Boolean)))
-          if (uniqueLocations.length > 1) {
-            const subLocations = await getChecklistLocationsForItem(contractChecklistItemId) as any[]
-            const formattedStrings = subLocations.map((loc: any, index: number) => `[${index + 1}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
-            return JSON.stringify({ success: false, requiresSubLocationSelection: true, subLocations: subLocations.map((loc: any, index: number) => ({ id: loc.id, number: index + 1, name: loc.name, status: loc.status, totalTasks: loc.totalTasks, completedTasks: loc.completedTasks })), subLocationsFormatted: formattedStrings, message: 'Select a sub-location first before inspecting tasks.' })
+          const latest = await getSessionState(sessionId)
+          const lookup = (latest as any).locationSubLocations as Record<string, Array<{ id: string; name: string; status: string }>> | undefined
+          if (lookup && contractChecklistItemId && lookup[contractChecklistItemId]) {
+            subLocationOptions = lookup[contractChecklistItemId]
+            if (!effectiveSubLocationId && Array.isArray(subLocationOptions)) {
+              const activeOptions = subLocationOptions.filter(option => option.status !== 'completed')
+              const candidates = activeOptions.length > 0 ? activeOptions : subLocationOptions
+              if (candidates.length === 1) {
+                effectiveSubLocationId = candidates[0].id
+                await updateSessionState(sessionId, {
+                  currentSubLocationId: candidates[0].id,
+                  currentSubLocationName: candidates[0].name
+                })
+              }
+            }
           }
         }
+        if (!effectiveSubLocationId && Array.isArray(subLocationOptions) && subLocationOptions.length > 1) {
+          const formattedStrings = subLocationOptions.map((loc, index) => `[${index + 1}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
+          return JSON.stringify({ success: false, requiresSubLocationSelection: true, subLocations: subLocationOptions.map((loc, index) => ({ id: loc.id, number: index + 1, name: loc.name, status: loc.status })), subLocationsFormatted: formattedStrings, message: 'Select a sub-location before inspecting the tasks.' })
+        }
+
+        const tasks = await getTasksByLocation(workOrderId, location, contractChecklistItemId, effectiveSubLocationId) as any[]
         const formattedTasks = tasks.map((task: any, index: number) => {
           const prefix = task.locationName && task.locationName !== location ? `${task.locationName}: ` : ''
           return {
@@ -227,7 +280,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
-        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to mark them all done) when you're ready.`
+        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to go back) when you're ready.`
         const firstTask = tasks[0]
         if (sessionId && firstTask?.locationId) {
           await updateSessionState(sessionId, {
@@ -344,7 +397,18 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!condition) return JSON.stringify({ success: false, error: 'Invalid condition number. Please use 1-5.' })
           const taskId = (args.taskId as string | undefined) || session.currentTaskId
           const taskItemId = session.currentTaskItemId
-          const taskLocationId = session.currentTaskLocationId || (task?.locationId as string | undefined)
+          let taskLocationId = session.currentTaskLocationId as string | undefined
+          if (!taskLocationId && taskId) {
+            try {
+              const lookup = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { locationId: true } })
+              taskLocationId = lookup?.locationId || undefined
+              if (taskLocationId && sessionId) {
+                await updateSessionState(sessionId, { currentTaskLocationId: taskLocationId })
+              }
+            } catch (error) {
+              console.error('Failed to load task location for condition phase', error)
+            }
+          }
           if (!taskId || !taskItemId) {
             return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
           }

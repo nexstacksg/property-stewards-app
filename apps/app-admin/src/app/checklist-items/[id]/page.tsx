@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import prisma from '@/lib/prisma'
 import ItemEntriesDialog from '@/components/item-entries-dialog'
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments, type MediaAttachment } from '@/lib/media-utils'
 import {
   ArrowLeft,
   Camera,
@@ -49,10 +50,13 @@ async function getChecklistItem(id: string) {
           entries: {
             include: {
               inspector: { select: { id: true, name: true } },
-              user: { select: { id: true, username: true, email: true } }
+              user: { select: { id: true, username: true, email: true } },
+              media: {
+                orderBy: { order: 'asc' }
+              }
             },
             orderBy: { createdOn: 'asc' }
-          }
+          }as any
         },
         orderBy: { createdOn: 'asc' }
       },
@@ -73,12 +77,15 @@ async function getChecklistItem(id: string) {
         include: {
           inspector: { select: { id: true, name: true } },
           user: { select: { id: true, username: true, email: true } },
+          media: {
+            orderBy: { order: 'asc' }
+          },
           task: {
             select: {
               id: true
             }
           }
-        }
+        }as any
       }
     }
   })
@@ -104,8 +111,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
     (entry: any) => !entry.task
   )
   const allEntries = Array.isArray(checklistItem.contributions) ? checklistItem.contributions : []
-  const itemPhotos = Array.isArray(checklistItem.photos) ? checklistItem.photos : []
-  const itemVideos = Array.isArray(checklistItem.videos) ? checklistItem.videos : []
+  const itemPhotos = stringsToAttachments(checklistItem.photos)
+  const itemVideos = stringsToAttachments(checklistItem.videos)
   const dialogTasks = tasks.map((task: any) => ({
     id: task.id,
     name: task.name,
@@ -126,27 +133,20 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
       0
     ) + standaloneEntries.length
 
-  const entryPhotoUrls = tasks.flatMap((task: any) =>
-    Array.isArray(task.entries)
-      ? task.entries.flatMap((entry: any) => (Array.isArray(entry.photos) ? entry.photos : []))
-      : []
-  )
-  const entryVideoUrls = tasks.flatMap((task: any) =>
-    Array.isArray(task.entries)
-      ? task.entries.flatMap((entry: any) => (Array.isArray(entry.videos) ? entry.videos : []))
-      : []
-  )
-  const standaloneEntryPhotoUrls = standaloneEntries.flatMap((entry: any) =>
-    Array.isArray(entry.photos) ? entry.photos : []
-  )
-  const standaloneEntryVideoUrls = standaloneEntries.flatMap((entry: any) =>
-    Array.isArray(entry.videos) ? entry.videos : []
-  )
+  const taskPhotoAttachments = mergeMediaLists(tasks.map((task: any) => stringsToAttachments(task.photos)))
+  const taskVideoAttachments = mergeMediaLists(tasks.map((task: any) => stringsToAttachments(task.videos)))
+  const entryPhotoAttachments = mergeMediaLists(allEntries.map((entry: any) => extractEntryMedia(entry, 'PHOTO')))
+  const entryVideoAttachments = mergeMediaLists(allEntries.map((entry: any) => extractEntryMedia(entry, 'VIDEO')))
+  const entryTaskPhotoAttachments = mergeMediaLists(allEntries.map((entry: any) => stringsToAttachments(entry.task?.photos)))
+  const entryTaskVideoAttachments = mergeMediaLists(allEntries.map((entry: any) => stringsToAttachments(entry.task?.videos)))
 
-  const photoUrls = new Set<string>([...itemPhotos, ...entryPhotoUrls, ...standaloneEntryPhotoUrls])
-  const videoUrls = new Set<string>([...itemVideos, ...entryVideoUrls, ...standaloneEntryVideoUrls])
+  const combinedItemPhotos = mergeMediaLists([itemPhotos, taskPhotoAttachments, entryPhotoAttachments, entryTaskPhotoAttachments])
+  const combinedItemVideos = mergeMediaLists([itemVideos, taskVideoAttachments, entryVideoAttachments, entryTaskVideoAttachments])
 
-  const totalMedia = photoUrls.size + videoUrls.size
+  const displayItemPhotos = combinedItemPhotos.length > 0 ? combinedItemPhotos : itemPhotos
+  const displayItemVideos = combinedItemVideos.length > 0 ? combinedItemVideos : itemVideos
+
+  const totalMedia = displayItemPhotos.length + displayItemVideos.length
 
   return (
     <div className="space-y-6 bg-slate-50/60 p-6">
@@ -265,28 +265,40 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             </div>
           </div>
 
-          {(itemPhotos.length > 0 || itemVideos.length > 0) && (
+          {(displayItemPhotos.length > 0 || displayItemVideos.length > 0) && (
             <div className="space-y-4">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Item Media</h3>
-              {itemPhotos.length > 0 && (
+              {displayItemPhotos.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs uppercase text-muted-foreground">Photos</p>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {itemPhotos.map((url: string, index: number) => (
-                      <a key={url + index} href={url} target="_blank" rel="noopener noreferrer" className="group block overflow-hidden rounded-lg border bg-background shadow-sm">
-                        <img src={url} alt={`Item photo ${index + 1}`} className="h-40 w-full object-cover transition duration-200 group-hover:scale-105" />
-                      </a>
+                    {displayItemPhotos.map((photo: MediaAttachment, index: number) => (
+                      <div key={`${photo.url}-${index}`} className="group space-y-2 overflow-hidden rounded-lg border bg-background shadow-sm">
+                        <a href={photo.url} target="_blank" rel="noopener noreferrer" className="block">
+                          <img
+                            src={photo.url}
+                            alt={photo.caption ? `${photo.caption} (Photo ${index + 1})` : `Item photo ${index + 1}`}
+                            className="h-40 w-full object-cover transition duration-200 group-hover:scale-105"
+                          />
+                        </a>
+                        {photo.caption ? (
+                          <p className="px-3 pb-3 text-xs text-muted-foreground">{photo.caption}</p>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
-              {itemVideos.length > 0 && (
+              {displayItemVideos.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs uppercase text-muted-foreground">Videos</p>
                   <div className="grid gap-4 md:grid-cols-2">
-                    {itemVideos.map((url: string, index: number) => (
-                      <div key={url + index} className="overflow-hidden rounded-lg border bg-black/5 shadow-sm">
-                        <video src={url} controls className="h-56 w-full object-cover" />
+                    {displayItemVideos.map((video: MediaAttachment, index: number) => (
+                      <div key={`${video.url}-${index}`} className="space-y-2 overflow-hidden rounded-lg border bg-black/5 shadow-sm">
+                        <video src={video.url} controls className="h-56 w-full object-cover" />
+                        {video.caption ? (
+                          <p className="px-3 pb-3 text-xs text-muted-foreground">{video.caption}</p>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -345,8 +357,14 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                       <div className="space-y-3">
                         {entries.map((entry: any) => {
                           const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || 'Team member'
-                          const remarkPhotos = Array.isArray(entry.photos) ? entry.photos : []
-                          const remarkVideos = Array.isArray(entry.videos) ? entry.videos : []
+                          const remarkPhotos = mergeMediaLists([
+                            extractEntryMedia(entry, 'PHOTO'),
+                            stringsToAttachments(entry.task?.photos)
+                          ])
+                          const remarkVideos = mergeMediaLists([
+                            extractEntryMedia(entry, 'VIDEO'),
+                            stringsToAttachments(entry.task?.videos)
+                          ])
                           return (
                             <div key={entry.id} className="rounded-lg border bg-white/80 p-4 shadow-sm">
                               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -370,20 +388,24 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                                     <div>
                                       <p className="text-xs uppercase text-muted-foreground">Photos</p>
                                       <div className="mt-2 flex flex-wrap gap-2">
-                                        {remarkPhotos.map((url: string, index: number) => (
-                                          <a
-                                            key={url + index}
-                                            href={url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="group block overflow-hidden rounded-md border bg-background"
-                                          >
-                                            <img
-                                              src={url}
-                                              alt={`Remark photo ${index + 1}`}
-                                              className="h-28 w-36 object-cover transition duration-200 group-hover:scale-105"
-                                            />
-                                          </a>
+                                        {remarkPhotos.map((photo: MediaAttachment, index: number) => (
+                                          <div key={`${photo.url}-${index}`} className="group w-36 space-y-2 overflow-hidden rounded-md border bg-background">
+                                            <a
+                                              href={photo.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="block"
+                                            >
+                                              <img
+                                                src={photo.url}
+                                                alt={photo.caption ? `${photo.caption} (Remark photo ${index + 1})` : `Remark photo ${index + 1}`}
+                                                className="h-28 w-full object-cover transition duration-200 group-hover:scale-105"
+                                              />
+                                            </a>
+                                            {photo.caption ? (
+                                              <p className="px-2 pb-2 text-[11px] text-muted-foreground">{photo.caption}</p>
+                                            ) : null}
+                                          </div>
                                         ))}
                                       </div>
                                     </div>
@@ -392,8 +414,13 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
                                     <div>
                                       <p className="text-xs uppercase text-muted-foreground">Videos</p>
                                       <div className="mt-2 flex flex-wrap gap-2">
-                                        {remarkVideos.map((url: string, index: number) => (
-                                          <video key={url + index} src={url} controls className="h-32 w-48 rounded-md border bg-black/70" />
+                                        {remarkVideos.map((video: MediaAttachment, index: number) => (
+                                          <div key={`${video.url}-${index}`} className="space-y-2">
+                                            <video src={video.url} controls className="h-32 w-48 rounded-md border bg-black/70" />
+                                            {video.caption ? (
+                                              <p className="text-[11px] text-muted-foreground">{video.caption}</p>
+                                            ) : null}
+                                          </div>
                                         ))}
                                       </div>
                                     </div>
