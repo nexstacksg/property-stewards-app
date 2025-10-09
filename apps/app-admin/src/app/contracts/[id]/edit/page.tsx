@@ -53,6 +53,35 @@ const CATEGORIES = [
 
 const DEFAULT_CATEGORY = "GENERAL"
 
+type InspectorRatingValue = 'GOOD' | 'FAIR' | 'BAD'
+
+type ContractInspectorSummary = {
+  id: string
+  name: string
+  mobilePhone?: string | null
+}
+
+type RatingSelectValue = InspectorRatingValue | 'NONE'
+
+const RATING_LABELS: Record<InspectorRatingValue, string> = {
+  GOOD: 'Good',
+  FAIR: 'Fair',
+  BAD: 'Bad',
+}
+
+const RATING_BADGE_VARIANT: Record<InspectorRatingValue, 'success' | 'warning' | 'destructive'> = {
+  GOOD: 'success',
+  FAIR: 'warning',
+  BAD: 'destructive',
+}
+
+const RATING_SELECT_OPTIONS: Array<{ value: RatingSelectValue; label: string }> = [
+  { value: 'GOOD', label: RATING_LABELS.GOOD },
+  { value: 'FAIR', label: RATING_LABELS.FAIR },
+  { value: 'BAD', label: RATING_LABELS.BAD },
+  { value: 'NONE', label: 'Clear rating' },
+]
+
 const createEmptyTask = () => ({ name: "", details: "" })
 
 const createEmptyLocation = (order: number): ChecklistDraftItem => ({
@@ -212,6 +241,15 @@ interface ContractResponse {
       order?: number | null
     }>
   }
+  workOrders?: Array<{
+    id: string
+    inspectors?: ContractInspectorSummary[]
+  }>
+  inspectorRatings?: Array<{
+    inspectorId: string
+    rating: InspectorRatingValue
+    inspector?: ContractInspectorSummary
+  }>
 }
 
 export default function EditContractPage({ params }: { params: Promise<{ id: string }> }) {
@@ -260,6 +298,11 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
   const [contactDraft, setContactDraft] = useState<ContactPersonDraft | null>(null)
   const [contactError, setContactError] = useState("")
 
+  const [contractInspectors, setContractInspectors] = useState<ContractInspectorSummary[]>([])
+  const [inspectorRatingsState, setInspectorRatingsState] = useState<Record<string, InspectorRatingValue | null>>({})
+  const [ratingSavingState, setRatingSavingState] = useState<Record<string, boolean>>({})
+  const [ratingError, setRatingError] = useState<string | null>(null)
+
   useEffect(() => {
     const loadContract = async () => {
       const resolvedParams = await params
@@ -305,6 +348,47 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       setContactEditIndex(null)
       setContactDraft(null)
       setContactError("")
+
+      const inspectorMap = new Map<string, ContractInspectorSummary>()
+
+      if (Array.isArray(contract.workOrders)) {
+        contract.workOrders.forEach((workOrder) => {
+          if (!workOrder || !Array.isArray(workOrder.inspectors)) return
+          workOrder.inspectors.forEach((inspector) => {
+            if (!inspector || typeof inspector.id !== 'string') return
+            if (!inspectorMap.has(inspector.id)) {
+              inspectorMap.set(inspector.id, {
+                id: inspector.id,
+                name: inspector.name || 'Inspector',
+                mobilePhone: inspector.mobilePhone || null,
+              })
+            }
+          })
+        })
+      }
+
+      const ratingMap: Record<string, InspectorRatingValue | null> = {}
+
+      if (Array.isArray(contract.inspectorRatings)) {
+        contract.inspectorRatings.forEach((entry) => {
+          if (!entry || typeof entry.inspectorId !== 'string') return
+          if (entry.inspector && !inspectorMap.has(entry.inspector.id)) {
+            inspectorMap.set(entry.inspector.id, {
+              id: entry.inspector.id,
+              name: entry.inspector.name || 'Inspector',
+              mobilePhone: entry.inspector.mobilePhone || null,
+            })
+          }
+          if (entry.rating) {
+            ratingMap[entry.inspectorId] = entry.rating
+          }
+        })
+      }
+
+      setContractInspectors(Array.from(inspectorMap.values()))
+      setInspectorRatingsState(ratingMap)
+      setRatingSavingState({})
+      setRatingError(null)
 
       fetchTemplates()
       fetchCustomerContracts(contract.customerId, contract.id)
@@ -383,6 +467,66 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       setAvailableReferences(options)
     } catch {
       setAvailableReferences([])
+    }
+  }
+
+  const handleInspectorRatingChange = async (inspectorId: string, value: RatingSelectValue) => {
+    if (!contractId) return
+    const previousValue = inspectorRatingsState[inspectorId] ?? null
+    const nextRating = value === 'NONE' ? null : (value as InspectorRatingValue)
+
+    setRatingError(null)
+    setInspectorRatingsState((prev) => {
+      const next = { ...prev }
+      if (nextRating) {
+        next[inspectorId] = nextRating
+      } else {
+        delete next[inspectorId]
+      }
+      return next
+    })
+    setRatingSavingState((prev) => ({ ...prev, [inspectorId]: true }))
+
+    try {
+      const response = await fetch(`/api/contracts/${contractId}/ratings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inspectorId, rating: value === 'NONE' ? null : value }),
+      })
+
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to update rating')
+      }
+
+      setInspectorRatingsState((prev) => {
+        const next = { ...prev }
+        if (data?.rating) {
+          next[inspectorId] = data.rating as InspectorRatingValue
+        } else {
+          delete next[inspectorId]
+        }
+        return next
+      })
+    } catch (error) {
+      console.error('Rating update failed', error)
+      setInspectorRatingsState((prev) => {
+        const next = { ...prev }
+        if (previousValue) {
+          next[inspectorId] = previousValue
+        } else {
+          delete next[inspectorId]
+        }
+        return next
+      })
+      setRatingError((error as Error).message)
+    } finally {
+      setRatingSavingState((prev) => {
+        const next = { ...prev }
+        delete next[inspectorId]
+        return next
+      })
     }
   }
 
@@ -1416,6 +1560,78 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
               marketingSource={marketingSource}
               saving={saving}
             />
+
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle>Inspector Ratings</CardTitle>
+                <CardDescription>Track internal feedback per inspector.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {ratingError ? (
+                  <p className="text-sm text-destructive">{ratingError}</p>
+                ) : null}
+                {contractInspectors.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Ratings become available once inspectors are assigned to the contract's work orders.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {contractInspectors.map((inspector) => {
+                      const currentRating = inspectorRatingsState[inspector.id] ?? null
+                      return (
+                        <div
+                          key={inspector.id}
+                          className="flex items-center justify-between gap-3 rounded-md border p-3"
+                        >
+                          <div>
+                            <p className="font-medium">{inspector.name}</p>
+                            {inspector.mobilePhone ? (
+                              <p className="text-xs text-muted-foreground">{inspector.mobilePhone}</p>
+                            ) : null}
+                            {currentRating ? (
+                              <Badge
+                                variant={RATING_BADGE_VARIANT[currentRating]}
+                                className="mt-2"
+                              >
+                                {RATING_LABELS[currentRating]}
+                              </Badge>
+                            ) : (
+                              <p className="text-xs text-muted-foreground mt-2">Not rated</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Select
+                              value={currentRating ?? 'NONE'}
+                              onValueChange={(nextValue) =>
+                                handleInspectorRatingChange(
+                                  inspector.id,
+                                  nextValue as RatingSelectValue,
+                                )
+                              }
+                              disabled={Boolean(ratingSavingState[inspector.id] || saving)}
+                            >
+                              <SelectTrigger className="w-[160px]">
+                                <SelectValue placeholder="Set rating" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {RATING_SELECT_OPTIONS.map((option) => (
+                                  <SelectItem key={option.value} value={option.value}>
+                                    {option.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {ratingSavingState[inspector.id] ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            ) : null}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <ContactPersonsCard
               contactPersons={contactPersons}

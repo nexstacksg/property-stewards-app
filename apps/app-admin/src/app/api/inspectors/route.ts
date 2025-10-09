@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { summarizeRatings } from '@/lib/rating-utils'
 
 // GET /api/inspectors - Get all inspectors
 export async function GET(request: NextRequest) {
@@ -39,7 +40,12 @@ export async function GET(request: NextRequest) {
             select: {
               workOrders: true
             }
-          }
+          },
+          ratings: {
+            select: {
+              rating: true,
+            },
+          },
         },
         orderBy: { createdOn: 'desc' },
         take,
@@ -48,8 +54,18 @@ export async function GET(request: NextRequest) {
       prisma.inspector.count({ where })
     ])
 
+    const enrichedInspectors = inspectors.map((inspector) => {
+      const ratingSummary = summarizeRatings(inspector.ratings)
+      const { ratings, ...rest } = inspector as any
+      return {
+        ...rest,
+        ratingAverage: ratingSummary.average,
+        ratingCount: ratingSummary.count,
+      }
+    })
+
     return NextResponse.json({ 
-      inspectors,
+      inspectors: enrichedInspectors,
       total,
       page: page ? parseInt(page) : 1,
       limit: take

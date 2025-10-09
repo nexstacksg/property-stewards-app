@@ -19,6 +19,8 @@ interface Inspector {
   _count: {
     workOrders: number
   }
+  ratingAverage: number | null
+  ratingCount: number
 }
 
 export default function InspectorsPage() {
@@ -48,20 +50,19 @@ export default function InspectorsPage() {
       const data = await response.json()
       
       // Handle both old array format and new object format
+      const normalizeInspector = (inspector: any): Inspector => ({
+        ...inspector,
+        specialization: Array.isArray(inspector.specialization)
+          ? inspector.specialization.join(', ')
+          : inspector.specialization,
+        ratingAverage: typeof inspector.ratingAverage === 'number' ? inspector.ratingAverage : null,
+        ratingCount: typeof inspector.ratingCount === 'number' ? inspector.ratingCount : 0,
+      })
+
       if (Array.isArray(data)) {
-        setInspectors(data.map((inspector: any) => ({
-          ...inspector,
-          specialization: Array.isArray(inspector.specialization)
-            ? inspector.specialization.join(', ')
-            : inspector.specialization,
-        })))
+        setInspectors(data.map(normalizeInspector))
       } else if (data.inspectors) {
-        setInspectors(data.inspectors.map((inspector: any) => ({
-          ...inspector,
-          specialization: Array.isArray(inspector.specialization)
-            ? inspector.specialization.join(', ')
-            : inspector.specialization,
-        })))
+        setInspectors(data.inspectors.map(normalizeInspector))
       } else {
         setInspectors([])
       }
@@ -76,6 +77,11 @@ export default function InspectorsPage() {
     e.preventDefault()
     fetchInspectors()
   }
+
+  const ratedInspectors = inspectors.filter((inspector) => inspector.ratingCount > 0 && typeof inspector.ratingAverage === 'number')
+  const overallAverage = ratedInspectors.length > 0
+    ? Number((ratedInspectors.reduce((sum, inspector) => sum + (inspector.ratingAverage || 0), 0) / ratedInspectors.length).toFixed(1))
+    : null
 
   return (
     <div className="p-6 space-y-6">
@@ -157,6 +163,9 @@ export default function InspectorsPage() {
             <p className="text-xs text-muted-foreground">
               Completed inspections
             </p>
+            <p className="text-xs text-muted-foreground mt-2">
+              Avg rating: {overallAverage ? overallAverage.toFixed(1) : '—'}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -206,6 +215,7 @@ export default function InspectorsPage() {
                     <TableHead>Type</TableHead>
                     <TableHead>Specialization</TableHead>
                     <TableHead>Work Orders</TableHead>
+                    <TableHead>Avg Rating</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -238,6 +248,16 @@ export default function InspectorsPage() {
                         )}
                       </TableCell>
                       <TableCell>{inspector._count.workOrders}</TableCell>
+                      <TableCell>
+                        {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? (
+                          <span className="font-medium">
+                            {inspector.ratingAverage?.toFixed(1)}
+                            <span className="text-xs text-muted-foreground"> ({inspector.ratingCount})</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={inspector.status === 'ACTIVE' ? 'success' : 'secondary'}>
                           {inspector.status}
