@@ -452,8 +452,26 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         }
 
         if (phase === 'skip_media') {
-          if (sessionId) await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
-          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true })
+          let message: string | undefined
+          if (sessionId) {
+            const latest = await getSessionState(sessionId)
+            const cond = (latest.currentTaskCondition || '').toUpperCase()
+            await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
+            if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
+              let cause = latest.pendingTaskCause || ''
+              let resolution = latest.pendingTaskResolution || ''
+              if (latest.currentTaskEntryId && (!cause || !resolution)) {
+                try {
+                  const entry = await prisma.itemEntry.findUnique({ where: { id: latest.currentTaskEntryId }, select: { cause: true, resolution: true } })
+                  cause = cause || (entry?.cause || '')
+                  resolution = resolution || (entry?.resolution || '')
+                } catch {}
+              }
+              const crLine = `\n📝 Cause: ${cause || '-'} | Resolution: ${resolution || '-'}`
+              message = `Okay, skipping media for now.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
+            }
+          }
+          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true, message: message || 'Okay, skipping media for now.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.' })
         }
 
         if (phase === 'set_remarks') {
