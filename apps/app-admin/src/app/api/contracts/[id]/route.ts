@@ -48,6 +48,17 @@ export async function GET(
           },
           orderBy: { scheduledStartDateTime: 'desc' }
         },
+        inspectorRatings: {
+          include: {
+            inspector: {
+              select: {
+                id: true,
+                name: true,
+                mobilePhone: true,
+              },
+            },
+          },
+        },
         followUpRemarks: {
           include: {
             createdBy: {
@@ -193,6 +204,17 @@ export async function PATCH(
             inspectors: true
           },
           orderBy: { scheduledStartDateTime: 'desc' }
+        },
+        inspectorRatings: {
+          include: {
+            inspector: {
+              select: {
+                id: true,
+                name: true,
+                mobilePhone: true,
+              },
+            },
+          },
         },
         followUpRemarks: {
           include: {

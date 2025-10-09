@@ -55,6 +55,7 @@ async function main() {
   await prisma.contractChecklistItem.deleteMany()
   await prisma.contractChecklist.deleteMany()
   await prisma.workOrder.deleteMany()
+  await prisma.inspectorContractRating.deleteMany()
   await prisma.contract.deleteMany()
   await prisma.checklistItem.deleteMany()
   await prisma.checklist.deleteMany()
@@ -418,6 +419,34 @@ async function main() {
   })
 
   console.log('Created contracts:', { contract1, contract2, contract3, contract4 })
+
+  await prisma.inspectorContractRating.createMany({
+    data: [
+      {
+        inspectorId: inspector1.id,
+        contractId: contract1.id,
+        rating: 'GOOD',
+      },
+      {
+        inspectorId: inspector2.id,
+        contractId: contract1.id,
+        rating: 'FAIR',
+      },
+      {
+        inspectorId: inspector2.id,
+        contractId: contract2.id,
+        rating: 'GOOD',
+      },
+      {
+        inspectorId: inspector3.id,
+        contractId: contract3.id,
+        rating: 'BAD',
+      },
+    ],
+    skipDuplicates: true,
+  })
+
+  console.log('Seeded inspector-contract ratings')
 
   // Create Contract Checklists (for scheduled/completed contracts)
   const contractChecklist1 = await prisma.contractChecklist.create({

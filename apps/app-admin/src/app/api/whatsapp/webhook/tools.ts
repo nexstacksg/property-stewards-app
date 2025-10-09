@@ -313,43 +313,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (phase === 'start') {
           const taskId = args.taskId as string | undefined
           if (!taskId) return JSON.stringify({ success: false, error: 'Missing task identifier' })
+          // 'complete_all_tasks' flow disabled by request
           if (taskId === 'complete_all_tasks') {
-            let location = session.currentLocation || ''
-            if (!location && sessionId) {
-              const latest = await getSessionState(sessionId)
-              location = latest.currentLocation || ''
-            }
-            if (!location) return JSON.stringify({ success: false, error: 'Could not determine current location' })
-            const success = await completeAllTasksForLocation(workOrderId, location)
-            let itemIdForSession: string | null = null
-            try { itemIdForSession = await getContractChecklistItemIdByLocation(workOrderId, location) as any } catch {}
-            if (sessionId && itemIdForSession) await updateSessionState(sessionId, {
-              currentItemId: itemIdForSession,
-              currentTaskId: undefined,
-              currentTaskEntryId: undefined,
-              currentTaskName: undefined,
-              taskFlowStage: undefined,
-              currentTaskCondition: undefined,
-              currentTaskItemId: itemIdForSession,
-              currentSubLocationId: undefined,
-              currentSubLocationName: undefined,
-              currentTaskLocationId: undefined,
-              currentTaskLocationName: undefined
-            })
-            if (success) {
-              const remarks = args.notes as string | undefined
-              if (remarks) {
-                try {
-                  const workOrder = await prisma.workOrder.findUnique({ where: { id: workOrderId }, include: { contract: { include: { contractChecklist: { include: { items: { where: { name: location } } } } } } } })
-                  const itemId = (workOrder as any)?.contract?.contractChecklist?.items?.[0]?.id
-                  if (itemId) await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { remarks } })
-                } catch (error) {
-                  console.error('Failed to save location remarks after complete-all:', error)
-                }
-              }
-              return JSON.stringify({ success: true, allTasksCompletedForLocation: true, locationCompleted: true, nextAction: 'location_completed' })
-            }
-            return JSON.stringify({ success: false, error: 'Failed to complete all tasks. Please try again.' })
+            return JSON.stringify({ success: false, error: 'Bulk complete is disabled. Please complete tasks individually or use Go back.' })
           }
 
           const task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, name: true, itemId: true, locationId: true, location: { select: { name: true } } } })
@@ -440,10 +406,49 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
 
           if (sessionId) {
-            await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: 'media' })
+            // If FAIR or UNSATISFACTORY, branch to cause -> resolution -> media
+            const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'media'
+            await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
+            if (nextStage === 'cause') {
+              return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please describe the cause for this issue.' })
+            }
           }
 
           return JSON.stringify({ success: true, taskFlowStage: 'media', condition })
+        }
+
+        if (phase === 'set_cause') {
+          if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing cause' })
+          const causeRaw = String(args.cause ?? args.remarks ?? args.notes ?? '').trim()
+          if (!causeRaw) return JSON.stringify({ success: false, error: 'Please provide a brief cause description.' })
+          await updateSessionState(sessionId, { pendingTaskCause: causeRaw, taskFlowStage: 'resolution' })
+          return JSON.stringify({ success: true, taskFlowStage: 'resolution', message: 'Thanks. Please provide the resolution.' })
+        }
+
+        if (phase === 'set_resolution') {
+          if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing resolution' })
+          const resolutionRaw = String(args.resolution ?? args.remarks ?? args.notes ?? '').trim()
+          if (!resolutionRaw) return JSON.stringify({ success: false, error: 'Please provide a brief resolution description.' })
+          const latest = await getSessionState(sessionId)
+          const taskId = latest.currentTaskId
+          const taskItemId = latest.currentTaskItemId
+          let entryId = latest.currentTaskEntryId
+          let inspectorId = latest.inspectorId || null
+          if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
+          if (!inspectorId) inspectorId = await resolveInspectorIdForSession(sessionId, latest, workOrderId, latest.inspectorPhone || sessionId)
+          if (!entryId && inspectorId) {
+            const orphan = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, inspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
+            if (orphan) entryId = orphan.id
+          }
+          const combinedRemarks = `Cause: ${latest.pendingTaskCause || '-'}\nResolution: ${resolutionRaw}`
+          if (!entryId) {
+            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: inspectorId || undefined, condition: (latest.currentTaskCondition as any) || undefined, remarks: combinedRemarks } })
+            entryId = created.id
+          } else {
+            await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: combinedRemarks } })
+          }
+          await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Resolution saved. Please send photos/videos now (captioned if needed), or type \"skip\" to continue.' })
         }
 
         if (phase === 'skip_media') {
@@ -550,27 +555,28 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             })
           }
 
-          let entryRecord: { photos?: string[]; remarks?: string | null } | null = null
+          let entryRecord: { photos?: string[]; remarks?: string | null; cause?: string | null; resolution?: string | null } | null = null
           if (entryId) {
             try {
-              entryRecord = await prisma.itemEntry.findUnique({ where: { id: entryId }, select: { photos: true, remarks: true } })
+              entryRecord = await prisma.itemEntry.findUnique({ where: { id: entryId }, select: { photos: true, remarks: true, cause: true, resolution: true } })
             } catch (error) {
               console.error('Failed to load entry for validation', error)
             }
           }
 
           if (completed) {
-            const requiresPhoto = condition !== 'NOT_APPLICABLE' && condition !== 'UN_OBSERVABLE'
-            const requiresRemark = condition !== 'GOOD'
+            const requiresPhoto = condition !== 'NOT_APPLICABLE'
+            const requiresCauseResolution = condition === 'FAIR' || condition === 'UNSATISFACTORY'
             const photoCount = entryRecord?.photos?.length ?? 0
-            const remarkText = entryRecord?.remarks?.trim() ?? ''
+            const causeText = entryRecord?.cause?.trim() ?? ''
+            const resolutionText = entryRecord?.resolution?.trim() ?? ''
 
             if (requiresPhoto && photoCount === 0) {
               return JSON.stringify({ success: false, error: 'Please send at least one photo for this status before marking the task complete.' })
             }
 
-            if (requiresRemark && !remarkText) {
-              return JSON.stringify({ success: false, error: 'Please add a remark for this status before marking the task complete.' })
+            if (requiresCauseResolution && (!causeText || !resolutionText)) {
+              return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
             }
 
             const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })

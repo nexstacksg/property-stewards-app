@@ -18,6 +18,7 @@ import {
   AlertCircle
 } from "lucide-react"
 import prisma from "@/lib/prisma"
+import { summarizeRatings } from "@/lib/rating-utils"
 
 async function getInspector(id: string) {
   const inspector = await prisma.inspector.findUnique({
@@ -34,6 +35,11 @@ async function getInspector(id: string) {
         },
         orderBy: { scheduledStartDateTime: 'desc' },
         take: 10
+      },
+      ratings: {
+        select: {
+          rating: true
+        }
       }
     }
   })
@@ -42,11 +48,17 @@ async function getInspector(id: string) {
     notFound()
   }
 
+  const ratingSummary = summarizeRatings(inspector.ratings)
+
+  const { ratings, ...rest } = inspector as any
+
   return {
-    ...inspector,
+    ...rest,
     specialization: Array.isArray(inspector.specialization)
       ? inspector.specialization.join(', ')
       : inspector.specialization,
+    ratingAverage: ratingSummary.average,
+    ratingCount: ratingSummary.count,
   }
 }
 
@@ -153,6 +165,18 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
                 <p className="text-sm mt-1">
                   {inspector.specialization ? inspector.specialization : '—'}
                 </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-muted-foreground">Average Rating</p>
+                {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? (
+                  <p className="text-2xl font-bold">
+                    {inspector.ratingAverage?.toFixed(1)}
+                    <span className="text-xs text-muted-foreground ml-2">({inspector.ratingCount})</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-1">No ratings yet</p>
+                )}
               </div>
 
               {inspector.remarks && (
