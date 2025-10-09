@@ -19,6 +19,9 @@ export async function getContractWithWorkOrders(id: string) {
                       username: true,
                       email: true
                     }
+                  },
+                  media: {
+                    orderBy: { order: 'asc' }
                   }
                 },
                 orderBy: { createdOn: "asc" }
@@ -34,6 +37,9 @@ export async function getContractWithWorkOrders(id: string) {
                           username: true,
                           email: true
                         }
+                      },
+                      media: {
+                        orderBy: { order: 'asc' }
                       }
                     },
                     orderBy: { createdOn: "asc" }

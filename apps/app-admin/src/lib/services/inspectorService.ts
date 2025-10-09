@@ -380,6 +380,7 @@ export async function getInspectorByPhone(phone: string) {
 
 export async function getTodayJobsForInspector(inspectorId: string) {
   try {
+    const perfStart = Date.now()
     // Compute today in Asia/Singapore (UTC+8) by default
     const tzOffsetHours = Number(process.env.LOCAL_TZ_OFFSET_HOURS ?? 8)
     const now = new Date()
@@ -391,10 +392,12 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     const dateKey = `${startOfDay.getUTCFullYear()}-${String(startOfDay.getUTCMonth() + 1).padStart(2, '0')}-${String(startOfDay.getUTCDate()).padStart(2, '0')}`
     const todayCacheKey = `mc:work-orders:today:${inspectorId}:${dateKey}`
 
+    let cacheHit = false
     try {
       const cachedToday = await cacheGetJSON<any[]>(todayCacheKey)
       if (cachedToday && Array.isArray(cachedToday)) {
         debugLog('getTodayJobsForInspector: returning from per-day cache', inspectorId, cachedToday.length)
+        if (process.env.WHATSAPP_PERF_LOG === 'true') console.log('[perf] svc:getTodayJobsForInspector cache-hit:', Date.now() - perfStart, 'ms')
         return cachedToday
       }
     } catch (error) {
@@ -474,6 +477,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
       console.error('getTodayJobsForInspector: failed to cache today result', error)
     }
 
+    if (process.env.WHATSAPP_PERF_LOG === 'true') console.log('[perf] svc:getTodayJobsForInspector:', Date.now() - perfStart, 'ms', 'scopedWo:', Array.isArray(scopedWorkOrders) ? scopedWorkOrders.length : 0, 'result:', mapped.length)
     return mapped
   } catch (error) {
     console.error('Error fetching today\'s jobs:', error)
@@ -775,6 +779,7 @@ export async function getChecklistLocationsForItem(itemId: string) {
     const completed = new Map<string, number>()
     for (const group of grouped) {
       const locId = group.locationId
+      if (!locId) continue
       const currentTotal = totals.get(locId) ?? 0
       totals.set(locId, currentTotal + group._count._all)
       if (group.status === 'COMPLETED') {

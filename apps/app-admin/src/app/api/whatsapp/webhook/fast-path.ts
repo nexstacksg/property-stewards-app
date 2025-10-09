@@ -1,5 +1,28 @@
 import { executeTool } from './tools'
-import { getSessionState, type ChatSessionState } from '@/lib/chat-session'
+import { getSessionState, updateSessionState, type ChatSessionState } from '@/lib/chat-session'
+
+function perfLog(label: string, ms: number) {
+  if (process.env.WHATSAPP_PERF_LOG === 'true') {
+    console.log(`[perf] ${label}: ${ms}ms`)
+  }
+}
+
+function isJobsIntent(text: string): boolean {
+  const t = text.toLowerCase().trim()
+  if (!t) return false
+  // Direct keywords
+  const keywords = [
+    'jobs', 'job', 'schedule', 'today', 'my jobs', 'my schedule', 'what are my jobs',
+    'work order', 'work orders', 'workorder', 'workorders', 'wo', 'inspections', 'inspection',
+    'assignments', 'appointments', 'tasks today', 'today list', 'show jobs', 'show schedule', 'list jobs'
+  ]
+  if (keywords.some(k => t === k || t.includes(k))) return true
+  // Patterns like "today's jobs", "today schedule"
+  if (/today'?s?\s+(jobs?|schedule|inspections?|work\s*orders?)/.test(t)) return true
+  // Questions like "what's my schedule" or "what jobs today"
+  if (/(what('?s)?|show)\s+(my\s+)?(jobs?|schedule|inspections?)/.test(t)) return true
+  return false
+}
 
 export async function tryHandleWithoutAI(phone: string, rawMessage: string, session: ChatSessionState): Promise<string | null> {
   try {
@@ -9,13 +32,13 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
     const match = /^\s*(?:\[\s*(\d{1,2})\s*\]|option\s+(\d{1,2})|(\d{1,2}))\s*([).,;-])?\s*$/.exec(msg)
     const selectedNumber = match ? Number(match[1] || match[2] || match[3]) : null
 
-    const wantsJobs =
-      lower === 'jobs' || lower === 'job' || lower.includes('jobs today') ||
-      lower.includes('schedule') || lower.includes('today') || lower.includes('my jobs') || lower.includes('what are my jobs')
+    const wantsJobs = isJobsIntent(lower)
 
     // 1) Jobs list (no AI)
     if (wantsJobs) {
+      const t0 = Date.now()
       const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
+      perfLog('tool:getTodayJobs', Date.now() - t0)
       const data = safeParseJSON(res)
       if (!data?.success) return null
       const s = await getSessionState(phone)
@@ -43,16 +66,36 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       // If we are confirming a job, treat [1]/[2] as yes/no
       if (session?.jobStatus === 'confirming' && session?.workOrderId) {
         if (selectedNumber === 1) {
+          const t0 = Date.now()
           const res = await executeTool('startJob', { jobId: session.workOrderId }, undefined, phone)
+          perfLog('tool:startJob', Date.now() - t0)
           const data = safeParseJSON(res)
           if (!data?.success) return null
+          try {
+            await updateSessionState(phone, {
+              currentLocation: undefined,
+              currentLocationId: undefined,
+              currentSubLocationId: undefined,
+              currentSubLocationName: undefined,
+              taskFlowStage: undefined,
+              currentTaskId: undefined,
+              currentTaskName: undefined,
+              currentTaskItemId: undefined,
+              currentTaskEntryId: undefined,
+              currentTaskCondition: undefined,
+              currentTaskLocationId: undefined,
+              currentTaskLocationName: undefined
+            })
+          } catch {}
           const locations: string[] = data.locationsFormatted || []
           const header = `Job started. Here are the locations available for inspection:`
           const next = 'Reply with the number of the location you want to inspect next.'
           return [header, '', ...locations, '', `Next: ${next}`].join('\n')
         }
         if (selectedNumber === 2) {
+          const t0 = Date.now()
           const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
+          perfLog('tool:getTodayJobs', Date.now() - t0)
           const data = safeParseJSON(res)
           if (!data?.success) return null
           const jobs = Array.isArray(data.jobs) ? data.jobs : []
@@ -76,7 +119,9 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
       // If no job selected yet: treat as job selection
       if (!session?.workOrderId) {
+        const t0 = Date.now()
         const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
+        perfLog('tool:getTodayJobs', Date.now() - t0)
         const data = safeParseJSON(res)
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
         if (jobs.length === 0) return null
@@ -84,7 +129,9 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           return `The selection [${selectedNumber}] is not available. Please choose ${jobs.map((j: any) => j.selectionNumber).join(', ')}.`
         }
         const chosen = jobs[selectedNumber - 1]
+        const t1 = Date.now()
         const cRes = await executeTool('confirmJobSelection', { jobId: chosen.id }, undefined, phone)
+        perfLog('tool:confirmJobSelection', Date.now() - t1)
         const cData = safeParseJSON(cRes)
         if (!cData?.success) return null
         const lines: string[] = []
@@ -217,7 +264,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const setCond = await executeTool('completeTask', { phase: 'set_condition', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, conditionNumber: selectedNumber }, undefined, phone)
         const s = safeParseJSON(setCond)
         if (!s?.success && typeof s?.error === 'string') return s.error
-        return `Condition saved. Please send any photos/videos now, or type 'skip' to continue.\n\nNext: send media or reply 'skip'.`
+        return `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption. Or type 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
       }
 
       // c) Media step: skip
@@ -250,6 +297,23 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           const completeAll = await executeTool('completeTask', { phase: 'start', workOrderId: ctx.workOrderId, taskId: 'complete_all_tasks' }, undefined, phone)
           const c = safeParseJSON(completeAll)
           if (!c?.success) return c?.error || 'Failed to complete all tasks. Please try again.'
+          // Reset current location context so the next numeric input is treated as a fresh location selection
+          try {
+            await updateSessionState(phone, {
+              currentLocation: undefined,
+              currentLocationId: undefined,
+              currentSubLocationId: undefined,
+              currentSubLocationName: undefined,
+              taskFlowStage: undefined,
+              currentTaskId: undefined,
+              currentTaskName: undefined,
+              currentTaskItemId: undefined,
+              currentTaskEntryId: undefined,
+              currentTaskCondition: undefined,
+              currentTaskLocationId: undefined,
+              currentTaskLocationName: undefined
+            })
+          } catch {}
           const locs = await executeTool('getJobLocations', { jobId: ctx.workOrderId }, undefined, phone)
           const locData = safeParseJSON(locs)
           const formatted: string[] = locData?.locationsFormatted || []

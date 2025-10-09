@@ -17,6 +17,7 @@ export type ReportBuildOptions = {
   titleOverride?: string | null
   versionLabel: string
   generatedOn: Date
+  allowedConditions?: string[] | null
 }
 
 function applyWatermark(doc: any, logoBuffer?: Buffer) {
@@ -168,7 +169,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   await appendWorkOrderSection(doc, combinedWorkOrder, imageCache, {
     heading: 'Inspection Checklist',
     includeMeta: false,
-    filterByWorkOrderId: null
+    filterByWorkOrderId: null,
+    allowedConditions: options.allowedConditions ?? undefined,
   })
 }
 

@@ -186,48 +186,52 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-wrap items-start gap-3 sm:items-center sm:gap-4">
           <Link href="/contracts">
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" className="shrink-0">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-3xl font-bold">Contract #{contract.id.slice(-8).toUpperCase()}</h1>
-              <Badge variant={getContractStatusVariant(contract.status)}>
-                {contract.status}
-              </Badge>
-              <Badge variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}>
-                {contractTypeLabel}
-              </Badge>
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+              <h1 className="text-2xl font-bold leading-tight sm:text-3xl">
+                Contract #{contract.id.slice(-8).toUpperCase()}
+              </h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={getContractStatusVariant(contract.status)}>{contract.status}</Badge>
+                <Badge variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                  {contractTypeLabel}
+                </Badge>
+              </div>
             </div>
             <p className="text-muted-foreground mt-1">Contract Details</p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Link href={`/contracts/${contract.id}/edit`}>
-            <Button variant="outline">
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
+          <Link href={`/contracts/${contract.id}/edit`} className="flex-1 sm:flex-none">
+            <Button variant="outline" className="w-full sm:w-auto">
               <Edit className="h-4 w-4 mr-2" />
               Edit Contract
             </Button>
           </Link>
           {showPdfActions && (
-            <>
+            <div className="flex flex-1 flex-wrap gap-2 sm:flex-none">
               <PreviewPdfButton
                 href={`/api/contracts/${contract.id}/report`}
                 fileName={contractReportFileName}
                 label="Preview PDF"
+                className="flex-1 sm:flex-none"
               />
               <GenerateContractReportButton
                 contractId={contract.id}
                 defaultTitle={defaultReportTitle}
                 defaultFileName={contractReportFileName}
+                className="flex-1 sm:flex-none"
               />
-            </>
+            </div>
           )}
         </div>
       </div>
@@ -546,6 +550,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           customerName={contract.customer?.name}
           customerEmail={contract.customer?.email}
           customerPhone={contract.customer?.phone}
+          contactPersons={contactPersons}
         />
 
           {/* Financial Summary */}

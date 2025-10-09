@@ -1,20 +1,20 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { 
-  Plus, 
-  Calendar, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
-  AlertCircle, 
-  ChevronLeft, 
-  ChevronRight, 
+import {
+  Plus,
+  Calendar,
+  Clock,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
   Filter,
   MapPin,
   User
@@ -185,25 +185,29 @@ export default function WorkOrdersPage() {
     }
   }
 
-  // Group work orders by date
-  const groupedWorkOrders = currentWorkOrders.reduce((groups: any, workOrder) => {
-    const date = formatDate(workOrder.scheduledStartDateTime)
-    if (!groups[date]) {
-      groups[date] = []
-    }
-    groups[date].push(workOrder)
-    return groups
-  }, {})
+  const groupedEntries = useMemo(() => {
+    const map = new Map<string, WorkOrder[]>()
+    currentWorkOrders.forEach((workOrder) => {
+      const date = formatDate(workOrder.scheduledStartDateTime)
+      const existing = map.get(date)
+      if (existing) {
+        existing.push(workOrder)
+        return
+      }
+      map.set(date, [workOrder])
+    })
+    return Array.from(map.entries())
+  }, [currentWorkOrders])
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Work Orders</h1>
-          <p className="text-muted-foreground mt-2">Manage inspection schedules and assignments</p>
+    <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold sm:text-3xl">Work Orders</h1>
+          <p className="text-muted-foreground">Manage inspection schedules and assignments</p>
         </div>
         <Link href="/work-orders/new">
-          <Button>
+          <Button className="self-start">
             <Plus className="h-4 w-4 mr-2" />
             Schedule Work Order
           </Button>
@@ -211,7 +215,7 @@ export default function WorkOrdersPage() {
       </div>
 
       {/* Status Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card 
           className={`cursor-pointer transition-all hover:shadow-md ${statusFilter === 'SCHEDULED' ? 'border-blue-500 shadow-md' : ''}`}
           onClick={() => setStatusFilter(statusFilter === 'SCHEDULED' ? '' : 'SCHEDULED')}
@@ -288,24 +292,24 @@ export default function WorkOrdersPage() {
       {/* Work Orders List */}
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
-            <div>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-1">
               <CardTitle>Work Order Schedule</CardTitle>
               <CardDescription>
                 {statusFilter ? `Showing ${statusFilter.toLowerCase()} work orders` : 'All work orders'}
               </CardDescription>
             </div>
-            <div className="flex flex-wrap gap-2 justify-end">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
               <Input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 placeholder="Search work orders"
-                className="w-full md:w-56"
+                className="w-full sm:w-60"
               />
               <select
                 value={statusFilter}
                 onChange={(event) => setStatusFilter(event.target.value)}
-                className="px-3 py-2 border rounded-md"
+                className="w-full rounded-md border px-3 py-2 text-sm focus:border-gray-300 focus:outline-none focus:ring-0 sm:w-auto"
               >
                 <option value="">All Status</option>
                 <option value="SCHEDULED">Scheduled</option>
@@ -314,7 +318,7 @@ export default function WorkOrdersPage() {
                 <option value="CANCELLED">Cancelled</option>
               </select>
               {statusFilter && (
-                <Button variant="outline" size="sm" onClick={() => setStatusFilter('')}>
+                <Button variant="outline" size="sm" onClick={() => setStatusFilter('')} className="w-full sm:w-auto">
                   <Filter className="h-4 w-4 mr-2" />
                   Clear Filter
                 </Button>
@@ -332,13 +336,116 @@ export default function WorkOrdersPage() {
               <p className="text-sm mt-2">Create a new work order to get started</p>
             </div>
           ) : (
-            <>
-              {/* Single table for all dates */}
-              <div className="overflow-x-auto">
-                <table className="w-full table-fixed">
-                  <thead className="bg-muted/30 border-b">
-                    <tr>
-                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
+            <Fragment>
+              <div className="space-y-6 p-4 lg:hidden">
+                {groupedEntries.map(([date, orders]) => (
+                  <div key={date} className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                      <Calendar className="h-4 w-4" />
+                      {date}
+                    </div>
+                    <div className="space-y-3">
+                      {orders.map((workOrder) => {
+                        const isScheduled = workOrder.status === 'SCHEDULED'
+                        const inspectors = Array.isArray(workOrder.inspectors) ? workOrder.inspectors : []
+                        return (
+                          <Card key={workOrder.id} className="border">
+                            <CardContent className="space-y-4 p-4">
+                              <div className="flex flex-col gap-3">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="space-y-1">
+                                    <Link href={`/work-orders/${workOrder.id}`} className="text-base font-semibold hover:text-primary">
+                                      Work Order #{workOrder.id.slice(-8).toUpperCase()}
+                                    </Link>
+                                    <p className="text-sm text-muted-foreground">
+                                      {formatTime(workOrder.scheduledStartDateTime)} – {formatTime(workOrder.scheduledEndDateTime)}
+                                    </p>
+                                  </div>
+                                  <Badge variant={getStatusVariant(workOrder.status)} className="self-start">
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium">
+                                      {getStatusIcon(workOrder.status)}
+                                      {workOrder.status}
+                                    </span>
+                                  </Badge>
+                                </div>
+                                <div className="space-y-3 text-sm">
+                                  <div>
+                                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Customer</p>
+                                    <Link
+                                      href={`/customers/${workOrder.contract.customer.id}`}
+                                      className="font-medium hover:text-primary"
+                                    >
+                                      {workOrder.contract.customer.name}
+                                    </Link>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Property</p>
+                                    <div className="flex items-start gap-2 text-sm">
+                                      <MapPin className="mt-1 h-4 w-4 text-muted-foreground" />
+                                      <div>
+                                        <p className="font-medium leading-snug">{workOrder.contract.address.address}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {workOrder.contract.address.postalCode} • {workOrder.contract.address.propertyType}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground uppercase tracking-wide">
+                                    <span>Inspectors</span>
+                                    <div className="flex flex-wrap items-center gap-2 normal-case">
+                                      {inspectors.length > 0 ? (
+                                        inspectors.slice(0, 2).map((inspector) => (
+                                          <Badge key={inspector.id} variant="outline" className="text-xs">
+                                            {inspector.name}
+                                          </Badge>
+                                        ))
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">Unassigned</span>
+                                      )}
+                                      {inspectors.length > 2 && (
+                                        <span className="text-xs text-muted-foreground">+{inspectors.length - 2} more</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Service</p>
+                                    <Badge variant="secondary" className="mt-1">{workOrder.contract.servicePackage || 'Basic'}</Badge>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2 justify-end">
+                                <Link href={`/work-orders/${workOrder.id}`} className="flex-1 sm:flex-none">
+                                  <Button variant="outline" size="sm" className="w-full sm:w-auto">
+                                    View Details
+                                  </Button>
+                                </Link>
+                                {isScheduled && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1 sm:flex-none"
+                                    onClick={() => handleStartJob(workOrder.id)}
+                                  >
+                                    Start
+                                  </Button>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden lg:block">
+                <div className="overflow-x-auto">
+                  <table className="w-full table-fixed">
+                    <thead className="bg-muted/30 border-b">
+                      <tr>
+                        <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
                         Time
                       </th>
                       <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-32">
@@ -362,20 +469,17 @@ export default function WorkOrdersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {Object.entries(groupedWorkOrders).map(([date, orders]) => (
-                      <>
-                        {/* Date Header Row */}
-                        <tr key={`date-${date}`} className="bg-muted/50">
-                          <td colSpan={7} className="px-6 py-2 font-medium text-sm">
+                    {groupedEntries.map(([date, orders]) => (
+                      <Fragment key={date}>
+                        <tr className="bg-muted/50">
+                          <td colSpan={7} className="px-6 py-2 text-sm font-medium">
                             <div className="flex items-center gap-2">
                               <Calendar className="h-4 w-4" />
                               {date}
                             </div>
                           </td>
                         </tr>
-                        
-                        {/* Work Order Rows for this date */}
-                        {(orders as WorkOrder[]).map((workOrder) => (
+                        {orders.map((workOrder) => (
                           <tr key={workOrder.id} className="border-b hover:bg-muted/10">
                             {/* Time */}
                             <td className="px-6 py-3 align-top">
@@ -447,63 +551,58 @@ export default function WorkOrdersPage() {
 
                             {/* Actions */}
                             <td className="px-6 py-3 align-top">
-                              <div className="w-full flex items-center justify-center">
-                                <div className="inline-flex gap-2 w-36 justify-end">
-                                  <Link href={`/work-orders/${workOrder.id}`}>
-                                    <Button variant="outline" size="sm" className="w-16">View</Button>
-                                  </Link>
-                                  {workOrder.status === 'SCHEDULED' ? (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="w-16"
-                                      onClick={() => handleStartJob(workOrder.id)}
-                                    >
-                                      Start
-                                    </Button>
-                                  ) : (
-                                    <div className="w-16" aria-hidden="true" />
-                                  )}
-                                </div>
+                              <div className="flex items-center justify-end gap-2">
+                                <Link href={`/work-orders/${workOrder.id}`}>
+                                  <Button variant="outline" size="sm" className="w-16">View</Button>
+                                </Link>
+                                {workOrder.status === 'SCHEDULED' ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-16"
+                                    onClick={() => handleStartJob(workOrder.id)}
+                                  >
+                                    Start
+                                  </Button>
+                                ) : (
+                                  <div className="w-16" aria-hidden="true" />
+                                )}
                               </div>
                             </td>
                           </tr>
                         ))}
-                      </>
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
               </div>
-
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="flex justify-center items-center gap-4 py-4 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    Previous
-                  </Button>
-                  <span className="text-sm text-muted-foreground">
-                    Page {page} of {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
-            </>
+              </div>
+            </Fragment>
           )}
         </CardContent>
+        {!loading && filteredWorkOrders.length > 0 && totalPages > 1 && (
+          <CardFooter className="flex justify-center items-center gap-4 border-t py-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page === 1}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">Page {page} of {totalPages}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+            >
+              Next
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </CardFooter>
+        )}
       </Card>
     </div>
   )

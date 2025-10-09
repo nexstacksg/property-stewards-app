@@ -1,4 +1,10 @@
+import Link from "next/link"
+
+import { ContractRemarkStatus } from "@prisma/client"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
 import { Users, UserCheck, FileText, Calendar, DollarSign, Clock, CheckCircle } from "lucide-react"
 import prisma from "@/lib/prisma"
 
@@ -38,6 +44,33 @@ async function getDashboardStats() {
       }
     })
 
+    const openFollowUpItems = await prisma.contractRemark.findMany({
+      where: {
+        status: ContractRemarkStatus.OPEN
+      },
+      take: 5,
+      orderBy: { createdOn: 'desc' },
+      include: {
+        contract: {
+          select: {
+            id: true,
+            customer: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      }
+    })
+
+    const openFollowUpCount = await prisma.contractRemark.count({
+      where: {
+        status: ContractRemarkStatus.OPEN
+      }
+    })
+
     return {
       customerCount,
       inspectorCount,
@@ -48,6 +81,18 @@ async function getDashboardStats() {
       scheduledWorkOrders,
       totalRevenue: totalRevenue._sum.value || 0,
       recentWorkOrders,
+      openFollowUpCount,
+      openFollowUps: openFollowUpItems.map((remark) => ({
+        id: remark.id,
+        body: remark.body,
+        createdOn: remark.createdOn.toISOString(),
+        contractId: remark.contractId,
+        type: remark.type,
+        contract: {
+          id: remark.contract.id,
+          customer: remark.contract.customer,
+        },
+      })),
       fetchedAt: new Date().toISOString()
     }
   } catch (error) {
@@ -63,6 +108,8 @@ async function getDashboardStats() {
       scheduledWorkOrders: 0,
       totalRevenue: 0,
       recentWorkOrders: [],
+      openFollowUpCount: 0,
+      openFollowUps: [],
       fetchedAt: new Date().toISOString()
     }
   }
@@ -101,6 +148,8 @@ export default async function DashboardPage() {
       scheduledWorkOrders: 0,
       totalRevenue: 0,
       recentWorkOrders: [],
+      openFollowUpCount: 0,
+      openFollowUps: [],
       fetchedAt: new Date().toISOString()
     }
   }
@@ -201,6 +250,77 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Open Follow-up Tasks */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Open Follow-up Tasks</CardTitle>
+          <CardDescription>
+            {stats.openFollowUpCount === 0
+              ? 'All follow-up tasks are completed'
+              : `${stats.openFollowUpCount} open follow-up${stats.openFollowUpCount > 1 ? 's' : ''}`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {stats.openFollowUps.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No open follow-up remarks. Great job staying on top of things!</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Contract</TableHead>
+                  <TableHead>Remark</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Logged</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stats.openFollowUps.map((remark) => (
+                  <TableRow key={remark.id}>
+                    <TableCell className="text-sm">
+                      {remark.contract.customer ? (
+                        <Link
+                          href={`/customers/${remark.contract.customer.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {remark.contract.customer.name}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Link
+                        href={`/contracts/${remark.contract.id}`}
+                        className="font-mono text-xs text-primary hover:underline"
+                      >
+                        #{remark.contract.id.slice(-8).toUpperCase()}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="max-w-md text-sm">
+                      <span className="block truncate" title={remark.body}>
+                        {remark.body}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Badge variant={remark.type === 'FOLLOW_UP' ? 'secondary' : 'outline'}>
+                        {remark.type === 'FOLLOW_UP' ? 'Follow Up' : 'FYI'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(remark.createdOn).toLocaleString('en-SG', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Recent Work Orders */}
       <Card>

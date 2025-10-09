@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { ContractRemarkStatus, ContractRemarkType } from "@prisma/client"
 
 import prisma from "@/lib/prisma"
 import { getAuthSecret } from "@/lib/auth-secret"
@@ -58,7 +59,7 @@ export async function POST(
       )
     }
 
-    const payload = await request.json().catch(() => null) as { body?: string } | null
+    const payload = await request.json().catch(() => null) as { body?: string; type?: ContractRemarkType } | null
     const text = payload?.body?.trim()
 
     if (!text) {
@@ -68,6 +69,10 @@ export async function POST(
       )
     }
 
+    const remarkType = payload?.type === ContractRemarkType.FYI
+      ? ContractRemarkType.FYI
+      : ContractRemarkType.FOLLOW_UP
+
     const userId = await resolveSessionUserId(request)
 
     const remark = await prisma.contractRemark.create({
@@ -75,6 +80,8 @@ export async function POST(
         contractId: id,
         body: text,
         createdById: userId ?? undefined,
+        type: remarkType,
+        status: ContractRemarkStatus.OPEN,
       },
       include: {
         createdBy: {
