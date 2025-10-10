@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma'
+import { cacheDel } from '@/lib/memcache'
 import type { ChatSessionState } from '@/lib/chat-session'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import {
@@ -57,11 +58,14 @@ export const assistantTools = [
 
 export async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string): Promise<string> {
   try {
+    const dbgOn = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+    const dbg = (...a: any[]) => { if (dbgOn === 'true' || dbgOn === 'verbose') console.log('[wh-tool]', ...a) }
     let metadata: ChatSessionState = {}
     if (sessionId) metadata = await getSessionState(sessionId)
 
     switch (toolName) {
       case 'getTodayJobs': {
+        const t0 = Date.now()
         const { inspectorId, inspectorPhone } = args
         let finalInspectorId = inspectorId || metadata.inspectorId
         if (!finalInspectorId && inspectorPhone) {
@@ -75,6 +79,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
+        dbg('getTodayJobs', { tookMs: Date.now() - t0, count: jobs.length, inspectorId: finalInspectorId })
         const jobsFormatted = jobs.map((job: any, index: number) => {
           const raw = job.scheduled_date
           const date = raw instanceof Date ? raw : (raw ? new Date(raw) : null)
@@ -93,7 +98,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: true, jobs: jobsFormatted, count: jobs.length })
       }
       case 'confirmJobSelection': {
+        const t0 = Date.now()
         const workOrder = await getWorkOrderById(args.jobId) as any
+        dbg('confirmJobSelection', { tookMs: Date.now() - t0, jobId: args.jobId, found: !!workOrder })
         if (!workOrder) return JSON.stringify({ success: false, error: 'Job not found' })
         if (sessionId) {
           const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/)
@@ -128,6 +135,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const t0 = Date.now()
         await updateWorkOrderStatus(args.jobId, 'in_progress')
         if (perf) console.log('[perf] tool:startJob updateWorkOrderStatus:', Date.now() - t0, 'ms')
+        dbg('startJob:status-updated', { jobId: args.jobId })
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' })
           try {
@@ -145,7 +153,11 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           getLocationsWithCompletionStatus(args.jobId) as Promise<any[]>,
           includeProgress ? (getWorkOrderProgress(args.jobId) as Promise<any>) : Promise.resolve(null)
         ])
+        dbg('startJob:locations-loaded', { locations: locations.length, includeProgress })
         if (perf) console.log('[perf] tool:startJob locations:', Date.now() - t1, 'ms', 'includeProgress=', includeProgress)
+        if (sessionId) {
+          try { await updateSessionState(sessionId, { lastMenu: 'locations', lastMenuAt: new Date().toISOString() }) } catch {}
+        }
         const locationsFormatted = locations.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, locations: locations.map(loc => loc.displayName), locationsFormatted, locationsDetail: locations, progress })
       }
@@ -166,7 +178,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             }
           }
           await updateSessionState(sessionId, {
-            locationSubLocations: Object.keys(subLocationMap).length > 0 ? subLocationMap : undefined
+            locationSubLocations: Object.keys(subLocationMap).length > 0 ? subLocationMap : undefined,
+            lastMenu: 'locations',
+            lastMenuAt: new Date().toISOString()
           })
         }
         return JSON.stringify({
@@ -209,7 +223,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskCondition: undefined,
             currentTaskLocationId: undefined,
             currentTaskLocationName: undefined,
-            taskFlowStage: undefined
+            taskFlowStage: undefined,
+            lastMenu: 'sublocations',
+            lastMenuAt: new Date().toISOString()
           })
         }
         if (subLocations.length === 0) {
@@ -240,7 +256,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskName: undefined,
             currentTaskEntryId: undefined,
             currentTaskCondition: undefined,
-            taskFlowStage: undefined
+            taskFlowStage: undefined,
+            lastMenu: 'tasks',
+            lastMenuAt: new Date().toISOString()
           })
           const latest = await getSessionState(sessionId)
           const lookup = (latest as any).locationSubLocations as Record<string, Array<{ id: string; name: string; status: string }>> | undefined
@@ -535,7 +553,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const condition = session.currentTaskCondition || 'GOOD'
           const entryId = session.currentTaskEntryId
 
-          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true } })
+          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true, name: true } })
           let targetItemId = task?.itemId || taskItemId
 
           if (task) {
@@ -669,11 +687,15 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             })
           }
 
+          // Invalidate memcache so next task listing reflects completion immediately
+          try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+
+          const taskName = task?.name || session.currentTaskName || 'Task'
           if (completed) {
-            return JSON.stringify({ success: true, taskCompleted: true })
+            return JSON.stringify({ success: true, taskCompleted: true, message: `✅ ${taskName} marked complete.` })
           }
 
-          return JSON.stringify({ success: true, taskCompleted: false })
+          return JSON.stringify({ success: true, taskCompleted: false, message: `✅ ${taskName} updated.` })
         }
 
         return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })

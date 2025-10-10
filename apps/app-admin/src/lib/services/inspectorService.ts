@@ -407,16 +407,72 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     let scopedWorkOrders = await getCachedWorkOrdersForInspector(inspectorId)
 
     if (!scopedWorkOrders) {
-      const allWorkOrders = await getCachedWorkOrders()
-      if (allWorkOrders) {
-        scopedWorkOrders = allWorkOrders.filter((wo: any) => Array.isArray(wo.inspectorIds) ? wo.inspectorIds.includes(inspectorId) : wo.inspectorId === inspectorId)
+      // Avoid pulling the huge global cache; query DB directly for this inspector and day window
+      try {
+        const dbScoped = await prisma.workOrder.findMany({
+          where: {
+            inspectors: { some: { id: inspectorId } },
+            OR: [
+              {
+                AND: [
+                  { scheduledStartDateTime: { lte: endOfDay } },
+                  { scheduledEndDateTime: { gte: startOfDay } }
+                ]
+              },
+              {
+                AND: [
+                  { scheduledStartDateTime: { gte: startOfDay, lte: endOfDay } }
+                ]
+              },
+              {
+                AND: [
+                  { scheduledEndDateTime: { gte: startOfDay, lte: endOfDay } }
+                ]
+              }
+            ]
+          },
+          select: {
+            id: true,
+            inspectors: { select: { id: true } },
+            contractId: true,
+            status: true,
+            scheduledStartDateTime: true,
+            scheduledEndDateTime: true,
+            remarks: true,
+            contract: {
+              select: {
+                customer: { select: { id: true, name: true } },
+                address: { select: { id: true, address: true, postalCode: true, propertyType: true } }
+              }
+            }
+          }
+        })
+        scopedWorkOrders = dbScoped.map((wo: any) => ({
+          id: wo.id,
+          inspectorId: Array.isArray(wo.inspectors) && wo.inspectors.length > 0 ? wo.inspectors[0].id : null,
+          inspectorIds: Array.isArray(wo.inspectors) ? wo.inspectors.map((ins: any) => ins.id) : [],
+          contractId: wo.contractId,
+          status: wo.status,
+          scheduledStartDateTime: wo.scheduledStartDateTime,
+          scheduledEndDateTime: wo.scheduledEndDateTime,
+          remarks: wo.remarks,
+          customer: wo.contract?.customer ? { id: wo.contract.customer.id, name: wo.contract.customer.name } : null,
+          address: wo.contract?.address ? {
+            id: wo.contract.address.id,
+            address: wo.contract.address.address,
+            postalCode: wo.contract.address.postalCode,
+            propertyType: wo.contract.address.propertyType
+          } : null
+        }))
         try {
           if (scopedWorkOrders.length > 0) {
             await cacheSetLargeArray(`mc:work-orders:inspector:${inspectorId}`, scopedWorkOrders, undefined, { ttlSeconds: Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600) })
           }
         } catch (error) {
-          console.error('getTodayJobsForInspector: failed to backfill inspector cache', error)
+          console.error('getTodayJobsForInspector: failed to backfill inspector cache (db path)', error)
         }
+      } catch (error) {
+        console.error('getTodayJobsForInspector: DB fallback failed', error)
       }
     }
 

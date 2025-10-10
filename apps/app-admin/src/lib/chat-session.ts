@@ -61,6 +61,10 @@ export type ChatSessionState = {
   // assistant/thread context
   threadId?: string
 
+  // menu/navigation context
+  lastMenu?: 'jobs' | 'confirm' | 'locations' | 'sublocations' | 'tasks'
+  lastMenuAt?: string
+
   // audit
   createdAt?: string
   lastUpdatedAt?: string
