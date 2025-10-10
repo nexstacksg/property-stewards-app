@@ -412,24 +412,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
         const dbScoped = await prisma.workOrder.findMany({
           where: {
             inspectors: { some: { id: inspectorId } },
-            OR: [
-              {
-                AND: [
-                  { scheduledStartDateTime: { lte: endOfDay } },
-                  { scheduledEndDateTime: { gte: startOfDay } }
-                ]
-              },
-              {
-                AND: [
-                  { scheduledStartDateTime: { gte: startOfDay, lte: endOfDay } }
-                ]
-              },
-              {
-                AND: [
-                  { scheduledEndDateTime: { gte: startOfDay, lte: endOfDay } }
-                ]
-              }
-            ]
+            scheduledStartDateTime: { gte: startOfDay, lte: endOfDay }
           },
           select: {
             id: true,
@@ -485,41 +468,28 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     const todays = scopedWorkOrders
       .filter((wo: any) => {
         if (wo.inspectorId !== inspectorId) return false
-
         const startRaw = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
-        const endRaw = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
-
-        if (!startRaw && !endRaw) return false
-
-        const start = startRaw || endRaw
-        const end = endRaw || startRaw
-
-        if (!start || !end) return false
-
-        // Normalize ordering
-        const startTime = Math.min(start.getTime(), end.getTime())
-        const endTime = Math.max(start.getTime(), end.getTime())
-
-        return startTime <= endOfDay.getTime() && endTime >= startOfDay.getTime()
+        if (!startRaw) return false
+        const t = startRaw.getTime()
+        return t >= startOfDay.getTime() && t <= endOfDay.getTime()
       })
       .sort((a: any, b: any) => {
-        const aStart = a.scheduledStartDateTime ? new Date(a.scheduledStartDateTime) : (a.scheduledEndDateTime ? new Date(a.scheduledEndDateTime) : new Date(0))
-        const bStart = b.scheduledStartDateTime ? new Date(b.scheduledStartDateTime) : (b.scheduledEndDateTime ? new Date(b.scheduledEndDateTime) : new Date(0))
+        const aStart = a.scheduledStartDateTime ? new Date(a.scheduledStartDateTime) : new Date(0)
+        const bStart = b.scheduledStartDateTime ? new Date(b.scheduledStartDateTime) : new Date(0)
         return aStart.getTime() - bStart.getTime()
       })
     debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 
     const mapped = todays.map((wo: any) => {
       const scheduledStart = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
-      const scheduledEnd = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
-      const primaryDate = scheduledStart || scheduledEnd || new Date()
+      const primaryDate = scheduledStart || new Date()
       return {
         id: wo.id,
         property_address: wo.address ? `${wo.address.address}, ${wo.address.postalCode}` : 'Unknown address',
         customer_name: wo.customer?.name || 'Unknown',
         scheduled_date: primaryDate,
         scheduled_start: scheduledStart || null,
-        scheduled_end: scheduledEnd || null,
+        scheduled_end: wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null,
         inspection_type: wo.address ? `${wo.address.propertyType} Inspection` : 'Inspection',
         status: wo.status,
         priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',

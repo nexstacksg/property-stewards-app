@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma'
+import { Status } from '@prisma/client'
 import { cacheDel } from '@/lib/memcache'
 import type { ChatSessionState } from '@/lib/chat-session'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
@@ -735,19 +736,60 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       }
       case 'collectInspectorInfo': {
         const { name, phone } = args
-        let normalizedPhone = phone.replace(/[\s-]/g, '')
+        const providedName = String(name || '').trim()
+        const providedPhoneRaw = String(phone || '').trim()
+        if (!providedName || !providedPhoneRaw) {
+          return JSON.stringify({ success: false, error: 'Please provide both your full name and your phone number (with country code).' })
+        }
+        let normalizedPhone = providedPhoneRaw.replace(/[\s-]/g, '')
         if (!normalizedPhone.startsWith('+')) normalizedPhone = '+65' + normalizedPhone
-        let inspector = await getInspectorByPhone(normalizedPhone) as any
-        if (!inspector) inspector = await getInspectorByPhone(phone) as any
+        const phoneVariants = [normalizedPhone]
+        // Add variant without plus for robustness
+        const noPlus = normalizedPhone.startsWith('+') ? normalizedPhone.slice(1) : normalizedPhone
+        phoneVariants.push(noPlus)
+
+        // Try to resolve a single inspector matching BOTH name (case-insensitive) and phone variants
+        let inspector: any = null
+        try {
+          inspector = await prisma.inspector.findFirst({
+            where: {
+              status: Status.ACTIVE,
+              name: { equals: providedName, mode: 'insensitive' },
+              OR: phoneVariants.map(p => ({ mobilePhone: p }))
+            },
+            select: { id: true, name: true, mobilePhone: true }
+          })
+        } catch {}
+
+        // If still not found, try by phone first then verify name
         if (!inspector) {
-          const inspectors = await prisma.inspector.findMany({ where: { name: { contains: name, mode: 'insensitive' } } })
-          inspector = inspectors[0] || null
+          const byPhone = await getInspectorByPhone(normalizedPhone) as any
+          if (byPhone && typeof byPhone.name === 'string' && byPhone.name.localeCompare(providedName, undefined, { sensitivity: 'accent', usage: 'search' }) === 0) {
+            inspector = byPhone
+          }
         }
-        if (!inspector) return JSON.stringify({ success: false, error: 'Inspector not found in our system. Please contact admin for registration.' })
+
+        // If still not found, try by name first then verify phone
+        if (!inspector) {
+          try {
+            const byName = await prisma.inspector.findMany({
+              where: { status: Status.ACTIVE, name: { equals: providedName, mode: 'insensitive' } },
+              select: { id: true, name: true, mobilePhone: true }
+            })
+            const match = (byName || []).find((i: any) => phoneVariants.includes(i.mobilePhone))
+            if (match) inspector = match
+          } catch {}
+        }
+
+        if (!inspector) {
+          return JSON.stringify({ success: false, error: "We couldn't find an inspector matching both the provided name and phone number. Please check both and try again, or contact admin for registration." })
+        }
+
+        const finalPhone = inspector.mobilePhone || normalizedPhone
         if (sessionId) {
-          await updateSessionState(sessionId, { phoneNumber: normalizedPhone, inspectorId: inspector.id, inspectorName: inspector.name, inspectorPhone: inspector.mobilePhone || normalizedPhone, identifiedAt: new Date().toISOString() })
+          await updateSessionState(sessionId, { phoneNumber: finalPhone, inspectorId: inspector.id, inspectorName: inspector.name, inspectorPhone: finalPhone, identifiedAt: new Date().toISOString() })
         }
-        return JSON.stringify({ success: true, inspector: { id: inspector.id, name: inspector.name, phone: inspector.mobilePhone } })
+        return JSON.stringify({ success: true, inspector: { id: inspector.id, name: inspector.name, phone: finalPhone } })
       }
       case 'getTaskMedia': {
         try {
