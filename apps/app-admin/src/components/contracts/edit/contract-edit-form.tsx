@@ -10,6 +10,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { DatePicker } from "@/components/ui/date-picker"
+import { Badge } from "@/components/ui/badge"
+import { Check } from "lucide-react"
 import type {
   ContractAddressSummary,
   ContractCustomerSummary,
@@ -93,6 +95,20 @@ export function ContractEditForm({
   selectedReferenceIds,
   onReferenceIdsChange,
 }: ContractEditFormProps) {
+  const toggleReference = (id: string) => {
+    const exists = selectedReferenceIds.includes(id)
+    const next = exists
+      ? selectedReferenceIds.filter((x) => x !== id)
+      : [...selectedReferenceIds, id]
+    onReferenceIdsChange(next)
+  }
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return ""
+    const d = new Date(value)
+    if (Number.isNaN(d.getTime())) return ""
+    return d.toLocaleDateString("en-SG", { dateStyle: "medium" })
+  }
   const formatPropertyDetails = () => {
     if (!address) return ""
     const parts = [
@@ -295,26 +311,50 @@ export function ContractEditForm({
           {availableReferences.length === 0 ? (
             <p className="text-sm text-muted-foreground">No other contracts for this customer.</p>
           ) : (
-            <>
-              <select
-                multiple
-                value={selectedReferenceIds}
-                onChange={(event) => {
-                  const options = Array.from(event.target.selectedOptions)
-                  onReferenceIdsChange(options.map((option) => option.value))
-                }}
-                className="w-full min-h-[120px] border rounded-md px-3 py-2"
-              >
-                {availableReferences.map((contract) => (
-                  <option key={contract.id} value={contract.id}>
-                    {contract.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground">
-                Hold Ctrl/Cmd to select multiple contracts.
-              </p>
-            </>
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Click to select or unselect. Multiple selections allowed.</p>
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {availableReferences.map((ref) => {
+                  const selected = selectedReferenceIds.includes(ref.id)
+                  const start = formatDate(ref.scheduledStartDate)
+                  const end = formatDate(ref.scheduledEndDate)
+                  const schedule = start && end ? `${start} - ${end}` : start || end || undefined
+                  return (
+                    <button
+                      key={ref.id}
+                      type="button"
+                      onClick={() => toggleReference(ref.id)}
+                      aria-pressed={selected}
+                      className={`w-full text-left rounded-md border p-3 transition-colors ${selected ? 'bg-accent/60 border-primary' : 'hover:bg-muted/40'}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="font-medium">#{ref.id} {ref.address ? `• ${ref.address}` : ''}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {ref.postalCode ? `${ref.postalCode}` : ''}
+                            {schedule ? `${ref.postalCode ? ' • ' : ''}${schedule}` : ''}
+                            {typeof ref.workOrderCount === 'number' ? ` • ${ref.workOrderCount} work order(s)` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {ref.status && (
+                            <Badge variant="outline">{ref.status}</Badge>
+                          )}
+                          {typeof ref.value === 'number' && !Number.isNaN(ref.value) && ref.value > 0 && (
+                            <span className="text-xs text-muted-foreground">SGD {ref.value.toFixed(2)}</span>
+                          )}
+                          {selected && (
+                            <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-primary text-primary-foreground">
+                              <Check className="h-3 w-3" />
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           )}
         </div>
       )}

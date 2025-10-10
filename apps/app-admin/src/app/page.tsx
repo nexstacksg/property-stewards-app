@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Users, UserCheck, FileText, Calendar, DollarSign, Clock, CheckCircle } from "lucide-react"
 import prisma from "@/lib/prisma"
+import { DashboardFollowUps } from "@/components/dashboard-followups"
 
 // Force dynamic rendering - no caching
 export const dynamic = 'force-dynamic'
@@ -254,71 +255,15 @@ export default async function DashboardPage() {
       {/* Open Follow-up Tasks */}
       <Card>
         <CardHeader>
-          <CardTitle>Open Follow-up Tasks</CardTitle>
+          <CardTitle>Follow-up Remarks</CardTitle>
           <CardDescription>
             {stats.openFollowUpCount === 0
               ? 'All follow-up tasks are completed'
-              : `${stats.openFollowUpCount} open follow-up${stats.openFollowUpCount > 1 ? 's' : ''}`}
+              : `${stats.openFollowUpCount} open follow-up${stats.openFollowUpCount > 1 ? 's' : ''} (live controls below)`}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {stats.openFollowUps.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No open follow-up remarks. Great job staying on top of things!</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Contract</TableHead>
-                  <TableHead>Remark</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Logged</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {stats.openFollowUps.map((remark) => (
-                  <TableRow key={remark.id}>
-                    <TableCell className="text-sm">
-                      {remark.contract.customer ? (
-                        <Link
-                          href={`/customers/${remark.contract.customer.id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {remark.contract.customer.name}
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <Link
-                        href={`/contracts/${remark.contract.id}`}
-                        className="font-mono text-xs text-primary hover:underline"
-                      >
-                        #{remark.contract.id}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="max-w-md text-sm">
-                      <span className="block truncate" title={remark.body}>
-                        {remark.body}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <Badge variant={remark.type === 'FOLLOW_UP' ? 'secondary' : 'outline'}>
-                        {remark.type === 'FOLLOW_UP' ? 'Follow Up' : 'FYI'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(remark.createdOn).toLocaleString('en-SG', {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      })}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <DashboardFollowUps defaultPage={1} pageSize={10} />
         </CardContent>
       </Card>
 

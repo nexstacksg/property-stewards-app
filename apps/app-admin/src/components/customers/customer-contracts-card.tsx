@@ -10,10 +10,11 @@ import { CustomerContractSummary } from "@/types/customer"
 import { formatCurrency, formatSingaporeDate, getContractStatusVariant } from "@/lib/formatters"
 
 interface CustomerContractsCardProps {
+  customerId: string
   contracts: CustomerContractSummary[]
 }
 
-export function CustomerContractsCard({ contracts }: CustomerContractsCardProps) {
+export function CustomerContractsCard({ customerId, contracts }: CustomerContractsCardProps) {
   return (
     <Card>
       <CardHeader>
@@ -22,7 +23,7 @@ export function CustomerContractsCard({ contracts }: CustomerContractsCardProps)
             <CardTitle>Contracts</CardTitle>
             <CardDescription>{contracts.length} contract(s)</CardDescription>
           </div>
-          <Link href="/contracts/new">
+          <Link href={`/contracts/new?customerId=${encodeURIComponent(customerId)}`}>
             <Button size="sm">
               <Plus className="h-4 w-4 mr-2" />
               New Contract

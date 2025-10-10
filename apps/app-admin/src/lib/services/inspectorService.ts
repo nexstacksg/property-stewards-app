@@ -407,16 +407,55 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     let scopedWorkOrders = await getCachedWorkOrdersForInspector(inspectorId)
 
     if (!scopedWorkOrders) {
-      const allWorkOrders = await getCachedWorkOrders()
-      if (allWorkOrders) {
-        scopedWorkOrders = allWorkOrders.filter((wo: any) => Array.isArray(wo.inspectorIds) ? wo.inspectorIds.includes(inspectorId) : wo.inspectorId === inspectorId)
+      // Avoid pulling the huge global cache; query DB directly for this inspector and day window
+      try {
+        const dbScoped = await prisma.workOrder.findMany({
+          where: {
+            inspectors: { some: { id: inspectorId } },
+            scheduledStartDateTime: { gte: startOfDay, lte: endOfDay }
+          },
+          select: {
+            id: true,
+            inspectors: { select: { id: true } },
+            contractId: true,
+            status: true,
+            scheduledStartDateTime: true,
+            scheduledEndDateTime: true,
+            remarks: true,
+            contract: {
+              select: {
+                customer: { select: { id: true, name: true } },
+                address: { select: { id: true, address: true, postalCode: true, propertyType: true } }
+              }
+            }
+          }
+        })
+        scopedWorkOrders = dbScoped.map((wo: any) => ({
+          id: wo.id,
+          inspectorId: Array.isArray(wo.inspectors) && wo.inspectors.length > 0 ? wo.inspectors[0].id : null,
+          inspectorIds: Array.isArray(wo.inspectors) ? wo.inspectors.map((ins: any) => ins.id) : [],
+          contractId: wo.contractId,
+          status: wo.status,
+          scheduledStartDateTime: wo.scheduledStartDateTime,
+          scheduledEndDateTime: wo.scheduledEndDateTime,
+          remarks: wo.remarks,
+          customer: wo.contract?.customer ? { id: wo.contract.customer.id, name: wo.contract.customer.name } : null,
+          address: wo.contract?.address ? {
+            id: wo.contract.address.id,
+            address: wo.contract.address.address,
+            postalCode: wo.contract.address.postalCode,
+            propertyType: wo.contract.address.propertyType
+          } : null
+        }))
         try {
           if (scopedWorkOrders.length > 0) {
             await cacheSetLargeArray(`mc:work-orders:inspector:${inspectorId}`, scopedWorkOrders, undefined, { ttlSeconds: Number(process.env.MEMCACHE_DEFAULT_TTL ?? 21600) })
           }
         } catch (error) {
-          console.error('getTodayJobsForInspector: failed to backfill inspector cache', error)
+          console.error('getTodayJobsForInspector: failed to backfill inspector cache (db path)', error)
         }
+      } catch (error) {
+        console.error('getTodayJobsForInspector: DB fallback failed', error)
       }
     }
 
@@ -429,41 +468,28 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     const todays = scopedWorkOrders
       .filter((wo: any) => {
         if (wo.inspectorId !== inspectorId) return false
-
         const startRaw = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
-        const endRaw = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
-
-        if (!startRaw && !endRaw) return false
-
-        const start = startRaw || endRaw
-        const end = endRaw || startRaw
-
-        if (!start || !end) return false
-
-        // Normalize ordering
-        const startTime = Math.min(start.getTime(), end.getTime())
-        const endTime = Math.max(start.getTime(), end.getTime())
-
-        return startTime <= endOfDay.getTime() && endTime >= startOfDay.getTime()
+        if (!startRaw) return false
+        const t = startRaw.getTime()
+        return t >= startOfDay.getTime() && t <= endOfDay.getTime()
       })
       .sort((a: any, b: any) => {
-        const aStart = a.scheduledStartDateTime ? new Date(a.scheduledStartDateTime) : (a.scheduledEndDateTime ? new Date(a.scheduledEndDateTime) : new Date(0))
-        const bStart = b.scheduledStartDateTime ? new Date(b.scheduledStartDateTime) : (b.scheduledEndDateTime ? new Date(b.scheduledEndDateTime) : new Date(0))
+        const aStart = a.scheduledStartDateTime ? new Date(a.scheduledStartDateTime) : new Date(0)
+        const bStart = b.scheduledStartDateTime ? new Date(b.scheduledStartDateTime) : new Date(0)
         return aStart.getTime() - bStart.getTime()
       })
     debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 
     const mapped = todays.map((wo: any) => {
       const scheduledStart = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
-      const scheduledEnd = wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null
-      const primaryDate = scheduledStart || scheduledEnd || new Date()
+      const primaryDate = scheduledStart || new Date()
       return {
         id: wo.id,
         property_address: wo.address ? `${wo.address.address}, ${wo.address.postalCode}` : 'Unknown address',
         customer_name: wo.customer?.name || 'Unknown',
         scheduled_date: primaryDate,
         scheduled_start: scheduledStart || null,
-        scheduled_end: scheduledEnd || null,
+        scheduled_end: wo.scheduledEndDateTime ? new Date(wo.scheduledEndDateTime) : null,
         inspection_type: wo.address ? `${wo.address.propertyType} Inspection` : 'Inspection',
         status: wo.status,
         priority: wo.status === WorkOrderStatus.STARTED ? 'high' : 'normal',

@@ -8,7 +8,8 @@ import {
   formatEnum,
   formatScheduleRange,
   LOGO_ASPECT_RATIO,
-  formatDateTime
+  formatDateTime,
+  drawFooter
 } from "@/lib/reports/work-order-pdf"
 
 const WATERMARK_OPACITY = 0.15
@@ -24,22 +25,54 @@ function applyWatermark(doc: any, logoBuffer?: Buffer) {
   if (!logoBuffer) return
 
   const draw = () => {
-    const maxWidth = doc.page.width * 0.95
-    const maxHeight = doc.page.height * 0.95
-    let watermarkWidth = maxWidth
-    let watermarkHeight = watermarkWidth * LOGO_ASPECT_RATIO
+    const pageW = doc.page.width
+    const pageH = doc.page.height
 
-    if (watermarkHeight > maxHeight) {
-      watermarkHeight = maxHeight
-      watermarkWidth = watermarkHeight / LOGO_ASPECT_RATIO
+    // Target smaller logos; aim for 2–3 per page stacked vertically
+    const angleDeg = -45
+    const theta = (angleDeg * Math.PI) / 180
+
+    // Pick a base unrotated width as a fraction of page width (slightly larger)
+    let baseWidth = pageW * 0.42
+    baseWidth = Math.max(120, Math.min(baseWidth, pageW * 0.6))
+    let wmWidth = baseWidth
+    let wmHeight = wmWidth * LOGO_ASPECT_RATIO
+
+    // Compute rotated bounding box
+    const rotBounds = (w: number, h: number) => {
+      const rotW = Math.abs(w * Math.cos(theta)) + Math.abs(h * Math.sin(theta))
+      const rotH = Math.abs(w * Math.sin(theta)) + Math.abs(h * Math.cos(theta))
+      return { rotW, rotH }
     }
 
-    const x = (doc.page.width - watermarkWidth) / 2
-    const y = (doc.page.height - watermarkHeight) / 2
+    const { rotW, rotH } = rotBounds(wmWidth, wmHeight)
+    const maxW = pageW * 0.9
+    const maxH = pageH * 0.9
+    const scale = Math.min(maxW / rotW, maxH / rotH, 1)
+    wmWidth *= scale
+    wmHeight *= scale
+    const { rotH: slotH } = rotBounds(wmWidth, wmHeight)
+
+    // Decide how many logos fit vertically (2 or 3)
+    const gapY = slotH * 0.25
+    const usableH = pageH * 0.9
+    let count = Math.floor((usableH + gapY) / (slotH + gapY))
+    count = Math.max(2, Math.min(3, count))
+
+    const totalH = count * slotH + (count - 1) * gapY
+    const startY = (pageH - totalH) / 2 + slotH / 2
+    const cx = pageW / 2
 
     doc.save()
     doc.opacity(WATERMARK_OPACITY)
-    doc.image(logoBuffer, x, y, { width: watermarkWidth })
+    for (let i = 0; i < count; i += 1) {
+      const cy = startY + i * (slotH + gapY)
+      doc.save()
+      doc.translate(cx, cy)
+      doc.rotate(angleDeg)
+      doc.image(logoBuffer, -wmWidth / 2, -wmHeight / 2, { width: wmWidth })
+      doc.restore()
+    }
     doc.opacity(1)
     doc.restore()
   }
@@ -48,11 +81,76 @@ function applyWatermark(doc: any, logoBuffer?: Buffer) {
   draw()
 }
 
+function applyFooter(doc: any) {
+  // Use the centralized footer renderer so we keep layout consistent
+  let drawing = false
+  const draw = () => {
+    if (drawing) return
+    drawing = true
+    try {
+      drawFooter(doc)
+    } catch {
+      // no-op; footer drawing should never block report generation
+    } finally {
+      drawing = false
+    }
+  }
+
+  // Draw on current and all subsequently added pages
+  doc.on("pageAdded", draw)
+  draw()
+}
+
+function appendSignOffSection(doc: any, contract: any) {
+  const heading = "Sign-Off"
+  const customerName = contract?.customer?.name || "Customer"
+  const companyName = "Property Stewards PTE. LTD"
+
+  const availableSpace = doc.page.height - TABLE_MARGIN - doc.y
+  const boxHeight = 110
+  if (availableSpace < boxHeight + 40) {
+    doc.addPage()
+  }
+
+  doc.moveDown(3)
+  doc.font("Helvetica-Bold").fontSize(12).text(heading)
+  doc.moveDown(0.5)
+
+  const gap = 16
+  const boxWidth = (doc.page.width - TABLE_MARGIN * 2 - gap) / 2
+  const topY = doc.y
+  const leftX = TABLE_MARGIN
+  const rightX = TABLE_MARGIN + boxWidth + gap
+
+  const drawBox = (x: number, label: string) => {
+    const lineY1 = topY + 42
+    const lineY2 = topY + 78
+    doc.save()
+    doc.roundedRect(x, topY, boxWidth, boxHeight, 6).stroke()
+    doc.font("Helvetica-Bold").fontSize(10).text(label, x + 10, topY + 10, { width: boxWidth - 20 })
+    doc.font("Helvetica").fontSize(10)
+    doc.text("Signature:", x + 10, topY + 28)
+    doc.moveTo(x + 80, lineY1).lineTo(x + boxWidth - 10, lineY1).stroke()
+    doc.text("Date:", x + 10, topY + 64)
+    doc.moveTo(x + 80, lineY2).lineTo(x + boxWidth - 10, lineY2).stroke()
+    doc.restore()
+  }
+
+  drawBox(leftX, `Customer: ${customerName}`)
+  drawBox(rightX, companyName)
+
+  doc.y = topY + boxHeight
+  doc.moveDown(0.5)
+}
+
 async function writeContractReport(doc: any, contract: any, options: ReportBuildOptions) {
   const workOrders = contract.workOrders || []
 
   const logoBuffer = getLogoBuffer()
+
   applyWatermark(doc, logoBuffer ?? undefined)
+  // Ensure footer appears on every page
+  applyFooter(doc)
   if (logoBuffer) {
     const logoWidth = 220
     const logoHeight = logoWidth * LOGO_ASPECT_RATIO
@@ -172,6 +270,12 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     filterByWorkOrderId: null,
     allowedConditions: options.allowedConditions ?? undefined,
   })
+
+
+  // Final page sign-off
+  appendSignOffSection(doc, contract)
+  // drawFooter(doc)
+
 }
 
 export async function createContractReportBuffer(contract: any, options: ReportBuildOptions) {

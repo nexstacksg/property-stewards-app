@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { detectHasMedia, sendWhatsAppResponse } from './utils'
 import { handleMediaMessage, finalizePendingMediaWithRemark } from './media'
 // Note: assistant module is loaded lazily to reduce cold-start
-import { tryHandleWithoutAI } from './fast-path'
 import { getSessionState } from '@/lib/chat-session'
 import { getMemcacheClient } from '@/lib/memcache'
 
@@ -35,6 +34,10 @@ export async function GET(request: NextRequest) {
 // POST - Handle incoming messages
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
+  const dbg = (...args: any[]) => {
+    const on = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+    if (on === 'true' || on === 'verbose') console.log('[wh-route]', ...args)
+  }
 
   try {
     // Verify webhook secret
@@ -48,7 +51,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const event = body.event
     const { data } = body
-    if (process.env.NODE_ENV !== 'production') console.log(`📨 Received webhook event: ${event}`)
+    dbg('incoming webhook', { event })
 
     // Allow media-only events even if event type differs
     const preHasMedia = detectHasMedia(data)
@@ -87,7 +90,7 @@ export async function POST(request: NextRequest) {
         const key = `wh:msg:${messageId}`
         const added = await mc.add(key, Buffer.from('1'), { expires: 300 })
         if (!added) {
-          if (process.env.NODE_ENV !== 'production') console.log(`⏭️ Skipping duplicate webhook for message ${messageId} (memcache lock present)`) 
+          dbg('duplicate webhook (memcache lock present)', { messageId })
           return NextResponse.json({ success: true })
         }
       } catch (e) {
@@ -102,7 +105,7 @@ export async function POST(request: NextRequest) {
 
     // Media handling
     if (hasMedia) {
-      if (process.env.NODE_ENV !== 'production') console.log('🔄 Processing media message...')
+      dbg('path=media start', { messageId, phoneNumber })
       const mediaResponse = await handleMediaMessage(data, phoneNumber)
       if (mediaResponse) {
         await sendWhatsAppResponse(phoneNumber, mediaResponse)
@@ -110,6 +113,7 @@ export async function POST(request: NextRequest) {
           const { postAssistantMessageIfThread } = await import('./assistant')
           await postAssistantMessageIfThread(phoneNumber, mediaResponse)
         }
+        dbg('path=media end', { tookMs: Date.now() - startTime })
         const msgData = processedMessages.get(messageId)
         if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
         if (process.env.NODE_ENV !== 'production') console.log(`✅ Media response sent to ${phoneNumber} in ${Date.now() - startTime}ms`)
@@ -126,6 +130,7 @@ export async function POST(request: NextRequest) {
     const sessionMetadata = await getSessionState(phoneNumber)
     if (sessionMetadata.pendingMediaUploads?.length) {
       try {
+        dbg('pending-media: attempting finalize with incoming text', { count: sessionMetadata.pendingMediaUploads.length })
         const finalizeResult = await finalizePendingMediaWithRemark(phoneNumber, message, sessionMetadata)
         if (finalizeResult) {
           await sendWhatsAppResponse(phoneNumber, finalizeResult.message)
@@ -133,6 +138,7 @@ export async function POST(request: NextRequest) {
             const { postAssistantMessageIfThread } = await import('./assistant')
             await postAssistantMessageIfThread(phoneNumber, finalizeResult.message)
           }
+          dbg('pending-media: finalized', { tookMs: Date.now() - startTime })
           const msgData = processedMessages.get(messageId)
           if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
           if (process.env.NODE_ENV !== 'production') console.log(`✅ Pending media finalized for ${phoneNumber} in ${Date.now() - startTime}ms`)
@@ -143,20 +149,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fast-path: handle common structured inputs without invoking the AI
-    const fastHandled = await tryHandleWithoutAI(phoneNumber, message, sessionMetadata)
-    if (fastHandled) {
-      await sendWhatsAppResponse(phoneNumber, fastHandled)
-      const msgData = processedMessages.get(messageId)
-      if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
-      return NextResponse.json({ success: true })
-    }
+    // Fast-path disabled: always use OpenAI Assistant for text handling
 
     if (process.env.NODE_ENV !== 'production') console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`)
     try {
+      dbg('openai: invoking', { messageId, phoneNumber })
       const { processWithAssistant } = await import('./assistant')
       const assistantResponse = await processWithAssistant(phoneNumber, message || 'User uploaded media')
       if (assistantResponse && assistantResponse.trim()) {
+        dbg('openai: response', { tookMs: Date.now() - startTime, preview: assistantResponse.slice(0, 80) })
         await sendWhatsAppResponse(phoneNumber, assistantResponse)
         const msgData = processedMessages.get(messageId)
         if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
@@ -176,4 +177,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// fast-path helpers moved to ./fast-path.ts
+// fast-path helpers exist in ./fast-path.ts but are intentionally not used here

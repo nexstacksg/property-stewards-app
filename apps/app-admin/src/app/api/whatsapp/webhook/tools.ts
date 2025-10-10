@@ -1,4 +1,6 @@
 import prisma from '@/lib/prisma'
+import { Status } from '@prisma/client'
+import { cacheDel } from '@/lib/memcache'
 import type { ChatSessionState } from '@/lib/chat-session'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import {
@@ -52,29 +54,74 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'updateJobDetails', description: 'Update job details', parameters: { type: 'object', properties: { jobId: { type: 'string' }, updateType: { type: 'string', enum: ['customer', 'address', 'time', 'status'] }, newValue: { type: 'string' } }, required: ['jobId', 'updateType', 'newValue'] } } },
   { type: 'function' as const, function: { name: 'collectInspectorInfo', description: 'Collect and validate inspector name and phone number for identification', parameters: { type: 'object', properties: { name: { type: 'string' }, phone: { type: 'string' } }, required: ['name', 'phone'] } } },
   { type: 'function' as const, function: { name: 'getTaskMedia', description: 'Get photos and videos for a specific task', parameters: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } } },
-  { type: 'function' as const, function: { name: 'getLocationMedia', description: 'Get photos and videos for a specific location by selection number or name', parameters: { type: 'object', properties: { locationNumber: { type: 'number' }, locationName: { type: 'string' }, workOrderId: { type: 'string' } }, required: ['workOrderId'] } } }
+  { type: 'function' as const, function: { name: 'getLocationMedia', description: 'Get photos and videos for a specific location by selection number or name', parameters: { type: 'object', properties: { locationNumber: { type: 'number' }, locationName: { type: 'string' }, workOrderId: { type: 'string' } }, required: ['workOrderId'] } } },
+  { type: 'function' as const, function: { name: 'markLocationComplete', description: 'Mark a location (ContractChecklistItem) complete when all tasks are done', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId'] } } }
 ]
 
 export async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string): Promise<string> {
   try {
+    const dbgOn = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+    const dbg = (...a: any[]) => { if (dbgOn === 'true' || dbgOn === 'verbose') console.log('[wh-tool]', ...a) }
     let metadata: ChatSessionState = {}
     if (sessionId) metadata = await getSessionState(sessionId)
 
     switch (toolName) {
       case 'getTodayJobs': {
+        const t0 = Date.now()
         const { inspectorId, inspectorPhone } = args
-        let finalInspectorId = inspectorId || metadata.inspectorId
-        if (!finalInspectorId && inspectorPhone) {
-          let match = await getInspectorByPhone(inspectorPhone) as any
-          if (!match && inspectorPhone.startsWith('+')) match = await getInspectorByPhone(inspectorPhone.slice(1)) as any
-          if (!match && !inspectorPhone.startsWith('+')) match = await getInspectorByPhone('+' + inspectorPhone) as any
-          if (match) finalInspectorId = match.id
+        let finalInspectorId = metadata.inspectorId
+
+        // Normalize inputs
+        const candidate = typeof inspectorId === 'string' ? inspectorId.trim() : ''
+        const looksLikeId = /^[a-z0-9]{20,}$/i.test(candidate)
+        const hasSpaces = /\s/.test(candidate)
+        const candidateName = !looksLikeId || hasSpaces ? candidate : ''
+        let phone = typeof inspectorPhone === 'string' ? inspectorPhone.replace(/[\s-]/g, '') : ''
+        if (phone && !phone.startsWith('+')) phone = '+65' + phone
+
+        // Combined name+phone resolution if both provided
+        if (!finalInspectorId && candidateName && phone) {
+          try {
+            const variants = [phone, phone.startsWith('+') ? phone.slice(1) : ('+' + phone)]
+            const found = await prisma.inspector.findFirst({ where: { status: Status.ACTIVE, name: { equals: candidateName, mode: 'insensitive' }, OR: variants.map(v => ({ mobilePhone: v })) }, select: { id: true, name: true, mobilePhone: true } })
+            if (found?.id) {
+              finalInspectorId = found.id
+              if (sessionId) await updateSessionState(sessionId, { inspectorId: found.id, inspectorName: found.name, inspectorPhone: found.mobilePhone || phone })
+            }
+          } catch {}
         }
+
+        // If explicit id looks valid, accept
+        if (!finalInspectorId && looksLikeId && !hasSpaces) finalInspectorId = candidate
+
+        // Resolve by phone if needed
+        if (!finalInspectorId && phone) {
+          let match = await getInspectorByPhone(phone) as any
+          if (!match && phone.startsWith('+')) match = await getInspectorByPhone(phone.slice(1)) as any
+          if (!match && !phone.startsWith('+')) match = await getInspectorByPhone('+' + phone) as any
+          if (match) {
+            finalInspectorId = match.id
+            if (sessionId) await updateSessionState(sessionId, { inspectorId: match.id, inspectorName: match.name, inspectorPhone: match.mobilePhone || phone })
+          }
+        }
+
+        // Resolve by name if needed
+        if (!finalInspectorId && candidateName) {
+          try {
+            const byName = await prisma.inspector.findFirst({ where: { status: Status.ACTIVE, name: { equals: candidateName, mode: 'insensitive' } }, select: { id: true, name: true, mobilePhone: true } })
+            if (byName?.id) {
+              finalInspectorId = byName.id
+              if (sessionId) await updateSessionState(sessionId, { inspectorId: byName.id, inspectorName: byName.name, inspectorPhone: byName.mobilePhone })
+            }
+          } catch {}
+        }
+
         if (!finalInspectorId) {
           if (sessionId) await updateSessionState(sessionId, { inspectorId: undefined })
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
+        dbg('getTodayJobs', { tookMs: Date.now() - t0, count: jobs.length, inspectorId: finalInspectorId })
         const jobsFormatted = jobs.map((job: any, index: number) => {
           const raw = job.scheduled_date
           const date = raw instanceof Date ? raw : (raw ? new Date(raw) : null)
@@ -93,7 +140,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: true, jobs: jobsFormatted, count: jobs.length })
       }
       case 'confirmJobSelection': {
+        const t0 = Date.now()
         const workOrder = await getWorkOrderById(args.jobId) as any
+        dbg('confirmJobSelection', { tookMs: Date.now() - t0, jobId: args.jobId, found: !!workOrder })
         if (!workOrder) return JSON.stringify({ success: false, error: 'Job not found' })
         if (sessionId) {
           const postalCodeMatch = workOrder.property_address.match(/\b(\d{6})\b/)
@@ -102,7 +151,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             customerName: workOrder.customer_name,
             propertyAddress: workOrder.property_address,
             postalCode: postalCodeMatch ? (postalCodeMatch[1] as string) : 'unknown',
-            jobStatus: 'confirming'
+            jobStatus: 'confirming',
+            lastMenu: 'confirm',
+            lastMenuAt: new Date().toISOString()
           }
           await updateSessionState(sessionId, updatedMetadata)
         }
@@ -128,6 +179,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const t0 = Date.now()
         await updateWorkOrderStatus(args.jobId, 'in_progress')
         if (perf) console.log('[perf] tool:startJob updateWorkOrderStatus:', Date.now() - t0, 'ms')
+        dbg('startJob:status-updated', { jobId: args.jobId })
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' })
           try {
@@ -145,7 +197,11 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           getLocationsWithCompletionStatus(args.jobId) as Promise<any[]>,
           includeProgress ? (getWorkOrderProgress(args.jobId) as Promise<any>) : Promise.resolve(null)
         ])
+        dbg('startJob:locations-loaded', { locations: locations.length, includeProgress })
         if (perf) console.log('[perf] tool:startJob locations:', Date.now() - t1, 'ms', 'includeProgress=', includeProgress)
+        if (sessionId) {
+          try { await updateSessionState(sessionId, { lastMenu: 'locations', lastMenuAt: new Date().toISOString() }) } catch {}
+        }
         const locationsFormatted = locations.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
         return JSON.stringify({ success: true, locations: locations.map(loc => loc.displayName), locationsFormatted, locationsDetail: locations, progress })
       }
@@ -166,7 +222,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             }
           }
           await updateSessionState(sessionId, {
-            locationSubLocations: Object.keys(subLocationMap).length > 0 ? subLocationMap : undefined
+            locationSubLocations: Object.keys(subLocationMap).length > 0 ? subLocationMap : undefined,
+            lastMenu: 'locations',
+            lastMenuAt: new Date().toISOString()
           })
         }
         return JSON.stringify({
@@ -209,7 +267,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskCondition: undefined,
             currentTaskLocationId: undefined,
             currentTaskLocationName: undefined,
-            taskFlowStage: undefined
+            taskFlowStage: undefined,
+            lastMenu: 'sublocations',
+            lastMenuAt: new Date().toISOString()
           })
         }
         if (subLocations.length === 0) {
@@ -240,7 +300,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskName: undefined,
             currentTaskEntryId: undefined,
             currentTaskCondition: undefined,
-            taskFlowStage: undefined
+            taskFlowStage: undefined,
+            lastMenu: 'tasks',
+            lastMenuAt: new Date().toISOString()
           })
           const latest = await getSessionState(sessionId)
           const lookup = (latest as any).locationSubLocations as Record<string, Array<{ id: string; name: string; status: string }>> | undefined
@@ -280,7 +342,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
-        const nextPrompt = `Reply with a number to work on a task (or ${formattedTasks.length + 1} to go back) when you're ready.`
+        const allTasksCompleted = completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0
+        const tasksFormatted = formattedTasks.map((t: any) => `[${t.number}] ${t.description}${t.displayStatus === 'done' ? ' (Done)' : ''}`)
+        const markCompleteNumber = allTasksCompleted ? (formattedTasks.length + 1) : null
+        const goBackNumber = allTasksCompleted ? (formattedTasks.length + 2) : (formattedTasks.length + 1)
+        const nextPrompt = allTasksCompleted
+          ? `All tasks for ${location} are done. Reply with a task number to review, [${markCompleteNumber}] to mark this location complete, or [${goBackNumber}] to go back.`
+          : `Reply with a number to work on a task (or ${goBackNumber} to go back) when you're ready.`
         const firstTask = tasks[0]
         if (sessionId && firstTask?.locationId) {
           await updateSessionState(sessionId, {
@@ -291,13 +359,44 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({
           success: true,
           location,
-          allTasksCompleted: completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0,
+          allTasksCompleted,
           tasks: formattedTasks,
+          tasksFormatted,
+          markCompleteNumber,
+          goBackNumber,
           locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation },
           locationNotes: tasks.length > 0 && firstTask?.notes ? firstTask.notes : null,
           locationStatus: tasks.length > 0 && firstTask?.locationStatus === 'completed' ? 'done' : 'pending',
           nextPrompt
         })
+      }
+      case 'markLocationComplete': {
+        const { workOrderId, contractChecklistItemId } = args
+        if (!workOrderId || !contractChecklistItemId) return JSON.stringify({ success: false, error: 'Missing location context' })
+        // Validate all tasks complete for this item
+        try {
+          const tasks = await getTasksByLocation(workOrderId, '', contractChecklistItemId, undefined) as any[]
+          const total = tasks.length
+          const done = tasks.filter(t => t.status === 'completed').length
+          if (!(total > 0 && total === done)) {
+            return JSON.stringify({ success: false, error: 'Location cannot be marked complete yet — some tasks are still pending.' })
+          }
+        } catch (e) {
+          console.error('markLocationComplete: failed to load tasks', e)
+        }
+        // Update item status
+        try {
+          const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
+          await prisma.contractChecklistItem.update({
+            where: { id: contractChecklistItemId },
+            data: { status: 'COMPLETED', enteredOn: new Date(), enteredById: s.inspectorId || undefined }
+          })
+          try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+          return JSON.stringify({ success: true, message: '✅ Location marked complete.' })
+        } catch (error) {
+          console.error('markLocationComplete: failed to update item', error)
+          return JSON.stringify({ success: false, error: 'Failed to mark location complete.' })
+        }
       }
       case 'completeTask': {
         const phase = (args.phase as string | undefined) || 'start'
@@ -421,6 +520,21 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing cause' })
           const causeRaw = String(args.cause ?? args.remarks ?? args.notes ?? '').trim()
           if (!causeRaw) return JSON.stringify({ success: false, error: 'Please provide a brief cause description.' })
+          try {
+            const latest = await getSessionState(sessionId)
+            const taskId = latest.currentTaskId
+            const taskItemId = latest.currentTaskItemId
+            let entryId = latest.currentTaskEntryId
+            if (taskId && taskItemId) {
+              if (!entryId) {
+                const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, condition: (latest.currentTaskCondition as any) || undefined, cause: causeRaw } })
+                entryId = created.id
+              } else {
+                await prisma.itemEntry.update({ where: { id: entryId }, data: { cause: causeRaw } })
+              }
+              await updateSessionState(sessionId, { currentTaskEntryId: entryId })
+            }
+          } catch (e) { console.error('Failed to persist cause to item entry', e) }
           await updateSessionState(sessionId, { pendingTaskCause: causeRaw, taskFlowStage: 'resolution' })
           return JSON.stringify({ success: true, taskFlowStage: 'resolution', message: 'Thanks. Please provide the resolution.' })
         }
@@ -442,18 +556,36 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
           const combinedRemarks = `Cause: ${latest.pendingTaskCause || '-'}\nResolution: ${resolutionRaw}`
           if (!entryId) {
-            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: inspectorId || undefined, condition: (latest.currentTaskCondition as any) || undefined, remarks: combinedRemarks } })
+            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: inspectorId || undefined, condition: (latest.currentTaskCondition as any) || undefined, remarks: combinedRemarks, cause: latest.pendingTaskCause || undefined, resolution: resolutionRaw } })
             entryId = created.id
           } else {
-            await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: combinedRemarks } })
+            await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: combinedRemarks, cause: latest.pendingTaskCause || undefined, resolution: resolutionRaw } })
           }
           await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
-          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Resolution saved. Please send photos/videos now (captioned if needed), or type \"skip\" to continue.' })
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Resolution saved. You can now send photos/videos with remarks (as caption), or type \"skip\" to continue.' })
         }
 
         if (phase === 'skip_media') {
-          if (sessionId) await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
-          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true })
+          let message: string | undefined
+          if (sessionId) {
+            const latest = await getSessionState(sessionId)
+            const cond = (latest.currentTaskCondition || '').toUpperCase()
+            await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
+            if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
+              let cause = latest.pendingTaskCause || ''
+              let resolution = latest.pendingTaskResolution || ''
+              if (latest.currentTaskEntryId && (!cause || !resolution)) {
+                try {
+                  const entry = await prisma.itemEntry.findUnique({ where: { id: latest.currentTaskEntryId }, select: { cause: true, resolution: true } })
+                  cause = cause || (entry?.cause || '')
+                  resolution = resolution || (entry?.resolution || '')
+                } catch {}
+              }
+              const crLine = `\n📝 Cause: ${cause || '-'} | Resolution: ${resolution || '-'}`
+              message = `Okay, skipping media for now.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
+            }
+          }
+          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true, message: message || 'Okay, skipping media for now.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.' })
         }
 
         if (phase === 'set_remarks') {
@@ -517,7 +649,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const condition = session.currentTaskCondition || 'GOOD'
           const entryId = session.currentTaskEntryId
 
-          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true } })
+          let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true, name: true } })
           let targetItemId = task?.itemId || taskItemId
 
           if (task) {
@@ -568,8 +700,24 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             const requiresPhoto = condition !== 'NOT_APPLICABLE'
             const requiresCauseResolution = condition === 'FAIR' || condition === 'UNSATISFACTORY'
             const photoCount = entryRecord?.photos?.length ?? 0
-            const causeText = entryRecord?.cause?.trim() ?? ''
-            const resolutionText = entryRecord?.resolution?.trim() ?? ''
+            let causeText = entryRecord?.cause?.trim() ?? ''
+            let resolutionText = entryRecord?.resolution?.trim() ?? ''
+            if ((!causeText || !resolutionText) && entryRecord?.remarks) {
+              try {
+                const m = entryRecord.remarks.match(/Cause:\s*(.*)\nResolution:\s*(.*)/i)
+                if (m) {
+                  causeText = causeText || m[1].trim()
+                  resolutionText = resolutionText || m[2].trim()
+                }
+              } catch {}
+            }
+            if ((!causeText || !resolutionText) && sessionId) {
+              try {
+                const latest2 = await getSessionState(sessionId)
+                if (!causeText && latest2.pendingTaskCause) causeText = latest2.pendingTaskCause
+                if (!resolutionText && latest2.pendingTaskResolution) resolutionText = latest2.pendingTaskResolution
+              } catch {}
+            }
 
             if (requiresPhoto && photoCount === 0) {
               return JSON.stringify({ success: false, error: 'Please send at least one photo for this status before marking the task complete.' })
@@ -635,11 +783,15 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             })
           }
 
+          // Invalidate memcache so next task listing reflects completion immediately
+          try { await cacheDel('mc:contract-checklist-items:all') } catch {}
+
+          const taskName = task?.name || session.currentTaskName || 'Task'
           if (completed) {
-            return JSON.stringify({ success: true, taskCompleted: true })
+            return JSON.stringify({ success: true, taskCompleted: true, message: `✅ ${taskName} marked complete.` })
           }
 
-          return JSON.stringify({ success: true, taskCompleted: false })
+          return JSON.stringify({ success: true, taskCompleted: false, message: `✅ ${taskName} updated.` })
         }
 
         return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })
@@ -677,19 +829,60 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       }
       case 'collectInspectorInfo': {
         const { name, phone } = args
-        let normalizedPhone = phone.replace(/[\s-]/g, '')
+        const providedName = String(name || '').trim()
+        const providedPhoneRaw = String(phone || '').trim()
+        if (!providedName || !providedPhoneRaw) {
+          return JSON.stringify({ success: false, error: 'Please provide both your full name and your phone number (with country code).' })
+        }
+        let normalizedPhone = providedPhoneRaw.replace(/[\s-]/g, '')
         if (!normalizedPhone.startsWith('+')) normalizedPhone = '+65' + normalizedPhone
-        let inspector = await getInspectorByPhone(normalizedPhone) as any
-        if (!inspector) inspector = await getInspectorByPhone(phone) as any
+        const phoneVariants = [normalizedPhone]
+        // Add variant without plus for robustness
+        const noPlus = normalizedPhone.startsWith('+') ? normalizedPhone.slice(1) : normalizedPhone
+        phoneVariants.push(noPlus)
+
+        // Try to resolve a single inspector matching BOTH name (case-insensitive) and phone variants
+        let inspector: any = null
+        try {
+          inspector = await prisma.inspector.findFirst({
+            where: {
+              status: Status.ACTIVE,
+              name: { equals: providedName, mode: 'insensitive' },
+              OR: phoneVariants.map(p => ({ mobilePhone: p }))
+            },
+            select: { id: true, name: true, mobilePhone: true }
+          })
+        } catch {}
+
+        // If still not found, try by phone first then verify name
         if (!inspector) {
-          const inspectors = await prisma.inspector.findMany({ where: { name: { contains: name, mode: 'insensitive' } } })
-          inspector = inspectors[0] || null
+          const byPhone = await getInspectorByPhone(normalizedPhone) as any
+          if (byPhone && typeof byPhone.name === 'string' && byPhone.name.localeCompare(providedName, undefined, { sensitivity: 'accent', usage: 'search' }) === 0) {
+            inspector = byPhone
+          }
         }
-        if (!inspector) return JSON.stringify({ success: false, error: 'Inspector not found in our system. Please contact admin for registration.' })
+
+        // If still not found, try by name first then verify phone
+        if (!inspector) {
+          try {
+            const byName = await prisma.inspector.findMany({
+              where: { status: Status.ACTIVE, name: { equals: providedName, mode: 'insensitive' } },
+              select: { id: true, name: true, mobilePhone: true }
+            })
+            const match = (byName || []).find((i: any) => phoneVariants.includes(i.mobilePhone))
+            if (match) inspector = match
+          } catch {}
+        }
+
+        if (!inspector) {
+          return JSON.stringify({ success: false, error: "We couldn't find an inspector matching both the provided name and phone number. Please check both and try again, or contact admin for registration." })
+        }
+
+        const finalPhone = inspector.mobilePhone || normalizedPhone
         if (sessionId) {
-          await updateSessionState(sessionId, { phoneNumber: normalizedPhone, inspectorId: inspector.id, inspectorName: inspector.name, inspectorPhone: inspector.mobilePhone || normalizedPhone, identifiedAt: new Date().toISOString() })
+          await updateSessionState(sessionId, { phoneNumber: finalPhone, inspectorId: inspector.id, inspectorName: inspector.name, inspectorPhone: finalPhone, identifiedAt: new Date().toISOString() })
         }
-        return JSON.stringify({ success: true, inspector: { id: inspector.id, name: inspector.name, phone: inspector.mobilePhone } })
+        return JSON.stringify({ success: true, inspector: { id: inspector.id, name: inspector.name, phone: finalPhone } })
       }
       case 'getTaskMedia': {
         try {
