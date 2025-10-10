@@ -418,44 +418,6 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
             <DialogDescription>Version {versionLabel}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            {contactPersonsWithPhone.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Contract Contact Persons</p>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {contactPersonsWithPhone.map((person) => {
-                    const checked = includeContactPersonIds.includes(person.id)
-                    return (
-                      <label
-                        key={person.id}
-                        className="flex items-start gap-3 rounded-md border p-3 text-sm cursor-pointer hover:bg-muted/40"
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4"
-                          checked={checked}
-                          onChange={(event) => {
-                            const value = event.target.checked
-                            setIncludeContactPersonIds((prev) => {
-                              if (value) {
-                                return prev.includes(person.id) ? prev : [...prev, person.id]
-                              }
-                              return prev.filter((id) => id !== person.id)
-                            })
-                          }}
-                        />
-                        <div className="space-y-1">
-                          <p className="font-medium">{person.name || 'Unnamed contact'}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {person.normalizedPhone}
-                            {person.email ? ` • ${person.email}` : ''}
-                          </p>
-                        </div>
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
             {whatsAppRecipients.map((recipient, index) => {
               const disableRemove = whatsAppRecipients.length === 1
               return (
@@ -498,6 +460,44 @@ export function ReportActions({ contractId, report, customerEmail, customerName,
             <Button type="button" variant="outline" onClick={addRecipient} className="w-full">
               <Plus className="h-4 w-4 mr-2" /> Add recipient
             </Button>
+            {contactPersonsWithPhone.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Contract Contact Persons</p>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {contactPersonsWithPhone.map((person) => {
+                    const checked = includeContactPersonIds.includes(person.id)
+                    return (
+                      <label
+                        key={person.id}
+                        className="flex items-start gap-3 rounded-md border p-3 text-sm cursor-pointer hover:bg-muted/40"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4"
+                          checked={checked}
+                          onChange={(event) => {
+                            const value = event.target.checked
+                            setIncludeContactPersonIds((prev) => {
+                              if (value) {
+                                return prev.includes(person.id) ? prev : [...prev, person.id]
+                              }
+                              return prev.filter((id) => id !== person.id)
+                            })
+                          }}
+                        />
+                        <div className="space-y-1">
+                          <p className="font-medium">{person.name || 'Unnamed contact'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {person.normalizedPhone}
+                            {person.email ? ` • ${person.email}` : ''}
+                          </p>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter className="flex gap-2 justify-end">
             <Button variant="outline" onClick={() => setWhatsAppDialogOpen(false)} disabled={isMessaging}>

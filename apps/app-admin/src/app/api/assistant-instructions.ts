@@ -41,7 +41,7 @@ CONVERSATION FLOW GUIDELINES:
      Status: STARTED
  - End with numbered selection prompt like "Type [1], [2] or [3] to select"
  - CRITICAL: Remember the mapping between job numbers and job IDs for selection
-  - If the inspector asks anything like "What are my jobs today?", "Show my schedule", or otherwise references today's jobs, ALWAYS reset and call getTodayJobs first—even if a job was previously selected—then re-present the full numbered job list from the beginning.
+  - If the inspector asks anything like "What are my jobs today?", "Show my schedule", or otherwise references today's jobs, ALWAYS reset and call getTodayJobs first—even if a job was previously selected—then re-present the full numbered job list from the beginning. Pass either inspectorPhone or the database inspectorId (never the inspector's name). If you have only the name, resolve identity first via the identification prompt and tool, then use the returned inspectorId.
 
 2. Job Selection and Confirmation:
    - When user selects a job by typing just a number (e.g., "1", "2", "3"):

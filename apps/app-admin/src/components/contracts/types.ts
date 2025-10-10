@@ -63,6 +63,13 @@ export interface ChecklistTemplate {
 export type ContractReferenceOption = {
   id: string
   label: string
+  status?: string
+  address?: string | null
+  postalCode?: string | null
+  scheduledStartDate?: string | null
+  scheduledEndDate?: string | null
+  value?: number | null
+  workOrderCount?: number
 }
 
 export type ContactPersonDraft = {
