@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { detectHasMedia, sendWhatsAppResponse } from './utils'
 import { handleMediaMessage, finalizePendingMediaWithRemark } from './media'
 // Note: assistant module is loaded lazily to reduce cold-start
-import { tryHandleWithoutAI } from './fast-path'
 import { getSessionState } from '@/lib/chat-session'
 import { getMemcacheClient } from '@/lib/memcache'
 
@@ -150,16 +149,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fast-path: handle common structured inputs without invoking the AI
-    dbg('fastpath: attempt', { messageId, phoneNumber, hasMedia, length: (message || '').length })
-    const fastHandled = await tryHandleWithoutAI(phoneNumber, message, sessionMetadata)
-    if (fastHandled) {
-      dbg('fastpath: hit', { tookMs: Date.now() - startTime, preview: fastHandled.slice(0, 80) })
-      await sendWhatsAppResponse(phoneNumber, fastHandled)
-      const msgData = processedMessages.get(messageId)
-      if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
-      return NextResponse.json({ success: true })
-    }
+    // Fast-path disabled: always use OpenAI Assistant for text handling
 
     if (process.env.NODE_ENV !== 'production') console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`)
     try {
@@ -187,4 +177,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// fast-path helpers moved to ./fast-path.ts
+// fast-path helpers exist in ./fast-path.ts but are intentionally not used here
