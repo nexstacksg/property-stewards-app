@@ -40,6 +40,54 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     debugLog('start', { phoneNumber, len: message?.length })
     const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-5-nano').trim()
 
+    // Minimal stateful guard: when the user is in a strict step, translate
+    // the message directly into the corresponding tool call to keep session
+    // in sync and avoid the model skipping steps (e.g., asking for media early).
+    try {
+      const meta = await getSessionState(phoneNumber)
+      const raw = (message || '').trim()
+      const numMatch = /^\s*([1-5])\s*$/.exec(raw)
+      const lower = raw.toLowerCase()
+      if (meta?.workOrderId && meta?.currentLocation) {
+        // Condition selection
+        if (meta.taskFlowStage === 'condition' && numMatch) {
+          const conditionNumber = Number(numMatch[1])
+          const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(out) } catch {}
+          if (data?.success) {
+            if (String(data?.taskFlowStage || '').toLowerCase() === 'cause') {
+              return 'Please describe the cause for this issue.'
+            }
+            return 'Condition saved. Please send any photos/videos now — you can include remarks as a caption. Or type "skip" to continue.'
+          }
+        }
+        // Cause text
+        if (meta.taskFlowStage === 'cause' && raw && !numMatch) {
+          const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(out) } catch {}
+          if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
+        }
+        // Resolution text
+        if (meta.taskFlowStage === 'resolution' && raw && !numMatch) {
+          const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(out) } catch {}
+          if (data?.success) return data?.message || 'Resolution saved. Please send any photos/videos now (you can add notes as caption), or type "skip" to continue.'
+        }
+        // Media stage skip
+        if (meta.taskFlowStage === 'media' && (lower === 'skip' || lower === 'no')) {
+          const out = await executeTool('completeTask', { phase: 'skip_media', workOrderId: meta.workOrderId, taskId: meta.currentTaskId }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(out) } catch {}
+          if (data?.success) return data?.message || 'Okay, skipping media. Reply [1] if this task is complete, [2] otherwise.'
+        }
+      }
+    } catch (e) {
+      debugLog('pre-route guard failed', e)
+    }
+
     const history = await loadHistory(phoneNumber)
 
     // Compose messages: system instructions + session hint + prior history + user

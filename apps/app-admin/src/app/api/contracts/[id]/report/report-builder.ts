@@ -19,6 +19,10 @@ export type ReportBuildOptions = {
   versionLabel: string
   generatedOn: Date
   allowedConditions?: string[] | null
+  // When true, include only entry-level remarks that match allowedConditions
+  // and suppress location remarks, task-level media-only blocks, and synthetic
+  // "No remarks recorded." rows.
+  entryOnly?: boolean
 }
 
 function applyWatermark(doc: any, logoBuffer?: Buffer) {
@@ -269,6 +273,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     includeMeta: false,
     filterByWorkOrderId: null,
     allowedConditions: options.allowedConditions ?? undefined,
+    entryOnly: options.entryOnly ?? false,
   })
 
 

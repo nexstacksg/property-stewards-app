@@ -400,7 +400,8 @@ async function buildRemarkSegment({
 async function buildTableRows(
   items: any[],
   imageCache: Map<string, Buffer>,
-  allowedConditions?: Set<string>
+  allowedConditions?: Set<string>,
+  entryOnly: boolean = false
 ): Promise<TableRowInfo[]> {
   const rows: TableRowInfo[] = []
 
@@ -558,10 +559,10 @@ async function buildTableRows(
       const locationNumber = `${itemNumber}.${locationIndex}`
       const itemColumnText = `${locationNumber} ${group.label}`
       const locationRemarkText = typeof group.location?.remarks === 'string' ? group.location.remarks.trim() : ''
-      const locationSegments: CellSegment[] = []
-      if (locationRemarkText.length > 0) {
-        locationSegments.push({ text: locationRemarkText })
-      }
+    const locationSegments: CellSegment[] = []
+    if (!entryOnly && locationRemarkText.length > 0) {
+      locationSegments.push({ text: locationRemarkText })
+    }
 
       const locationTasks = group.tasks
 
@@ -578,7 +579,7 @@ async function buildTableRows(
         if (locationSegments.length && taskIdx === 0) {
           rowSegments.push(...locationSegments)
         }
-        if (taskConditionAllowed) {
+        if (!entryOnly && taskConditionAllowed) {
           const taskMediaSegment = await buildRemarkSegment({
             text: undefined,
             photoEntries: mergePhotoEntries(
@@ -603,8 +604,11 @@ async function buildTableRows(
           continue
         }
 
-        if (rowSegments.length === 0 && taskConditionAllowed && filteredEntries.length === 0) {
-          rowSegments.push({ text: "No remarks recorded." })
+        // In entry-only mode, suppress synthetic placeholder remarks
+        if (!entryOnly) {
+          if (rowSegments.length === 0 && taskConditionAllowed && filteredEntries.length === 0) {
+            rowSegments.push({ text: "No remarks recorded." })
+          }
         }
 
         const baseRow: TableRow = [
@@ -617,7 +621,7 @@ async function buildTableRows(
 
         rows.push({
           cells: baseRow,
-          summaryMedia: rowSegments.length ? [...rowSegments] : undefined
+          summaryMedia: entryOnly ? undefined : (rowSegments.length ? [...rowSegments] : undefined)
         })
 
         if (filteredEntries.length > 0) {
@@ -1116,6 +1120,7 @@ export async function appendWorkOrderSection(
     includeMeta?: boolean
     filterByWorkOrderId?: string | null
     allowedConditions?: string[] | null
+    entryOnly?: boolean
   } = {}
 ) {
   if (options.startOnNewPage) {
@@ -1170,7 +1175,7 @@ export async function appendWorkOrderSection(
     ? new Set(options.allowedConditions.map((value) => value.toUpperCase()))
     : undefined
 
-  const tableRows = await buildTableRows(scopedItems, imageCache, allowedConditionSet)
+  const tableRows = await buildTableRows(scopedItems, imageCache, allowedConditionSet, options.entryOnly === true)
 
   if (tableRows.length === 0) {
     doc.text("No checklist items found for this work order.", { italic: true })
