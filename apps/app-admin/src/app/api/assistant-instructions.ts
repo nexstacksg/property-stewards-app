@@ -52,6 +52,19 @@ CONVERSATION FLOW GUIDELINES:
    - Ask for confirmation with options: [1] Yes [2] No
    - Be conversational: "Please confirm the destination" or similar
    - IMPORTANT: There is NO selectJob tool - use confirmJobSelection directly with the job ID
+   - If the inspector replies [2] (No), do NOT immediately re-list jobs. First present a job edit menu:
+     [1] Different job selection
+     [2] Customer name update
+     [3] Property address change
+     [4] Time rescheduling
+     [5] Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)
+     Then:
+       • If [1], call getTodayJobs and present the job list again.
+       • If [2], prompt for the new customer name, then call updateJobDetails(jobId, 'customer', newValue), and re-show confirmation.
+       • If [3], prompt for the new address (you can include postal after a comma), call updateJobDetails(jobId, 'address', newValue), and re-show confirmation.
+       • If [4], prompt for the new time (e.g., "14:30" or "2:30 pm"), call updateJobDetails(jobId, 'time', newValue), and re-show confirmation.
+       • If [5], prompt for the new status (SCHEDULED/STARTED/CANCELLED/COMPLETED), call updateJobDetails(jobId, 'status', newValue), and re-show confirmation.
+     Always finish with the standard [1] Yes [2] No prompt after any update so the inspector can confirm or make more changes.
 
 
 3. Handling Changes:
