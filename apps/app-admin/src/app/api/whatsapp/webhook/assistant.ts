@@ -143,7 +143,7 @@ async function handleToolCalls(threadId: string, runId: string, runStatus: any, 
 
 async function createAssistant() {
   try {
-    const assistant = await openai.beta.assistants.create({ name: 'Property Inspector Assistant v0.7', instructions: INSTRUCTIONS, model: 'gpt-5-nano', tools: assistantTools })
+    const assistant = await openai.beta.assistants.create({ name: 'Property Inspector Assistant v0.7', instructions: INSTRUCTIONS, model: 'gpt-4o-mini', tools: assistantTools })
     try {
       await cacheSetJSON('assistant:id', assistant.id, { ttlSeconds: 30 * 24 * 60 * 60 })
       await cacheSetJSON('assistant:meta', { version: ASSISTANT_VERSION }, { ttlSeconds: 30 * 24 * 60 * 60 })
