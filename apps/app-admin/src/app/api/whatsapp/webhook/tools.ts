@@ -343,9 +343,12 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const completedTasksInLocation = formattedTasks.filter((t: any) => t.status === 'completed').length
         const totalTasksInLocation = formattedTasks.length
         const allTasksCompleted = completedTasksInLocation === totalTasksInLocation && totalTasksInLocation > 0
+        const tasksFormatted = formattedTasks.map((t: any) => `[${t.number}] ${t.description}${t.displayStatus === 'done' ? ' (Done)' : ''}`)
+        const markCompleteNumber = allTasksCompleted ? (formattedTasks.length + 1) : null
+        const goBackNumber = allTasksCompleted ? (formattedTasks.length + 2) : (formattedTasks.length + 1)
         const nextPrompt = allTasksCompleted
-          ? `All tasks for ${location} are done. Reply with a number to review a task, [${formattedTasks.length + 1}] to mark this location complete, or [${formattedTasks.length + 2}] to go back.`
-          : `Reply with a number to work on a task (or ${formattedTasks.length + 1} to go back) when you're ready.`
+          ? `All tasks for ${location} are done. Reply with a task number to review, [${markCompleteNumber}] to mark this location complete, or [${goBackNumber}] to go back.`
+          : `Reply with a number to work on a task (or ${goBackNumber} to go back) when you're ready.`
         const firstTask = tasks[0]
         if (sessionId && firstTask?.locationId) {
           await updateSessionState(sessionId, {
@@ -358,6 +361,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           location,
           allTasksCompleted,
           tasks: formattedTasks,
+          tasksFormatted,
+          markCompleteNumber,
+          goBackNumber,
           locationProgress: { completed: completedTasksInLocation, total: totalTasksInLocation },
           locationNotes: tasks.length > 0 && firstTask?.notes ? firstTask.notes : null,
           locationStatus: tasks.length > 0 && firstTask?.locationStatus === 'completed' ? 'done' : 'pending',

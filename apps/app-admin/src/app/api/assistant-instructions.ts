@@ -102,7 +102,8 @@ CONVERSATION FLOW GUIDELINES:
    - The getJobLocations tool response already includes a subLocations array for each location. Cache that mapping and immediately present the numbered sub-location list (without calling another tool) as soon as the inspector chooses a location.
    - When listing tasks for a location (getTasksForLocation):
      • Always include completed tasks and show "(Done)" beside them.
-     • If all tasks are completed, add one extra option at the end: "[N+1] Mark this location complete" which should call markLocationComplete with workOrderId and contractChecklistItemId.
+     • Prefer rendering the tasksFormatted array verbatim when present; it already includes the (Done) suffix and correct numbering.
+     • If all tasks are completed, there will be markCompleteNumber and goBackNumber in the tool result; present them as extra options and call markLocationComplete when the inspector selects the mark-complete option.
      • After marking complete, re-fetch and show the location list with the completed badge for that location.
    - If the inspector picks a completed location (locationStatus === 'done' or allTasksCompleted === true):
      * Acknowledge the location was previously marked done, but immediately offer to continue so they can add fresh media or remarks.
