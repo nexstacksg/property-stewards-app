@@ -48,18 +48,23 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       const raw = (message || '').trim()
       const numMatch = /^\s*([1-5])\s*$/.exec(raw)
       const lower = raw.toLowerCase()
-      if (meta?.workOrderId && meta?.currentLocation) {
+      if (meta?.workOrderId && (meta?.currentLocation || meta?.currentTaskLocationName)) {
         // Condition selection
-        if (meta.taskFlowStage === 'condition' && numMatch) {
+        if (numMatch && (meta.taskFlowStage === 'condition' || !!meta.currentTaskId)) {
           const conditionNumber = Number(numMatch[1])
           const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) {
-            if (String(data?.taskFlowStage || '').toLowerCase() === 'cause') {
+            const nextStage = String(data?.taskFlowStage || '').toLowerCase()
+            if (nextStage === 'cause') {
               return 'Please describe the cause for this issue.'
             }
-            return 'Condition saved. Please send any photos/videos now — you can include remarks as a caption. Or type "skip" to continue.'
+            const condUpper = String(data?.condition || meta.currentTaskCondition || '').toUpperCase()
+            if (condUpper === 'NOT_APPLICABLE') {
+              return 'Condition saved. You can send photos/videos with a caption for remarks, or type "skip" to continue.'
+            }
+            return 'Condition saved. Please send photos/videos now — include remarks as a caption. Media is required for this condition.'
           }
         }
         // Cause text
@@ -78,10 +83,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
         // Media stage skip
         if (meta.taskFlowStage === 'media' && (lower === 'skip' || lower === 'no')) {
+          const cond = String(meta.currentTaskCondition || '').toUpperCase()
+          if (cond !== 'NOT_APPLICABLE') {
+            return 'Media is required for this condition. Please send at least one photo (you can add remarks as a caption).'
+          }
           const out = await executeTool('completeTask', { phase: 'skip_media', workOrderId: meta.workOrderId, taskId: meta.currentTaskId }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Okay, skipping media. Reply [1] if this task is complete, [2] otherwise.'
+          if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
         }
       }
     } catch (e) {
