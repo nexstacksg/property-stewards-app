@@ -106,7 +106,6 @@ function applyFooter(doc: any) {
 }
 
 function appendSignOffSection(doc: any, contract: any) {
-  const heading = "Sign-Off"
   const customerName = contract?.customer?.name || "Customer"
   const companyName = "Property Stewards PTE. LTD"
 
@@ -117,7 +116,7 @@ function appendSignOffSection(doc: any, contract: any) {
   }
 
   doc.moveDown(3)
-  doc.font("Helvetica-Bold").fontSize(12).text(heading)
+  // doc.font("Helvetica-Bold").fontSize(12).text(heading)
   doc.moveDown(0.5)
 
   const gap = 16

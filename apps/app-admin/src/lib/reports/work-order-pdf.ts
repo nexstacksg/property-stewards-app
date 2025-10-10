@@ -605,11 +605,11 @@ async function buildTableRows(
         }
 
         // In entry-only mode, suppress synthetic placeholder remarks
-        if (!entryOnly) {
-          if (rowSegments.length === 0 && taskConditionAllowed && filteredEntries.length === 0) {
-            rowSegments.push({ text: "No remarks recorded." })
-          }
-        }
+        // if (!entryOnly) {
+        //   if (rowSegments.length === 0 && taskConditionAllowed && filteredEntries.length === 0) {
+        //     rowSegments.push({ text: "No remarks recorded." })
+        //   }
+        // }
 
         const baseRow: TableRow = [
           { text: groupIndex === 0 && taskIdx === 0 ? String(itemNumber) : '' },
