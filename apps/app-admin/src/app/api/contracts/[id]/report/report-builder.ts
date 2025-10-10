@@ -8,10 +8,11 @@ import {
   formatEnum,
   formatScheduleRange,
   LOGO_ASPECT_RATIO,
-  formatDateTime
+  formatDateTime,
+  drawFooter
 } from "@/lib/reports/work-order-pdf"
 
-const WATERMARK_OPACITY = 0.12
+const WATERMARK_OPACITY = 0.15
 
 export type ReportBuildOptions = {
   titleOverride?: string | null
@@ -81,25 +82,21 @@ function applyWatermark(doc: any, logoBuffer?: Buffer) {
 }
 
 function applyFooter(doc: any) {
-  const footerText = "Prepared by Property Stewards PTE. LTD © 2025"
+  // Use the centralized footer renderer so we keep layout consistent
   let drawing = false
-
   const draw = () => {
     if (drawing) return
     drawing = true
     try {
-      const width = doc.page.width - TABLE_MARGIN * 2
-      // Keep safely within the printable region to avoid page breaks
-      const y = doc.page.height - TABLE_MARGIN * 0.2
-      doc.save()
-      doc.font("Helvetica").fontSize(8).fillColor("#6b7280")
-      doc.text(footerText, TABLE_MARGIN, y, { width, align: "center" })
-      doc.restore()
+      drawFooter(doc)
+    } catch {
+      // no-op; footer drawing should never block report generation
     } finally {
       drawing = false
     }
   }
 
+  // Draw on current and all subsequently added pages
   doc.on("pageAdded", draw)
   draw()
 }
@@ -115,7 +112,7 @@ function appendSignOffSection(doc: any, contract: any) {
     doc.addPage()
   }
 
-  doc.moveDown(1)
+  doc.moveDown(3)
   doc.font("Helvetica-Bold").fontSize(12).text(heading)
   doc.moveDown(0.5)
 
@@ -152,6 +149,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   const logoBuffer = getLogoBuffer()
 
   applyWatermark(doc, logoBuffer ?? undefined)
+  // Ensure footer appears on every page
+  applyFooter(doc)
   if (logoBuffer) {
     const logoWidth = 220
     const logoHeight = logoWidth * LOGO_ASPECT_RATIO
@@ -272,10 +271,11 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     allowedConditions: options.allowedConditions ?? undefined,
   })
 
-      applyFooter(doc)
 
   // Final page sign-off
   appendSignOffSection(doc, contract)
+  // drawFooter(doc)
+
 }
 
 export async function createContractReportBuffer(contract: any, options: ReportBuildOptions) {

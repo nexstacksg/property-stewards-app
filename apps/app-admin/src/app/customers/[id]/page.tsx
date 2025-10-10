@@ -173,7 +173,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             onAddAddress={addAddress}
           />
 
-          <CustomerContractsCard contracts={customer.contracts} />
+          <CustomerContractsCard customerId={customer.id} contracts={customer.contracts} />
 
           <CustomerStatsRow customer={customer} />
         </div>

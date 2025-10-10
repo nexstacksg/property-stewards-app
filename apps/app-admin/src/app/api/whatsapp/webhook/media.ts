@@ -241,7 +241,14 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
           try {
             const existing = await prisma.itemEntry.findUnique({ where: { id: currentTaskEntryId }, select: { remarks: true } })
             const combined = existing?.remarks ? `${existing.remarks}\n${mediaRemark}` : mediaRemark
-            await prisma.itemEntry.update({ where: { id: currentTaskEntryId }, data: { remarks: combined } })
+            // Also persist pending cause/resolution if available in session
+            const updates: any = { remarks: combined }
+            try {
+              const latest = await getSessionState(phoneNumber)
+              if (latest.pendingTaskCause) updates.cause = latest.pendingTaskCause
+              if (latest.pendingTaskResolution) updates.resolution = latest.pendingTaskResolution
+            } catch {}
+            await prisma.itemEntry.update({ where: { id: currentTaskEntryId }, data: updates })
           } catch (error) {
             console.error('❌ Failed to attach bundled remarks to item entry', error)
           }
