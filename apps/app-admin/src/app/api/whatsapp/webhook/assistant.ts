@@ -3,7 +3,6 @@ import OpenAI from 'openai'
 import { cacheGetJSON, cacheSetJSON } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
 import { INSTRUCTIONS } from '@/app/api/assistant-instructions'
-import { getSessionState } from '@/lib/chat-session'
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
 const debugLog = (...args: unknown[]) => {
@@ -22,7 +21,7 @@ async function loadHistory(phone: string): Promise<ChatMessage[]> {
   try { return (await cacheGetJSON<ChatMessage[]>(HISTORY_KEY(phone))) || [] } catch { return [] }
 }
 async function saveHistory(phone: string, messages: ChatMessage[]) {
-  const cap = Number(process.env.WHATSAPP_HISTORY_MAX ?? 20)
+  const cap = Number(process.env.WHATSAPP_HISTORY_MAX ?? 40)
   const trimmed = messages.slice(-cap)
   try { await cacheSetJSON(HISTORY_KEY(phone), trimmed, { ttlSeconds: HISTORY_TTL }) } catch {}
 }
@@ -42,20 +41,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
     const history = await loadHistory(phoneNumber)
 
-    // Compose messages: system instructions + session hint + prior history + user
+    // Compose messages: system instructions + prior history + user
     const messages: any[] = []
     messages.push({ role: 'system', content: INSTRUCTIONS })
-    try {
-      const meta = await getSessionState(phoneNumber)
-      const hintParts: string[] = []
-      if (meta.workOrderId) hintParts.push(`workOrderId=${meta.workOrderId}`)
-      if (meta.jobStatus) hintParts.push(`jobStatus=${meta.jobStatus}`)
-      if (meta.lastMenu) hintParts.push(`lastMenu=${meta.lastMenu}`)
-      if (hintParts.length > 0) {
-        const policy = 'If jobStatus is confirming and the user replies [1] or "1", call startJob with the confirmed workOrderId immediately and proceed to locations. If they reply [2], present the job edit menu (different job, customer, address, time, status). After any update, show one confirmation; on [1], startJob and do not confirm again.'
-        messages.push({ role: 'system', content: `Session: ${hintParts.join(', ')}. ${policy}` })
-      }
-    } catch {}
     for (const m of history) messages.push({ role: m.role, content: m.content, tool_call_id: (m as any).tool_call_id, name: (m as any).name })
     messages.push({ role: 'user', content: message })
 
@@ -64,18 +52,18 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
     // Loop for tool calls
     let rounds = 0
-    const maxRounds = Number(process.env.WHATSAPP_TOOL_ROUNDS_MAX ?? 3)
+    const maxRounds = 6
     let lastAssistantMsg: any = null
     while (rounds < maxRounds) {
       let completion: any
       try {
-        completion = await openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) })
+        completion = await openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any })
       } catch (e: any) {
         // Fallback if model unsupported for chat
         if (String(e?.code || '').includes('unsupported') || String(e?.message || '').includes('model')) {
           if (model !== 'gpt-4o-mini') {
             debugLog('model unsupported for chat; falling back to gpt-4o-mini')
-            completion = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) })
+            completion = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages, tools, tool_choice: 'auto' as any })
           } else {
             throw e
           }

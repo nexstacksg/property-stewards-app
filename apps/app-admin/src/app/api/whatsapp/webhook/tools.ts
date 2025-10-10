@@ -110,9 +110,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             customerName: workOrder.customer_name,
             propertyAddress: workOrder.property_address,
             postalCode: postalCodeMatch ? (postalCodeMatch[1] as string) : 'unknown',
-            jobStatus: 'confirming',
-            lastMenu: 'confirm',
-            lastMenuAt: new Date().toISOString()
+            jobStatus: 'confirming'
           }
           await updateSessionState(sessionId, updatedMetadata)
         }
