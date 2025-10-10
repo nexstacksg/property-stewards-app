@@ -7,6 +7,11 @@ function perfLog(label: string, ms: number) {
   }
 }
 
+function dbgFast(...args: any[]) {
+  const on = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+  if (on === 'true' || on === 'verbose') console.log('[wh-fast]', ...args)
+}
+
 function isJobsIntent(text: string): boolean {
   const t = text.toLowerCase().trim()
   if (!t) return false
@@ -37,6 +42,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
     // 1) Jobs list (no AI)
     if (wantsJobs) {
+      dbgFast('intent:jobs matched; resetting session context')
       // Reset job/location/task context so a new selection starts fresh
       try {
         await updateSessionState(phone, {
@@ -68,6 +74,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       const t0 = Date.now()
       const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
       perfLog('tool:getTodayJobs', Date.now() - t0)
+      dbgFast('tool:getTodayJobs done')
       const data = safeParseJSON(res)
       if (!data?.success) return null
       const s = await getSessionState(phone)
@@ -98,6 +105,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           const t0 = Date.now()
           const res = await executeTool('startJob', { jobId: session.workOrderId }, undefined, phone)
           perfLog('tool:startJob', Date.now() - t0)
+          dbgFast('flow:confirm yes → startJob')
           const data = safeParseJSON(res)
           if (!data?.success) return null
           try {
@@ -125,6 +133,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           const t0 = Date.now()
           const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
           perfLog('tool:getTodayJobs', Date.now() - t0)
+          dbgFast('flow:confirm no → relist jobs')
           const data = safeParseJSON(res)
           if (!data?.success) return null
           const jobs = Array.isArray(data.jobs) ? data.jobs : []
@@ -146,11 +155,12 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         }
       }
 
-      // If no job selected yet: treat as job selection
-      if (!session?.workOrderId) {
+      // If the last menu was 'jobs', treat numbers as a job selection regardless of stale state
+      if (session?.lastMenu === 'jobs' || !session?.workOrderId) {
         const t0 = Date.now()
         const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
         perfLog('tool:getTodayJobs', Date.now() - t0)
+        dbgFast('flow:number→job selection')
         const data = safeParseJSON(res)
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
         if (jobs.length === 0) return null
@@ -188,7 +198,8 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
       }
 
-      if (session?.workOrderId && !session?.currentLocation) {
+      if (session?.lastMenu === 'locations' || (session?.workOrderId && !session?.currentLocation)) {
+        dbgFast('flow:number→location selection', { selectedNumber })
         const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
         const locData = safeParseJSON(locRes)
         const list = Array.isArray(locData?.locations) ? locData.locations : []
@@ -200,6 +211,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const chosen = list[selectedNumber - 1]
         const hasSubs = Array.isArray(chosen?.subLocations) && chosen.subLocations.length > 0
         if (hasSubs) {
+          dbgFast('location has sub-locations; listing')
           const subRes = await executeTool('getSubLocations', { workOrderId: session.workOrderId, contractChecklistItemId: chosen.contractChecklistItemId, locationName: chosen.name }, undefined, phone)
           const subData = safeParseJSON(subRes)
           const formatted: string[] = subData?.subLocationsFormatted || []
@@ -216,7 +228,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       }
 
       // If location is set but sub-location not chosen and we have sub-location options cached
-      if (session?.workOrderId && session?.currentLocation && !session?.currentSubLocationId) {
+      if (session?.lastMenu === 'sublocations' || (session?.workOrderId && session?.currentLocation && !session?.currentSubLocationId)) {
         if (isGoBackText) {
           // textual go back → locations
           const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
@@ -238,6 +250,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           if (match && Array.isArray(match.subLocations)) subOptions = match.subLocations
         }
         if (Array.isArray(subOptions) && subOptions.length > 0) {
+          dbgFast('flow:number→sub-location selection', { selectedNumber })
           const backNumber = subOptions.length + 1
           if (selectedNumber === backNumber) {
             // Go back to locations
@@ -270,6 +283,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
     // 3) Simple yes/no in confirming stage (without numbers)
     if (session?.jobStatus === 'confirming' && session?.workOrderId) {
       if (['yes', 'y'].includes(lower)) {
+        dbgFast('flow:text confirm yes')
         const res = await executeTool('startJob', { jobId: session.workOrderId }, undefined, phone)
         const data = safeParseJSON(res)
         if (!data?.success) return null
@@ -279,6 +293,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         return [header, '', ...locations, '', `Next: ${next}`].join('\n')
       }
       if (['no', 'n'].includes(lower)) {
+        dbgFast('flow:text confirm no')
         const res = await executeTool('getTodayJobs', { inspectorPhone: phone }, undefined, phone)
         const data = safeParseJSON(res)
         if (!data?.success) return null
@@ -332,17 +347,21 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
       // a) Finalize step ([1] completed, [2] not yet)
       if (ctx.stage === 'confirm' && selectedNumber && (selectedNumber === 1 || selectedNumber === 2)) {
+        dbgFast('flow:finalize', { completed: selectedNumber === 1 })
         const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, completed: selectedNumber === 1 }, undefined, phone)
         const f = safeParseJSON(finalize)
         if (!f?.success && typeof f?.error === 'string') {
           return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
         }
         const tasksRes = await executeTool('getTasksForLocation', { workOrderId: ctx.workOrderId, location: ctx.locationName, contractChecklistItemId: ctx.itemId, subLocationId: ctx.subLocationId }, undefined, phone)
-        return formatTasksResponse(ctx.locationName, tasksRes)
+        const header = (f?.message as string | undefined) || undefined
+        const body = formatTasksResponse(ctx.locationName, tasksRes)
+        return header ? `${header}\n\n${body}` : body
       }
 
       // b) Condition selection (1..5)
       if (ctx.stage === 'condition' && selectedNumber && selectedNumber >= 1 && selectedNumber <= 5) {
+        dbgFast('flow:set_condition', { selectedNumber })
         const setCond = await executeTool('completeTask', { phase: 'set_condition', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, conditionNumber: selectedNumber }, undefined, phone)
         const s = safeParseJSON(setCond)
         if (!s?.success && typeof s?.error === 'string') return s.error
@@ -354,6 +373,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
       // c) Media step: skip
       if (ctx.stage === 'media' && (lower === 'skip' || lower === 'no')) {
+        dbgFast('flow:skip_media')
         const skip = await executeTool('completeTask', { phase: 'skip_media', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId }, undefined, phone)
         const sk = safeParseJSON(skip)
         if (!sk?.success && typeof sk?.error === 'string') return sk.error
@@ -376,6 +396,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       }
 
       if ((ctx.stage === 'remarks' || ctx.stage === 'media') && msg && !selectedNumber) {
+        dbgFast('flow:set_remarks')
         const setRemarks = await executeTool('completeTask', { phase: 'set_remarks', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, remarks: msg }, undefined, phone)
         const r = safeParseJSON(setRemarks)
         if (!r?.success && typeof r?.error === 'string') return r.error

@@ -7,7 +7,8 @@ import { ASSISTANT_VERSION, INSTRUCTIONS } from '@/app/api/assistant-instruction
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
 const debugLog = (...args: unknown[]) => {
-  if (process.env.NODE_ENV !== 'production') console.log(...args)
+  const on = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+  if (on === 'true' || on === 'verbose') console.log('[wh-openai]', ...args)
 }
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -31,6 +32,7 @@ export async function postAssistantMessageIfThread(phone: string, content: strin
 
 export async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
+    debugLog('start', { phoneNumber, len: message?.length })
     let threadId: any = whatsappThreads.get(phoneNumber)
     let metadata = await getSessionState(phoneNumber)
     if (!threadId && (metadata as any)?.threadId) {
@@ -51,6 +53,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     }
 
     await openai.beta.threads.messages.create(threadId, { role: 'user', content: message })
+    debugLog('message appended', { threadId })
 
     // Ensure assistant exists
     if (assistantId && assistantVersionLoaded !== ASSISTANT_VERSION) {
@@ -85,14 +88,17 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
     // Create run and wait for completion efficiently
     const run = await openai.beta.threads.runs.create(threadId, { assistant_id: assistantId as string })
+    debugLog('run created', { runId: run.id })
     let runStatus = await waitForRunCompletion(threadId, run.id)
     let toolCallRounds = 0
     const maxToolCallRounds = 5
     while (runStatus.status === 'requires_action' && toolCallRounds < maxToolCallRounds) {
+      debugLog('requires_action', { round: toolCallRounds, tools: runStatus.required_action?.submit_tool_outputs?.tool_calls?.map((t: any)=>t.function?.name) })
       await handleToolCalls(threadId, run.id, runStatus, phoneNumber)
       runStatus = await waitForRunCompletion(threadId, run.id)
       toolCallRounds++
     }
+    debugLog('run finished', { status: runStatus.status, rounds: toolCallRounds })
     if (runStatus.status !== 'completed') return 'Sorry, I encountered an issue processing your request. Please try again.'
     const messages = await openai.beta.threads.messages.list(threadId, { limit: 1 })
     const lastMessage = messages.data[0]
