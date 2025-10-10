@@ -26,12 +26,26 @@ let PDFDocumentCtor: any | null = null
 export function drawFooter(doc: any) {
   const text = "Prepared by Property Stewards PTE. LTD © 2025"
   const width = doc.page.width - TABLE_MARGIN * 2
-  const y = doc.page.height - (TABLE_MARGIN / 2)
   const x = TABLE_MARGIN
   const prevY = doc.y
+
   doc.save()
   doc.font("Helvetica").fontSize(8).fillColor("#6b7280")
-  doc.text(text, x, y, { width, align: "center" })
+
+  // Compute a safe Y inside the content area so PDFKit
+  // never paginates while drawing the footer.
+  const lineHeight = typeof (doc as any).currentLineHeight === 'function'
+    ? (doc as any).currentLineHeight()
+    : 10
+  const contentBottom = doc.page.height - TABLE_MARGIN
+  const y = contentBottom - lineHeight - 2 // a tiny padding above content bottom
+
+  try {
+    doc.text(text, x, y, { width, align: "center", lineBreak: false })
+  } catch {
+    // Footer must never block report generation
+  }
+
   doc.restore()
   // restore pointer so footer drawing never affects layout
   doc.y = prevY
