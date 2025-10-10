@@ -78,8 +78,31 @@ const defaultTTL = Number(process.env.MEMCACHE_SESSION_TTL ?? 86400) // 24h
 
 export async function getSessionState(sessionId: string): Promise<ChatSessionState> {
   const key = baseKey(sessionId)
+  const t0 = Date.now()
   const state = await cacheGetJSON<ChatSessionState>(key)
-  return state || {}
+  const out = state || {}
+  try {
+    const dbg = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+    if (dbg && dbg !== 'false') {
+      const summary = {
+        workOrderId: out.workOrderId,
+        jobStatus: out.jobStatus,
+        lastMenu: out.lastMenu,
+        currentLocation: out.currentLocation,
+        currentLocationId: out.currentLocationId,
+        currentSubLocationId: out.currentSubLocationId,
+        currentTaskId: out.currentTaskId,
+        currentTaskEntryId: out.currentTaskEntryId,
+        currentTaskCondition: out.currentTaskCondition,
+        inspectorId: out.inspectorId,
+        inspectorPhone: out.inspectorPhone,
+        createdAt: out.createdAt,
+        lastUpdatedAt: out.lastUpdatedAt
+      }
+      console.log('[sess:get]', { sessionId, tookMs: Date.now() - t0, summary })
+    }
+  } catch {}
+  return out
 }
 
 export async function updateSessionState(sessionId: string, updates: Partial<ChatSessionState>): Promise<ChatSessionState> {
@@ -92,5 +115,43 @@ export async function updateSessionState(sessionId: string, updates: Partial<Cha
     createdAt: existing?.createdAt || new Date().toISOString()
   }
   await cacheSetJSON(key, merged, { ttlSeconds: defaultTTL })
+  try {
+    const dbg = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
+    if (dbg && dbg !== 'false') {
+      const before = existing || {}
+      const after = merged
+      const summaryBefore = {
+        workOrderId: before.workOrderId,
+        jobStatus: before.jobStatus,
+        lastMenu: before.lastMenu,
+        currentLocation: before.currentLocation,
+        currentLocationId: before.currentLocationId,
+        currentSubLocationId: before.currentSubLocationId,
+        currentTaskId: before.currentTaskId,
+        currentTaskEntryId: before.currentTaskEntryId,
+        currentTaskCondition: before.currentTaskCondition,
+        inspectorId: before.inspectorId,
+        inspectorPhone: before.inspectorPhone,
+        createdAt: before.createdAt,
+        lastUpdatedAt: before.lastUpdatedAt
+      }
+      const summaryAfter = {
+        workOrderId: after.workOrderId,
+        jobStatus: after.jobStatus,
+        lastMenu: after.lastMenu,
+        currentLocation: after.currentLocation,
+        currentLocationId: after.currentLocationId,
+        currentSubLocationId: after.currentSubLocationId,
+        currentTaskId: after.currentTaskId,
+        currentTaskEntryId: after.currentTaskEntryId,
+        currentTaskCondition: after.currentTaskCondition,
+        inspectorId: after.inspectorId,
+        inspectorPhone: after.inspectorPhone,
+        createdAt: after.createdAt,
+        lastUpdatedAt: after.lastUpdatedAt
+      }
+      console.log('[sess:update]', { sessionId, updates, before: summaryBefore, after: summaryAfter })
+    }
+  } catch {}
   return merged
 }

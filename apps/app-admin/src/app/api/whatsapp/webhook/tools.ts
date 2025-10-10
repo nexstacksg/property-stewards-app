@@ -493,6 +493,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             }
           }
 
+          dbg('completeTask:start', { taskId, taskName, taskItemId, locationId: task?.locationId })
           return JSON.stringify({ success: true, taskFlowStage: 'condition', taskName })
         }
 
@@ -547,6 +548,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             // If FAIR or UNSATISFACTORY, branch to cause -> resolution -> media
             const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'media'
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
+            dbg('completeTask:set_condition', { taskId, condition, nextStage })
             if (nextStage === 'cause') {
               return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please describe the cause for this issue.' })
             }
@@ -736,6 +738,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
 
           if (completed) {
+            dbg('completeTask:finalize start', { taskId, targetItemId, entryId, condition, locationId: task?.locationId })
             const requiresPhoto = condition !== 'NOT_APPLICABLE'
             const requiresCauseResolution = condition === 'FAIR' || condition === 'UNSATISFACTORY'
             const photoCount = entryRecord?.photos?.length ?? 0
@@ -775,6 +778,14 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               console.error('finalize: contractChecklistItem not found', { targetItemId, taskId })
               return JSON.stringify({ success: false, error: 'Checklist location not found for this task.' })
             }
+            // Create an ItemEntry as a fallback if none exists yet
+            if (!entryId) {
+              try {
+                const created = await prisma.itemEntry.create({ data: { taskId, itemId: targetItemId, inspectorId: inspectorId || undefined, condition: condition as any, remarks: entryRecord?.remarks || undefined, cause: causeText || undefined, resolution: resolutionText || undefined } })
+                entryId = created.id
+              } catch (e) { console.error('completeTask:finalize failed to create fallback ItemEntry', e) }
+            }
+
             const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
             await prisma.contractChecklistItem.update({
               where: { id: targetItemId },

@@ -48,7 +48,45 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       const raw = (message || '').trim()
       const numMatch = /^\s*([1-5])\s*$/.exec(raw)
       const lower = raw.toLowerCase()
-      if (meta?.workOrderId && (meta?.currentLocation || meta?.currentTaskLocationName)) {
+      const dbg = (...a: any[]) => { if ((process.env.WHATSAPP_DEBUG || '').toLowerCase() !== 'false') console.log('[wh-guard]', ...a) }
+
+      // Job confirmation guard to prevent double confirm
+      if (meta?.jobStatus === 'confirming' && meta?.workOrderId) {
+        if (raw === '1' || lower === 'yes' || lower === 'y') {
+          dbg('confirm yes → startJob', { workOrderId: meta.workOrderId })
+          const res = await executeTool('startJob', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          try {
+            const data = JSON.parse(res)
+            const locs: string[] = data?.locationsFormatted || []
+            if (Array.isArray(locs) && locs.length > 0) {
+              const lines: string[] = []
+              lines.push('The job has been successfully started! Here are the locations available for inspection:')
+              lines.push('')
+              for (const l of locs) lines.push(l)
+              lines.push('')
+              lines.push('Next: reply with the location number (e.g., [1], [2], etc.).')
+              return lines.join('\\n')
+            }
+          } catch {}
+          return res
+        }
+        if (raw === '2' || lower === 'no' || lower === 'n') {
+          dbg('confirm no → edit menu')
+          return [
+            'What would you like to change about the job? Here are some options:',
+            '',
+            '[1] Different job selection',
+            '[2] Customer name update',
+            '[3] Property address change',
+            '[4] Time rescheduling',
+            '[5] Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)',
+            '',
+            'Next: reply [1-5] with your choice.'
+          ].join('\\n')
+        }
+      }
+      // Guard these steps as long as we have a workOrder context; location is not mandatory
+      if (meta?.workOrderId) {
         // Condition selection
         if (numMatch && (meta.taskFlowStage === 'condition' || !!meta.currentTaskId)) {
           const conditionNumber = Number(numMatch[1])
@@ -91,6 +129,51 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
+        }
+
+        // Numeric tasks selection mapping (lastMenu = tasks)
+        const taskPick = /^\s*(\d{1,2})\s*$/.exec(raw)
+        if (meta.lastMenu === 'tasks' && taskPick) {
+          const pick = Number(taskPick[1])
+          dbg('tasks-select', { pick })
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          const mc = data?.markCompleteNumber
+          const gb = data?.goBackNumber
+          if (mc && pick === mc) {
+            dbg('tasks-select markComplete')
+            const r = await executeTool('markLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId }, undefined, phoneNumber)
+            let rr: any = null; try { rr = JSON.parse(r) } catch {}
+            const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            return rr?.message ? `${rr.message}\\n\\n${locs}` : locs
+          }
+          if (gb && pick === gb) {
+            dbg('tasks-select goBack')
+            return await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          }
+          if (tasks.length > 0 && pick >= 1 && pick <= tasks.length) {
+            const chosen = tasks[pick - 1]
+            dbg('tasks-select start', { taskId: chosen?.id })
+            const start = await executeTool('completeTask', { phase: 'start', workOrderId: meta.workOrderId, taskId: chosen.id }, undefined, phoneNumber)
+            let st: any = null; try { st = JSON.parse(start) } catch {}
+            if (st?.success) {
+              return [
+                `Starting: ${chosen.description || 'Selected task'}`,
+                '',
+                'Set the condition for this task:',
+                '[1] Good',
+                '[2] Fair',
+                '[3] Un-Satisfactory',
+                '[4] Un-Observable',
+                '[5] Not Applicable',
+                '',
+                'Next: reply 1–5 to set the condition.'
+              ].join('\\n')
+            }
+            return 'There was an issue starting that task. Please pick a task again.'
+          }
         }
       }
     } catch (e) {
