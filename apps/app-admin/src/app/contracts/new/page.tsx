@@ -234,6 +234,13 @@ function NewContractPageContent() {
             .map((contract: any) => ({
               id: contract.id,
               label: `#${contract.id } • ${contract.status}`,
+              status: contract.status,
+              address: contract.address?.address ?? null,
+              postalCode: contract.address?.postalCode ?? null,
+              scheduledStartDate: contract.scheduledStartDate ?? null,
+              scheduledEndDate: contract.scheduledEndDate ?? null,
+              value: typeof contract.value === 'number' ? contract.value : Number(contract.value ?? 0),
+              workOrderCount: Array.isArray(contract.workOrders) ? contract.workOrders.length : 0,
             }))
         : []
       setAvailableReferences(options)

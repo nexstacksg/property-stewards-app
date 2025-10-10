@@ -68,13 +68,53 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       case 'getTodayJobs': {
         const t0 = Date.now()
         const { inspectorId, inspectorPhone } = args
-        let finalInspectorId = inspectorId || metadata.inspectorId
-        if (!finalInspectorId && inspectorPhone) {
-          let match = await getInspectorByPhone(inspectorPhone) as any
-          if (!match && inspectorPhone.startsWith('+')) match = await getInspectorByPhone(inspectorPhone.slice(1)) as any
-          if (!match && !inspectorPhone.startsWith('+')) match = await getInspectorByPhone('+' + inspectorPhone) as any
-          if (match) finalInspectorId = match.id
+        let finalInspectorId = metadata.inspectorId
+
+        // Normalize inputs
+        const candidate = typeof inspectorId === 'string' ? inspectorId.trim() : ''
+        const looksLikeId = /^[a-z0-9]{20,}$/i.test(candidate)
+        const hasSpaces = /\s/.test(candidate)
+        const candidateName = !looksLikeId || hasSpaces ? candidate : ''
+        let phone = typeof inspectorPhone === 'string' ? inspectorPhone.replace(/[\s-]/g, '') : ''
+        if (phone && !phone.startsWith('+')) phone = '+65' + phone
+
+        // Combined name+phone resolution if both provided
+        if (!finalInspectorId && candidateName && phone) {
+          try {
+            const variants = [phone, phone.startsWith('+') ? phone.slice(1) : ('+' + phone)]
+            const found = await prisma.inspector.findFirst({ where: { status: Status.ACTIVE, name: { equals: candidateName, mode: 'insensitive' }, OR: variants.map(v => ({ mobilePhone: v })) }, select: { id: true, name: true, mobilePhone: true } })
+            if (found?.id) {
+              finalInspectorId = found.id
+              if (sessionId) await updateSessionState(sessionId, { inspectorId: found.id, inspectorName: found.name, inspectorPhone: found.mobilePhone || phone })
+            }
+          } catch {}
         }
+
+        // If explicit id looks valid, accept
+        if (!finalInspectorId && looksLikeId && !hasSpaces) finalInspectorId = candidate
+
+        // Resolve by phone if needed
+        if (!finalInspectorId && phone) {
+          let match = await getInspectorByPhone(phone) as any
+          if (!match && phone.startsWith('+')) match = await getInspectorByPhone(phone.slice(1)) as any
+          if (!match && !phone.startsWith('+')) match = await getInspectorByPhone('+' + phone) as any
+          if (match) {
+            finalInspectorId = match.id
+            if (sessionId) await updateSessionState(sessionId, { inspectorId: match.id, inspectorName: match.name, inspectorPhone: match.mobilePhone || phone })
+          }
+        }
+
+        // Resolve by name if needed
+        if (!finalInspectorId && candidateName) {
+          try {
+            const byName = await prisma.inspector.findFirst({ where: { status: Status.ACTIVE, name: { equals: candidateName, mode: 'insensitive' } }, select: { id: true, name: true, mobilePhone: true } })
+            if (byName?.id) {
+              finalInspectorId = byName.id
+              if (sessionId) await updateSessionState(sessionId, { inspectorId: byName.id, inspectorName: byName.name, inspectorPhone: byName.mobilePhone })
+            }
+          } catch {}
+        }
+
         if (!finalInspectorId) {
           if (sessionId) await updateSessionState(sessionId, { inspectorId: undefined })
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
