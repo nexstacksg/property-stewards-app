@@ -40,16 +40,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     debugLog('start', { phoneNumber, len: message?.length })
     const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-5-nano').trim()
 
-    // Light enrichment on first contact: cache inspector metadata in history context
     const history = await loadHistory(phoneNumber)
-    if (history.length === 0) {
-      try {
-        const inspector = (await getInspectorByPhone('+' + phoneNumber)) || (await getInspectorByPhone(phoneNumber))
-        if (inspector) {
-          history.push({ role: 'system', content: `Inspector context: id=${inspector.id}, name=${inspector.name}, phone=${inspector.mobilePhone || ''}` })
-        }
-      } catch {}
-    }
 
     // Compose messages: system instructions + session hint + prior history + user
     const messages: any[] = []
