@@ -177,15 +177,52 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       case 'startJob': {
         const perf = process.env.WHATSAPP_PERF_LOG === 'true'
         const t0 = Date.now()
-        await updateWorkOrderStatus(args.jobId, 'in_progress')
+        // Resolve a valid work order id robustly to avoid P2025
+        let targetJobId: string | undefined = args.jobId
+        try {
+          if ((!targetJobId || typeof targetJobId !== 'string' || targetJobId.trim().length === 0) && sessionId) {
+            const s = await getSessionState(sessionId)
+            if (s?.workOrderId) targetJobId = s.workOrderId
+          }
+          // If still ambiguous or not found, try to map selection numbers to real ids from today's jobs
+          let exists = null as null | { id: string }
+          if (targetJobId) {
+            exists = await prisma.workOrder.findUnique({ where: { id: targetJobId }, select: { id: true } }) as any
+          }
+          const looksLikeSelection = targetJobId && /^\s*\d+\s*$/.test(targetJobId)
+          if (!exists && (looksLikeSelection || !targetJobId) && sessionId) {
+            const s = await getSessionState(sessionId)
+            const inspectorId = s?.inspectorId
+            if (inspectorId) {
+              const jobs = await getTodayJobsForInspector(inspectorId) as any[]
+              if (Array.isArray(jobs) && jobs.length > 0) {
+                if (looksLikeSelection) {
+                  const idx = Math.max(1, Number((targetJobId as string).trim())) - 1
+                  const chosen = jobs[idx]
+                  if (chosen?.id) targetJobId = chosen.id
+                }
+                // If still not found, but a previous confirmation stored the id, keep it
+              }
+            }
+            if (targetJobId) exists = await prisma.workOrder.findUnique({ where: { id: targetJobId }, select: { id: true } }) as any
+          }
+          if (!targetJobId || !exists) {
+            return JSON.stringify({ success: false, error: 'Invalid or unknown job id. Please pick a job again.' })
+          }
+        } catch (e) {
+          console.error('startJob: failed to resolve job id', e)
+          return JSON.stringify({ success: false, error: 'Failed to resolve job id' })
+        }
+
+        await updateWorkOrderStatus(targetJobId, 'in_progress')
         if (perf) console.log('[perf] tool:startJob updateWorkOrderStatus:', Date.now() - t0, 'ms')
-        dbg('startJob:status-updated', { jobId: args.jobId })
+        dbg('startJob:status-updated', { jobId: targetJobId })
         if (sessionId) {
           await updateSessionState(sessionId, { jobStatus: 'started' })
           try {
             const s = await getSessionState(sessionId)
             if (!s.inspectorId) {
-              const wo = await prisma.workOrder.findUnique({ where: { id: args.jobId }, select: { inspectors: { select: { id: true } } } }) as any
+              const wo = await prisma.workOrder.findUnique({ where: { id: targetJobId }, select: { inspectors: { select: { id: true } } } }) as any
               const derived = wo?.inspectors?.[0]?.id
               if (derived) await updateSessionState(sessionId, { inspectorId: derived })
             }
@@ -194,8 +231,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const t1 = Date.now()
         const includeProgress = (process.env.WHATSAPP_PROGRESS_ON_START ?? 'false').toLowerCase() !== 'false'
         const [locations, progress] = await Promise.all([
-          getLocationsWithCompletionStatus(args.jobId) as Promise<any[]>,
-          includeProgress ? (getWorkOrderProgress(args.jobId) as Promise<any>) : Promise.resolve(null)
+          getLocationsWithCompletionStatus(targetJobId) as Promise<any[]>,
+          includeProgress ? (getWorkOrderProgress(targetJobId) as Promise<any>) : Promise.resolve(null)
         ])
         dbg('startJob:locations-loaded', { locations: locations.length, includeProgress })
         if (perf) console.log('[perf] tool:startJob locations:', Date.now() - t1, 'ms', 'includeProgress=', includeProgress)
