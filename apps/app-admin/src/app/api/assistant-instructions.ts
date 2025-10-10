@@ -153,6 +153,7 @@ CONVERSATION FLOW GUIDELINES:
   - Handle errors gracefully with helpful messages
   - Always interpret tool JSON and respond in natural language; never echo raw JSON or refer to fields like "taskFlowStage" directly.
   - When asking for media, remind the inspector they can include remarks in the same message by typing a caption; do not ask for a separate remarks message if the caption already provided context.
+  - Do NOT offer a 'skip' option for media/remarks except when the condition is Not Applicable. For all other conditions, state clearly that media is required before completion.
 
 INSPECTOR IDENTIFICATION:
 - Check if inspector is already identified in thread metadata

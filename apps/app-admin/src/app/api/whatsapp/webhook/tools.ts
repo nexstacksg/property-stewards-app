@@ -424,6 +424,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         // Update item status
         try {
           const s = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
+          const exist = await prisma.contractChecklistItem.findUnique({ where: { id: contractChecklistItemId }, select: { id: true } })
+          if (!exist) return JSON.stringify({ success: false, error: 'Checklist item not found.' })
           await prisma.contractChecklistItem.update({
             where: { id: contractChecklistItemId },
             data: { status: 'COMPLETED', enteredOn: new Date(), enteredById: s.inspectorId || undefined }
@@ -599,30 +601,22 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks: combinedRemarks, cause: latest.pendingTaskCause || undefined, resolution: resolutionRaw } })
           }
           await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
-          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Resolution saved. You can now send photos/videos with remarks (as caption), or type \"skip\" to continue.' })
+          const condUpper = String(latest.currentTaskCondition || '').toUpperCase()
+          const msg = condUpper === 'NOT_APPLICABLE'
+            ? 'Resolution saved. You can now send photos/videos with remarks (as caption), or type \"skip\" to continue.'
+            : 'Resolution saved. Please send photos/videos with remarks (as caption). Media is required for this condition.'
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message: msg })
         }
 
         if (phase === 'skip_media') {
-          let message: string | undefined
-          if (sessionId) {
-            const latest = await getSessionState(sessionId)
-            const cond = (latest.currentTaskCondition || '').toUpperCase()
-            await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
-            if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
-              let cause = latest.pendingTaskCause || ''
-              let resolution = latest.pendingTaskResolution || ''
-              if (latest.currentTaskEntryId && (!cause || !resolution)) {
-                try {
-                  const entry = await prisma.itemEntry.findUnique({ where: { id: latest.currentTaskEntryId }, select: { cause: true, resolution: true } })
-                  cause = cause || (entry?.cause || '')
-                  resolution = resolution || (entry?.resolution || '')
-                } catch {}
-              }
-              const crLine = `\n📝 Cause: ${cause || '-'} | Resolution: ${resolution || '-'}`
-              message = `Okay, skipping media for now.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
-            }
+          if (!sessionId) return JSON.stringify({ success: false, error: 'Session required to skip media.' })
+          const latest = await getSessionState(sessionId)
+          const cond = (latest.currentTaskCondition || '').toUpperCase()
+          if (cond !== 'NOT_APPLICABLE') {
+            return JSON.stringify({ success: false, error: 'Media is required for this condition. Please send at least one photo (you can add remarks as a caption).' })
           }
-          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true, message: message || 'Okay, skipping media for now.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.' })
+          await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
+          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true, message: 'Okay, skipping media for this Not Applicable condition.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.' })
         }
 
         if (phase === 'set_remarks') {
@@ -632,7 +626,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
 
           const remarksRaw = (args.remarks ?? args.notes ?? '') as string
           const remarks = remarksRaw.trim()
-          const shouldSkipRemarks = !remarks || remarks.toLowerCase() === 'skip' || remarks.toLowerCase() === 'no'
+          const condUpper = (session.currentTaskCondition || '').toUpperCase()
+          const allowSkip = condUpper === 'NOT_APPLICABLE'
+          const shouldSkipRemarks = allowSkip && (!remarks || remarks.toLowerCase() === 'skip' || remarks.toLowerCase() === 'no')
 
           let inspectorId = session.inspectorId || null
           if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
@@ -713,6 +709,12 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               }
             }
           } else {
+            // Treat taskId as a possible contractChecklistItem id (no checklistTask found)
+            const itemCheck = await prisma.contractChecklistItem.findUnique({ where: { id: taskId }, select: { id: true } })
+            if (!itemCheck) {
+              console.error('finalize: neither checklistTask nor checklistItem found', { taskId })
+              return JSON.stringify({ success: false, error: 'Task not found for completion.' })
+            }
             await prisma.contractChecklistItem.update({
               where: { id: taskId },
               data: {
@@ -722,7 +724,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
                 enteredById: inspectorId || undefined
               }
             })
-          }
+            }
 
           let entryRecord: { photos?: string[]; remarks?: string | null; cause?: string | null; resolution?: string | null } | null = null
           if (entryId) {
@@ -764,6 +766,15 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
             }
 
+            if (!targetItemId) {
+              console.error('finalize: missing targetItemId for completion', { taskId })
+              return JSON.stringify({ success: false, error: 'Unable to derive checklist item for this task.' })
+            }
+            const itemExists = await prisma.contractChecklistItem.findUnique({ where: { id: targetItemId }, select: { id: true } })
+            if (!itemExists) {
+              console.error('finalize: contractChecklistItem not found', { targetItemId, taskId })
+              return JSON.stringify({ success: false, error: 'Checklist location not found for this task.' })
+            }
             const remaining = await prisma.checklistTask.count({ where: { itemId: targetItemId, status: { not: 'COMPLETED' } } })
             await prisma.contractChecklistItem.update({
               where: { id: targetItemId },
@@ -786,7 +797,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               }
             }
           } else {
-            await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: 'PENDING' } })
+            if (targetItemId) {
+              try {
+                await prisma.contractChecklistItem.update({ where: { id: targetItemId }, data: { status: 'PENDING' } })
+              } catch (e) {
+                console.error('finalize: failed to reset contractChecklistItem status', { targetItemId, error: e })
+              }
+            }
             if (task?.locationId) {
               try {
                 await prisma.contractChecklistLocation.update({ where: { id: task.locationId }, data: { status: 'PENDING' } })
@@ -843,6 +860,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         let itemId = (s as any).currentItemId as string
         if (!itemId) itemId = (await getContractChecklistItemIdByLocation(args.workOrderId, loc)) as any
         if (!itemId) return JSON.stringify({ success: false, error: 'Unable to resolve checklist item' })
+        const exists = await prisma.contractChecklistItem.findUnique({ where: { id: itemId }, select: { id: true } })
+        if (!exists) return JSON.stringify({ success: false, error: 'Checklist item not found' })
         await prisma.contractChecklistItem.update({ where: { id: itemId }, data: { condition: condition as any, status: 'COMPLETED' } })
         const mediaRequired = condition !== 'GOOD' && condition !== 'NOT_APPLICABLE' && condition !== 'UN_OBSERVABLE'
         const locs2 = await getLocationsWithCompletionStatus(args.workOrderId) as any[]
