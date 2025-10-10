@@ -64,7 +64,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
     // Loop for tool calls
     let rounds = 0
-    const maxRounds = Number(process.env.WHATSAPP_TOOL_ROUNDS_MAX ?? 3)
+    const maxRounds = Number(process.env.WHATSAPP_TOOL_ROUNDS_MAX ?? 8)
     let lastAssistantMsg: any = null
     while (rounds < maxRounds) {
       let completion: any
@@ -107,7 +107,22 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       break
     }
 
-    const finalText = (lastAssistantMsg?.content || '').toString().trim()
+    let finalText = (lastAssistantMsg?.content || '').toString().trim()
+    // If we hit the round limit or no text yet, try a final pass forcing text
+    if (!finalText) {
+      try {
+        const finalPass = await openai.chat.completions.create({
+          model,
+          messages,
+          tools,
+          tool_choice: 'none' as any,
+          temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2)
+        })
+        finalText = (finalPass.choices?.[0]?.message?.content || '').toString().trim()
+      } catch (e) {
+        debugLog('final text pass failed', e)
+      }
+    }
     // Update history: user + possibly assistant tool call stub + tool outputs + final assistant
     const toAppend: ChatMessage[] = []
     toAppend.push({ role: 'user', content: message })

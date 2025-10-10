@@ -1,17 +1,18 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
-export const COLUMN_WIDTHS = [40, 95, 150, 90, 150]
+export const COLUMN_WIDTHS = [40, 120, 120, 120, 123]
 export const TABLE_MARGIN = 36
 const TABLE_WIDTH = COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0)
 const CELL_PADDING = 8
-const PHOTO_HEIGHT = 40
+const PHOTO_HEIGHT = 96
+const PHOTO_WIDTH=60
 const PHOTO_CAPTION_GAP = 2
 const PHOTO_CAPTION_FONT_SIZE = 8
 const PHOTO_CAPTION_COLOR = "#475569"
 const VIDEO_HEIGHT = 48
 const MAX_MEDIA_LINKS = 4
-const MEDIA_PER_ROW = 2
+const MEDIA_PER_ROW = 1
 const MEDIA_GUTTER = 8
 const SEGMENT_SPACING = 12
 const LOGO_PATH = join(process.cwd(), "public", "logo.png")
@@ -21,6 +22,20 @@ export const LOGO_ASPECT_RATIO = LOGO_ORIGINAL_HEIGHT / LOGO_ORIGINAL_WIDTH
 
 let LOGO_BUFFER: Buffer | null | undefined
 let PDFDocumentCtor: any | null = null
+
+export function drawFooter(doc: any) {
+  const text = "Prepared by Property Stewards PTE. LTD © 2025"
+  const width = doc.page.width - TABLE_MARGIN * 2
+  const y = doc.page.height - (TABLE_MARGIN / 2)
+  const x = TABLE_MARGIN
+  const prevY = doc.y
+  doc.save()
+  doc.font("Helvetica").fontSize(8).fillColor("#6b7280")
+  doc.text(text, x, y, { width, align: "center" })
+  doc.restore()
+  // restore pointer so footer drawing never affects layout
+  doc.y = prevY
+}
 
 export async function getPDFDocumentCtor() {
   if (!PDFDocumentCtor) {
@@ -122,7 +137,7 @@ type TableRow = [TableCell, TableCell, TableCell, TableCell, TableCell]
 
 type TableRowInfo = {
   cells: TableRow
-  summaryMedia?: CellSegment
+  summaryMedia?: CellSegment | CellSegment[]
 }
 
 function normalizeConditionValue(value: unknown): string | null {
@@ -177,16 +192,15 @@ function preparePhotoLayout(
     }
   }
 
-  const usableWidth = availableWidth - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
-  const thumbWidth = usableWidth / MEDIA_PER_ROW
-  const rows = Math.ceil(photoCount / MEDIA_PER_ROW)
+  const thumbWidth = availableWidth
+  const rows = photoCount
   const rowHeights = new Array(rows).fill(PHOTO_HEIGHT)
   const normalizedCaptions = captions ?? []
 
   doc.save()
   doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE)
   for (let index = 0; index < photoCount; index += 1) {
-    const row = Math.floor(index / MEDIA_PER_ROW)
+    const row = index
     const captionValue = normalizedCaptions[index]
     const caption = typeof captionValue === 'string' ? captionValue.trim() : ''
     if (!caption) continue
@@ -210,32 +224,37 @@ function preparePhotoLayout(
   return { thumbWidth, rowHeights, totalHeight }
 }
 
+function resolveEntryAuthor(entry: EntryLike) {
+  const inspectorName = entry.inspector?.name?.trim()
+  if (inspectorName) return inspectorName
+  const userName = entry.user?.username?.trim()
+  if (userName) return userName
+  const userEmail = entry.user?.email?.trim()
+  if (userEmail) return userEmail
+  return "Team member"
+}
+
 function formatEntryLine(entry: EntryLike) {
-  const metaParts: string[] = []
-
-  if (entry.inspector?.name) {
-    metaParts.push(`Inspector: ${entry.inspector.name}`)
-  }
-
-  const userName = entry.user?.username || entry.user?.email
-  if (userName) {
-    metaParts.push(`Admin: ${userName}`)
-  }
+  const lines: string[] = []
 
   const recordedAt = formatDateTime(entry.createdOn)
   if (recordedAt) {
-    metaParts.push(`Recorded: ${recordedAt}`)
+    lines.push(`Recorded on: ${recordedAt}`)
   }
 
-  if (metaParts.length === 0) {
-    metaParts.push("Inspector: Team member")
-  }
+  lines.push(`Recorded by: ${resolveEntryAuthor(entry)}`)
 
-  const lines = [metaParts.join(" • ")]
-  const remarkText = entry.remarks?.trim()
-  if (remarkText && remarkText.length > 0) {
-    lines.push(`Remarks: ${remarkText}`)
-  }
+  const condition = formatEnum(entry.condition) || "N/A"
+  lines.push(`Condition: ${condition}`)
+
+  const remarks = entry.remarks?.trim() ?? ""
+  lines.push(`Remarks: ${remarks.length > 0 ? remarks : '—'}`)
+
+  const cause = entry.cause?.trim() ?? ""
+  lines.push(`Cause: ${cause.length > 0 ? cause : '—'}`)
+
+  const resolution = entry.resolution?.trim() ?? ""
+  lines.push(`Resolution: ${resolution.length > 0 ? resolution : '—'}`)
 
   return lines.join("\n")
 }
@@ -273,16 +292,6 @@ function buildVideoItems(urls: string[]) {
         ? [`• +${overflowCount} more video link(s)`]
         : []
   }
-}
-
-function buildInspectorMeta(inspectorName?: string | null, recordedOn?: Date | string | null) {
-  const parts: string[] = []
-  parts.push(`Inspector: ${inspectorName || "Team member"}`)
-  const recorded = formatDateTime(recordedOn)
-  if (recorded) {
-    parts.push(`Recorded: ${recorded}`)
-  }
-  return parts.join(' • ')
 }
 
 async function buildRemarkSegment({
@@ -436,89 +445,16 @@ async function buildTableRows(
       .filter((entry: any) => entry?.includeInReport !== false)
       .filter((entry: any) => isConditionAllowed(entry?.condition, allowedConditions))
 
-    const itemSummarySegments: CellSegment[] = []
     const seenItemPhotos = new Set<string>()
     const seenItemVideos = new Set<string>()
-
-    const itemPhotoEntries = mergePhotoEntries(
-      fromMedia((item as any)?.media),
-      toPhotoEntries(item.photos)
-    )
-
-    const itemMetaLine = buildInspectorMeta(item.enteredBy?.name, item.enteredOn)
-
-    let summaryMedia: CellSegment | undefined
-
-    if (typeof item.remarks === "string" && item.remarks.trim().length > 0) {
-      const summaryLines: string[] = []
-      if (itemMetaLine && !itemMetaLine.startsWith('Inspector: Team member')) {
-        summaryLines.push(itemMetaLine)
-      }
-      summaryLines.push(`Summary - ${item.remarks.trim()}`)
-      const summaryRemarkSegment = await buildRemarkSegment({
-        text: summaryLines.join("\n"),
-        photoUrls: [],
-        videoUrls: [],
-        imageCache,
-        seenPhotos: undefined,
-        seenVideos: undefined
-      })
-      if (summaryRemarkSegment) {
-        itemSummarySegments.push(summaryRemarkSegment)
-      }
-
-      const summaryMediaSegment = await buildRemarkSegment({
-        text: undefined,
-        photoEntries: itemPhotoEntries,
-        videoUrls: Array.isArray(item.videos) ? item.videos : [],
-        imageCache,
-        seenPhotos: seenItemPhotos,
-        seenVideos: seenItemVideos
-      })
-      if (summaryMediaSegment) {
-        summaryMediaSegment.text = undefined
-        summaryMedia = summaryMediaSegment
-      }
-    } else if (
-      (Array.isArray(item.photos) && item.photos.length > 0) ||
-      (Array.isArray(item.videos) && item.videos.length > 0)
-    ) {
-      const mediaOnlySegment = await buildRemarkSegment({
-        text: itemMetaLine || undefined,
-        photoEntries: itemPhotoEntries,
-        videoUrls: Array.isArray(item.videos) ? item.videos : [],
-        imageCache,
-        seenPhotos: seenItemPhotos,
-        seenVideos: seenItemVideos
-      })
-      if (mediaOnlySegment) {
-        itemSummarySegments.push(mediaOnlySegment)
-      }
-    }
-
-    for (const entry of reportEntries as EntryLike[]) {
-      const entrySegment = await buildRemarkSegment({
-        text: formatEntryLine(entry),
-        photoEntries: entryPhotoEntries(entry),
-        videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
-        imageCache,
-        seenPhotos: seenItemPhotos,
-        seenVideos: seenItemVideos
-      })
-      if (entrySegment) {
-        itemSummarySegments.push(entrySegment)
-      }
-    }
 
     const itemName = item.name || item.item || `Checklist Item ${itemIndex + 1}`
     const formattedItemStatus = formatEnum(item.status ?? undefined)
     const itemStatusFallback = formattedItemStatus || "N/A"
     const itemNumber = itemIndex + 1
     const itemStatusSuffix = formattedItemStatus ? ` (${formattedItemStatus.toLowerCase()})` : ""
+    const locationDisplayName = `${itemName}${itemStatusSuffix}`
     const itemLocations = Array.isArray(item.locations) ? item.locations : []
-    const hasItemSummary = itemSummarySegments.length > 0 || Boolean(summaryMedia)
-    const hasLocationRemarks = itemLocations.some((loc: any) => typeof loc?.remarks === 'string' && loc.remarks.trim().length > 0)
-    const hasRemarkContent = hasItemSummary || hasLocationRemarks
     const tasks = Array.isArray(item.checklistTasks) ? [...item.checklistTasks] : []
     if (!tasks.some((task: any) => typeof task?.name === 'string' && task.name.trim().toLowerCase() === 'others')) {
       tasks.push({
@@ -591,96 +527,47 @@ async function buildTableRows(
     })
 
     if (groups.length === 0) {
-      const remarkCell: TableCell = hasRemarkContent
-        ? itemSummarySegments.length
-          ? { segments: itemSummarySegments }
-          : summaryMedia
-            ? { text: "See media below." }
-            : { text: "See item remarks." }
-        : { text: "No remarks provided." }
-
       rows.push({
         cells: [
           { text: String(itemNumber), bold: true },
-          { text: `${itemName}${itemStatusSuffix}`, bold: true },
-          { text: `${itemNumber}. ${itemName}${itemStatusSuffix}` },
-          { text: itemStatusFallback },
-          remarkCell
-        ],
-        summaryMedia
+          { text: locationDisplayName, bold: true },
+          { text: `${itemNumber}. ${itemName}` },
+          { text: 'No subtasks' },
+          { text: itemStatusFallback }
+        ]
       })
-
       continue
     }
 
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
       const group = groups[groupIndex]
-      const locationStatusRaw = group.location?.status ?? group.tasks.find((task: any) => task?.location)?.location?.status
-      const locationStatus = formatEnum(locationStatusRaw ?? undefined) || itemStatusFallback
+      const locationIndex = groupIndex + 1
+      const locationNumber = `${itemNumber}.${locationIndex}`
+      const itemColumnText = `${locationNumber} ${group.label}`
       const locationRemarkText = typeof group.location?.remarks === 'string' ? group.location.remarks.trim() : ''
       const locationSegments: CellSegment[] = []
       if (locationRemarkText.length > 0) {
         locationSegments.push({ text: locationRemarkText })
       }
-      const combinedSegments: CellSegment[] = [...locationSegments]
-      if (itemSummarySegments.length) {
-        combinedSegments.push(...itemSummarySegments)
-      }
-      const locationRemarkCell: TableCell = combinedSegments.length
-        ? { segments: combinedSegments }
-        : summaryMedia
-          ? { text: "See media below." }
-          : { text: "" }
-      const locationSummaryMedia = groupIndex === 0 ? summaryMedia : undefined
 
-      const locationIndex = groupIndex + 1
-      const locationNumber = `${itemNumber}.${locationIndex}`
+      const locationTasks = group.tasks
 
-      if (groupIndex === 0) {
-        const itemLine = `${itemNumber}. ${itemName}${itemStatusSuffix}`
-        const locationLine = `${locationNumber} ${group.label}`
-        const combinedItemText = `${locationLine}`
-
-        rows.push({
-          cells: [
-            { text: String(itemNumber), bold: true },
-            { text: `${itemName}${itemStatusSuffix}`, bold: true },
-            { text: combinedItemText, bold: true },
-            { text: locationStatus },
-            locationRemarkCell
-          ],
-          summaryMedia: locationSummaryMedia
-        })
-      } else {
-        rows.push({
-          cells: [
-            { text: "" },
-            { text: "" },
-            { text: `${locationNumber} ${group.label}` },
-            { text: locationStatus },
-            locationRemarkCell
-          ],
-          summaryMedia: locationSummaryMedia
-        })
-      }
-
-      for (let taskIdx = 0; taskIdx < group.tasks.length; taskIdx += 1) {
-        const task = group.tasks[taskIdx]
+      for (let taskIdx = 0; taskIdx < locationTasks.length; taskIdx += 1) {
+        const task = locationTasks[taskIdx]
         const taskConditionAllowed = isConditionAllowed(task?.condition, allowedConditions)
         const entries = Array.isArray(task.entries) ? task.entries : []
         const filteredEntries = entries
           .filter((entry: EntryLike) => (entry as any)?.includeInReport !== false)
           .filter((entry: EntryLike) => isConditionAllowed((entry as any)?.condition, allowedConditions))
-        const taskSegments: CellSegment[] = []
 
-        if (
-          taskConditionAllowed &&
-          ((Array.isArray(task.photos) && task.photos.length > 0) ||
-            (Array.isArray(task.videos) && task.videos.length > 0))
-        ) {
-          const taskMetaLine = buildInspectorMeta(task.inspector?.name, task.createdOn)
+        const rowSegments: CellSegment[] = []
+
+        if (locationSegments.length && taskIdx === 0) {
+          rowSegments.push(...locationSegments)
+        }
+        if (taskConditionAllowed) {
           const taskMediaSegment = await buildRemarkSegment({
-            text: taskMetaLine,
+            text: undefined,
             photoEntries: mergePhotoEntries(
               fromMedia((task as any)?.media),
               toPhotoEntries(task.photos)
@@ -690,42 +577,69 @@ async function buildTableRows(
             seenPhotos: seenItemPhotos,
             seenVideos: seenItemVideos
           })
-          if (taskMediaSegment) {
-            taskSegments.push(taskMediaSegment)
-          }
-        }
-
-        for (const entry of filteredEntries as EntryLike[]) {
-          const taskEntrySegment = await buildRemarkSegment({
-            text: formatEntryLine(entry),
-            photoEntries: entryPhotoEntries(entry),
-            videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
-          if (taskEntrySegment) {
-            taskSegments.push(taskEntrySegment)
+          if (taskMediaSegment && (taskMediaSegment.text || taskMediaSegment.photos?.length)) {
+            rowSegments.push(taskMediaSegment)
           }
         }
 
         const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
         const taskNumber = `${locationNumber}.${taskIdx + 1}`
-        const taskLabel = `${taskNumber} ${task.name || "Subtask"}`
+        const subtaskLabel = `${taskNumber} ${task.name || 'Subtask'}`
 
-        if (!taskConditionAllowed && taskSegments.length === 0) {
+        if (!taskConditionAllowed && rowSegments.length === 0 && filteredEntries.length === 0) {
           continue
         }
 
+        if (rowSegments.length === 0 && taskConditionAllowed && filteredEntries.length === 0) {
+          rowSegments.push({ text: "No remarks recorded." })
+        }
+
+        const baseRow: TableRow = [
+          { text: groupIndex === 0 && taskIdx === 0 ? String(itemNumber) : '' },
+          { text: locationDisplayName },
+          { text: itemColumnText },
+          { text: subtaskLabel },
+          { text: conditionText }
+        ]
+
         rows.push({
-          cells: [
-            { text: "" },
-            { text: "" },
-            { text: taskLabel },
-            { text: conditionText },
-            taskSegments.length ? { segments: taskSegments } : { text: "" }
-          ]
+          cells: baseRow,
+          summaryMedia: rowSegments.length ? [...rowSegments] : undefined
         })
+
+        if (filteredEntries.length > 0) {
+          const entrySegments: (CellSegment | null)[] = []
+          for (const entry of filteredEntries as EntryLike[]) {
+            const entrySegment = await buildRemarkSegment({
+              text: formatEntryLine(entry),
+              photoEntries: entryPhotoEntries(entry),
+              videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+              imageCache,
+              seenPhotos: seenItemPhotos,
+              seenVideos: seenItemVideos
+            })
+            entrySegments.push(entrySegment)
+          }
+
+          const chunkSize = 4
+          for (let offset = 0; offset < entrySegments.length; offset += chunkSize) {
+            const chunk = entrySegments.slice(offset, offset + chunkSize)
+            const chunkCells: TableRow = [
+              { text: '' },
+              { text: '' },
+              { text: '' },
+              { text: '' },
+              { text: '' }
+            ]
+
+            chunk.forEach((segment, segmentIndex) => {
+              if (!segment) return
+              chunkCells[segmentIndex + 1] = { segments: [segment] }
+            })
+
+            rows.push({ cells: chunkCells })
+          }
+        }
       }
     }
   }
@@ -829,10 +743,8 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
       }
 
       photos.forEach((buffer, index) => {
-        const col = index % MEDIA_PER_ROW
-        const row = Math.floor(index / MEDIA_PER_ROW)
-        const drawX = x + CELL_PADDING + col * (thumbWidth + MEDIA_GUTTER)
-        const drawY = rowStartYs[row]
+        const drawX = x + CELL_PADDING
+        const drawY = rowStartYs[index]
 
         try {
           doc.image(buffer, drawX, drawY, {
@@ -871,14 +783,11 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
 
     const drawVideos = (startY: number, videos?: VideoItem[]) => {
       if (!videos || videos.length === 0) return 0
-      const usableWidth = width - CELL_PADDING * 2 - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
-      const cardWidth = usableWidth / MEDIA_PER_ROW
-      const rows = Math.ceil(videos.length / MEDIA_PER_ROW)
+      const cardWidth = width - CELL_PADDING * 2
+      const rows = videos.length
       videos.forEach((_video, index) => {
-        const col = index % MEDIA_PER_ROW
-        const row = Math.floor(index / MEDIA_PER_ROW)
-        const drawX = x + CELL_PADDING + col * (cardWidth + MEDIA_GUTTER)
-        const drawY = startY + row * (VIDEO_HEIGHT + MEDIA_GUTTER)
+        const drawX = x + CELL_PADDING
+        const drawY = startY + index * (VIDEO_HEIGHT + MEDIA_GUTTER)
         doc.save()
         doc.roundedRect(drawX, drawY, cardWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
 
@@ -1001,7 +910,7 @@ function calculateMediaBlocksHeight(doc: any, segments?: CellSegment | CellSegme
       if (mediaHeight > 0) {
         mediaHeight += MEDIA_GUTTER
       }
-      const rows = Math.ceil(videos.length / MEDIA_PER_ROW)
+      const rows = videos.length
       mediaHeight += rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
     }
 
@@ -1056,7 +965,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       if (photoHeight > 0) {
         videoHeight += MEDIA_GUTTER
       }
-      const rows = Math.ceil(videos.length / MEDIA_PER_ROW)
+      const rows = videos.length
       videoHeight += rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
     }
 
@@ -1097,10 +1006,8 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       }
 
       photos.forEach((buffer, photoIndex) => {
-        const col = photoIndex % MEDIA_PER_ROW
-        const row = Math.floor(photoIndex / MEDIA_PER_ROW)
-        const drawX = TABLE_MARGIN + CELL_PADDING + col * (thumbWidth + MEDIA_GUTTER)
-        const drawY = rowStartYs[row]
+        const drawX = TABLE_MARGIN + CELL_PADDING
+        const drawY = rowStartYs[photoIndex]
 
         try {
           doc.image(buffer, drawX, drawY, {
@@ -1139,13 +1046,10 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
 
     const drawFullWidthVideos = (start: number) => {
       if (!hasVideos) return 0
-      const usableWidth = contentWidth - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
-      const cardWidth = usableWidth / MEDIA_PER_ROW
+      const cardWidth = contentWidth
       videos.forEach((_video, videoIndex) => {
-        const col = videoIndex % MEDIA_PER_ROW
-        const row = Math.floor(videoIndex / MEDIA_PER_ROW)
-        const drawX = TABLE_MARGIN + CELL_PADDING + col * (cardWidth + MEDIA_GUTTER)
-        const drawY = start + row * (VIDEO_HEIGHT + MEDIA_GUTTER)
+        const drawX = TABLE_MARGIN + CELL_PADDING
+        const drawY = start + videoIndex * (VIDEO_HEIGHT + MEDIA_GUTTER)
         doc.save()
         doc.roundedRect(drawX, drawY, cardWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
 
@@ -1267,9 +1171,9 @@ export async function appendWorkOrderSection(
   const headerRow: TableCell[] = [
     { text: "S/N", bold: true },
     { text: "Location", bold: true },
-    { text: "Item / Subtask", bold: true },
-    { text: "Status / Condition", bold: true },
-    { text: "Remarks / Media", bold: true }
+    { text: "Item", bold: true },
+    { text: "Subtasks", bold: true },
+    { text: "Status", bold: true }
   ]
 
   const headerHeight = drawTableRow(doc, y, headerRow, { header: true })
@@ -1281,6 +1185,8 @@ export async function appendWorkOrderSection(
       + calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
 
     if (requiredHeight > remainingSpace) {
+      // Draw footer on current page before moving to the next
+      // drawFooter(doc)
       doc.addPage()
       y = TABLE_MARGIN
       const headerAgainHeight = drawTableRow(doc, y, headerRow, { header: true })
@@ -1296,6 +1202,7 @@ export async function appendWorkOrderSection(
     }
   })
 
-  doc.moveDown()
+  // Footer for the last page of this section (does not change doc.y)
+  // drawFooter(doc)
 }
  
