@@ -5,8 +5,7 @@ export const COLUMN_WIDTHS = [40, 120, 120, 120, 123]
 export const TABLE_MARGIN = 36
 const TABLE_WIDTH = COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0)
 const CELL_PADDING = 8
-const PHOTO_HEIGHT = 96
-const PHOTO_WIDTH=60
+const PHOTO_HEIGHT = 70
 const PHOTO_CAPTION_GAP = 2
 const PHOTO_CAPTION_FONT_SIZE = 8
 const PHOTO_CAPTION_COLOR = "#475569"
