@@ -34,6 +34,9 @@ export type ChatSessionState = {
   propertyAddress?: string
   postalCode?: string
   jobStatus?: 'none' | 'confirming' | 'started'
+  // job edit flow during confirmation
+  jobEditMode?: 'menu' | 'await_value'
+  jobEditType?: 'customer' | 'address' | 'time' | 'status'
 
   // inspection context
   currentLocation?: string
