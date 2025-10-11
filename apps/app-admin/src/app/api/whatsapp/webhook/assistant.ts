@@ -3,7 +3,7 @@ import OpenAI from 'openai'
 import { cacheGetJSON, cacheSetJSON } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
 import { INSTRUCTIONS } from '@/app/api/assistant-instructions'
-import { getSessionState } from '@/lib/chat-session'
+import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
 const debugLog = (...args: unknown[]) => {
@@ -163,6 +163,91 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
         }
 
+        // Location selection: numeric reply while viewing locations list
+        if (numMatch && (meta.lastMenu === 'locations' || (meta.workOrderId && !meta.currentLocation))) {
+          const pick = Number(numMatch[1])
+          dbg('locations-select', { pick })
+          const locRes = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let locData: any = null
+          try { locData = JSON.parse(locRes) } catch {}
+          const list = Array.isArray(locData?.locations) ? locData.locations : []
+          if (!list || list.length === 0) {
+            return 'No locations were found for this job. Please try refreshing your jobs.'
+          }
+          if (pick < 1 || pick > list.length) {
+            const options = (locData?.locationsFormatted || []).join('\n')
+            return `That location number isn't valid.\n\n${options}\n\nNext: reply with the number of the location you want to inspect.`
+          }
+          const chosen = list[pick - 1]
+          // Proactively update session with the chosen location to avoid stale context
+          try {
+            await updateSessionState(phoneNumber, {
+              currentLocation: chosen?.name,
+              currentLocationId: chosen?.contractChecklistItemId,
+              currentSubLocationId: undefined,
+              currentSubLocationName: undefined,
+              lastMenu: 'locations',
+              lastMenuAt: new Date().toISOString(),
+              currentTaskId: undefined,
+              currentTaskName: undefined,
+              currentTaskEntryId: undefined,
+              currentTaskCondition: undefined
+            })
+          } catch {}
+          const hasSubs = Array.isArray(chosen?.subLocations) && chosen.subLocations.length > 0
+          if (hasSubs) {
+            const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: chosen.contractChecklistItemId, locationName: chosen.name }, undefined, phoneNumber)
+            let subData: any = null
+            try { subData = JSON.parse(subRes) } catch {}
+            const formatted: string[] = subData?.subLocationsFormatted || []
+            if (!formatted.length) {
+              const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phoneNumber)
+              let data: any = null
+              try { data = JSON.parse(tasksRes) } catch {}
+              const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+              if (tasks.length === 0) return 'No tasks found for this location.'
+              const lines: string[] = []
+              lines.push(`In ${chosen.name}, here are the tasks available for inspection:`)
+              lines.push('')
+              for (const t of tasks) {
+                const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+                lines.push(`[${t.number}] ${t.description}${status}`)
+              }
+              lines.push(`[${tasks.length + 1}] Go back`)
+              lines.push('')
+              lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+              return lines.join('\n')
+            }
+            const header = `You've selected ${chosen.name}. Here are the available sub-locations:`
+            const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+            return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
+          }
+          // No sub-locations → show tasks directly
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          // Ensure lastMenu reflects tasks
+          try {
+            await updateSessionState(phoneNumber, {
+              lastMenu: 'tasks',
+              lastMenuAt: new Date().toISOString(),
+            })
+          } catch {}
+          if (tasks.length === 0) return 'No tasks found for this location.'
+          const lines: string[] = []
+          lines.push(`In ${chosen.name}, here are the tasks available for inspection:`)
+          lines.push('')
+          for (const t of tasks) {
+            const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+            lines.push(`[${t.number}] ${t.description}${status}`)
+          }
+          lines.push(`[${tasks.length + 1}] Go back`)
+          lines.push('')
+          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          return lines.join('\n')
+        }
+
         // Numeric tasks selection mapping (lastMenu = tasks)
         const taskPick = /^\s*(\d{1,2})\s*$/.exec(raw)
         if (meta.lastMenu === 'tasks' && taskPick) {
@@ -179,7 +264,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             const r = await executeTool('markLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId }, undefined, phoneNumber)
             let rr: any = null; try { rr = JSON.parse(r) } catch {}
             const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
-            return rr?.message ? `${rr.message}\\n\\n${locs}` : locs
+            let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+            const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            const body = formattedLocations.length > 0
+              ? [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\\n')
+              : 'Locations refreshed. Reply with the location number to continue.'
+            return rr?.message ? `${rr.message}\\n\\n${body}` : body
           }
           if (gb && pick === gb) {
             dbg('tasks-select goBack')
