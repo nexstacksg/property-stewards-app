@@ -237,7 +237,7 @@ async function upsertWorkOrderCaches(prismaWorkOrder: any, previousInspectorIds:
   }
 }
 
-async function refreshChecklistItemCache(itemId: string) {
+export async function refreshChecklistItemCache(itemId: string) {
   try {
     const item = await prisma.contractChecklistItem.findUnique({
       where: { id: itemId },
@@ -719,13 +719,17 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
         }
       } else {
         const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
-        totalTasks = tasks.length || 1
+        totalTasks = tasks.length
         completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
       }
 
+      // Completion rules:
+      // - If sub-locations exist: location is completed only when all sub-locations are completed
+      // - If no sub-locations and tasks exist: completed only when all tasks are completed
+      // - If no tasks exist: fall back to item.status
       const isCompleted = hasLocations
         ? locationSummaries.length > 0 && locationSummaries.every((loc: any) => loc.status === 'COMPLETED')
-        : item.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
+        : (totalTasks > 0 ? (completedTasks === totalTasks) : (item.status === 'COMPLETED'))
 
       return {
         id: item.id,
