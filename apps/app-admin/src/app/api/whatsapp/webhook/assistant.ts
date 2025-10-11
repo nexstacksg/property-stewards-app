@@ -87,8 +87,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       }
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
-        // Condition selection
-        if (numMatch && (meta.taskFlowStage === 'condition' || !!meta.currentTaskId)) {
+        // Condition selection (only when in condition stage)
+        if (numMatch && meta.taskFlowStage === 'condition') {
           const conditionNumber = Number(numMatch[1])
           const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
           let data: any = null
@@ -129,6 +129,38 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
+        }
+
+        // Finalize confirmation step: [1] complete, [2] not yet
+        if (numMatch && meta.taskFlowStage === 'confirm') {
+          const pick = Number(numMatch[1])
+          if (pick === 1 || pick === 2) {
+            dbg('finalize → completeTask', { completed: pick === 1 })
+            const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, completed: pick === 1 }, undefined, phoneNumber)
+            let f: any = null
+            try { f = JSON.parse(finalize) } catch {}
+            if (!f?.success && typeof f?.error === 'string') {
+              return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
+            }
+            // Refresh tasks list to show updated state
+            const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(tasksRes) } catch {}
+            const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+            const locName = meta.currentTaskLocationName || meta.currentSubLocationName || meta.currentLocation || 'this location'
+            const lines: string[] = []
+            lines.push(`In ${locName}, here are the tasks available for inspection:`)
+            lines.push('')
+            for (const t of tasks) {
+              const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+              lines.push(`[${t.number}] ${t.description}${status}`)
+            }
+            lines.push(`[${tasks.length + 1}] Go back`)
+            lines.push('')
+            lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+            const header = (f?.message && typeof f.message === 'string') ? f.message : null
+            return header ? `${header}\n\n${lines.join('\n')}` : lines.join('\n')
+          }
         }
 
         // Numeric tasks selection mapping (lastMenu = tasks)

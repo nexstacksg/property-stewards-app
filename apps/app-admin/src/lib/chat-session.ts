@@ -81,6 +81,13 @@ export async function getSessionState(sessionId: string): Promise<ChatSessionSta
   const t0 = Date.now()
   const state = await cacheGetJSON<ChatSessionState>(key)
   const out = state || {}
+  // Verbose session logging for observability in Vercel logs
+  try {
+    const logSessions = (process.env.WHATSAPP_LOG_SESSIONS ?? 'true').toLowerCase() !== 'false'
+    if (logSessions) {
+      console.log('[sess:get:state]', { sessionId, state: out })
+    }
+  } catch {}
   try {
     const dbg = (process.env.WHATSAPP_DEBUG || '').toLowerCase()
     if (dbg && dbg !== 'false') {
