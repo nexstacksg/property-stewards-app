@@ -248,6 +248,85 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           return lines.join('\n')
         }
 
+        // Sub-location selection: numeric reply while viewing sub-locations list
+        if (numMatch && (meta.lastMenu === 'sublocations' || (meta.workOrderId && meta.currentLocation && !meta.currentSubLocationId))) {
+          const pick = Number(numMatch[1])
+          const latest = await getSessionState(phoneNumber)
+          const itemId = latest.currentLocationId
+          if (!itemId) {
+            // Fallback: reload locations and let user re-pick
+            const locRes = await executeTool('getJobLocations', { jobId: latest.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locRes) } catch {}
+            const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
+          }
+          // Resolve available sub-locations from cached mapping or tool
+          let subs: Array<{ id: string; name: string; status: string }> | undefined
+          const map = (latest as any).locationSubLocations as Record<string, Array<{ id: string; name: string; status: string }>> | undefined
+          if (map && map[itemId]) subs = map[itemId]
+          if (!subs) {
+            const subRes = await executeTool('getSubLocations', { workOrderId: latest.workOrderId, contractChecklistItemId: itemId, locationName: latest.currentLocation }, undefined, phoneNumber)
+            let subData: any = null; try { subData = JSON.parse(subRes) } catch {}
+            subs = Array.isArray(subData?.subLocations) ? subData.subLocations : []
+          }
+          const options = Array.isArray(subs) ? subs : []
+          if (options.length === 0) {
+            // No sub-locations → show tasks directly
+            const tasksRes = await executeTool('getTasksForLocation', { workOrderId: latest.workOrderId, location: latest.currentLocation, contractChecklistItemId: itemId }, undefined, phoneNumber)
+            let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
+            const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+            if (tasks.length === 0) return 'No tasks found for this location.'
+            const lines: string[] = []
+            lines.push(`In ${latest.currentLocation}, here are the tasks available for inspection:`)
+            lines.push('')
+            for (const t of tasks) {
+              const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+              lines.push(`[${t.number}] ${t.description}${status}`)
+            }
+            lines.push(`[${tasks.length + 1}] Go back`)
+            lines.push('')
+            lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+            try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString() }) } catch {}
+            return lines.join('\n')
+          }
+          const backNumber = options.length + 1
+          if (pick === backNumber) {
+            const locRes = await executeTool('getJobLocations', { jobId: latest.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locRes) } catch {}
+            const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            try { await updateSessionState(phoneNumber, { lastMenu: 'locations', lastMenuAt: new Date().toISOString(), currentSubLocationId: undefined, currentSubLocationName: undefined }) } catch {}
+            return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
+          }
+          if (pick < 1 || pick > backNumber) {
+            const formatted = options.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
+            const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+            return `That sub-location number isn't valid.\n\n${withBack.join('\n')}\n\nNext: reply with your sub-location choice, or [${withBack.length}] to go back.`
+          }
+          const chosenSub = options[pick - 1]
+          // Persist selected sub-location to session and fetch tasks
+          try {
+            await updateSessionState(phoneNumber, { currentSubLocationId: chosenSub.id, currentSubLocationName: chosenSub.name })
+          } catch {}
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: latest.workOrderId, location: latest.currentLocation, contractChecklistItemId: itemId, subLocationId: chosenSub.id }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          if (tasks.length === 0) return 'No tasks found for this sub-location.'
+          const lines: string[] = []
+          lines.push(`In ${latest.currentLocation}, here are the tasks available for inspection:`)
+          lines.push('')
+          for (const t of tasks) {
+            const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+            lines.push(`[${t.number}] ${t.description}${status}`)
+          }
+          lines.push(`[${tasks.length + 1}] Go back`)
+          lines.push('')
+          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString() }) } catch {}
+          return lines.join('\n')
+        }
+
         // Numeric tasks selection mapping (lastMenu = tasks)
         const taskPick = /^\s*(\d{1,2})\s*$/.exec(raw)
         if (meta.lastMenu === 'tasks' && taskPick) {
