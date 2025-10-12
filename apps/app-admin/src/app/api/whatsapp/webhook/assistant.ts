@@ -66,6 +66,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
       if (isJobsIntent) {
         dbg('intent:jobs → reset context and list')
+        const inspectorIdHint = meta?.inspectorId
+        const inspectorPhoneHint = meta?.inspectorPhone || phoneNumber
         try {
           await updateSessionState(phoneNumber, {
             jobStatus: 'none',
@@ -96,10 +98,24 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           })
         } catch {}
         const t0 = Date.now()
-        const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+        const res = await executeTool(
+          'getTodayJobs',
+          inspectorIdHint ? { inspectorId: inspectorIdHint } : { inspectorPhone: inspectorPhoneHint },
+          undefined,
+          phoneNumber
+        )
         dbg('tool:getTodayJobs (guard) done in', Date.now() - t0, 'ms')
         let data: any = null
         try { data = JSON.parse(res) } catch {}
+        if (data && data.identifyRequired) {
+          return [
+            'Hello! To assign you today\'s inspection jobs, I need your details. Please provide:',
+            '  [1] Your full name',
+            '  [2] Your phone number (with country code, e.g., +65 for Singapore)',
+            '',
+            'Send in the format: Name, +CountryCodeNumber (e.g., Ken, +6591234567)'
+          ].join('\n')
+        }
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
         const latest = await getSessionState(phoneNumber)
         const inspectorName = latest.inspectorName || ''

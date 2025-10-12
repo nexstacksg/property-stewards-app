@@ -77,8 +77,17 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const looksLikeId = /^[a-z0-9]{20,}$/i.test(candidate)
         const hasSpaces = /\s/.test(candidate)
         const candidateName = !looksLikeId || hasSpaces ? candidate : ''
-        let phone = typeof inspectorPhone === 'string' ? inspectorPhone.replace(/[\s-]/g, '') : ''
-        if (phone && !phone.startsWith('+')) phone = '+65' + phone
+        const rawPhone = typeof inspectorPhone === 'string' ? inspectorPhone.replace(/[\s-]/g, '') : ''
+        // Build robust phone candidates without forcing +65 for non-SG numbers
+        const phoneCandidates: string[] = []
+        if (rawPhone) phoneCandidates.push(rawPhone)
+        if (rawPhone && !rawPhone.startsWith('+')) phoneCandidates.push('+' + rawPhone)
+        // If looks like an 8-digit SG local number, also try +65 prefix
+        if (/^\d{8}$/.test(rawPhone)) phoneCandidates.push('+65' + rawPhone)
+        // If begins with '65' and 10 digits, also try with '+'
+        if (/^65\d{8}$/.test(rawPhone)) phoneCandidates.push('+' + rawPhone)
+        // Remove leading zeros variant
+        if (/^0+\d+$/.test(rawPhone)) phoneCandidates.push(rawPhone.replace(/^0+/, ''))
 
         // Combined name+phone resolution if both provided
         if (!finalInspectorId && candidateName && phone) {
@@ -96,13 +105,17 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (!finalInspectorId && looksLikeId && !hasSpaces) finalInspectorId = candidate
 
         // Resolve by phone if needed
-        if (!finalInspectorId && phone) {
-          let match = await getInspectorByPhone(phone) as any
-          if (!match && phone.startsWith('+')) match = await getInspectorByPhone(phone.slice(1)) as any
-          if (!match && !phone.startsWith('+')) match = await getInspectorByPhone('+' + phone) as any
-          if (match) {
-            finalInspectorId = match.id
-            if (sessionId) await updateSessionState(sessionId, { inspectorId: match.id, inspectorName: match.name, inspectorPhone: match.mobilePhone || phone })
+        if (!finalInspectorId && phoneCandidates.length > 0) {
+          const tried = new Set<string>()
+          for (const p of phoneCandidates) {
+            if (!p || tried.has(p)) continue
+            tried.add(p)
+            const match = await getInspectorByPhone(p) as any
+            if (match) {
+              finalInspectorId = match.id
+              if (sessionId) await updateSessionState(sessionId, { inspectorId: match.id, inspectorName: match.name, inspectorPhone: match.mobilePhone || p })
+              break
+            }
           }
         }
 
