@@ -99,6 +99,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         dbg('intent:jobs → reset inspection context and list')
         try {
           await updateSessionState(phoneNumber, {
+            // ensure we drop previous job selection so numbers don't route to old locations
+            workOrderId: undefined,
+            jobStatus: 'none',
             // clear inspection context only
             currentLocation: undefined,
             currentLocationId: undefined,
@@ -226,7 +229,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Location selection: numeric reply while viewing locations list
-        if (numMatch && (meta.lastMenu === 'locations' || (meta.workOrderId && !meta.currentLocation))) {
+        if (numMatch && meta.lastMenu === 'locations') {
           const pick = Number(numMatch[1])
           dbg('locations-select', { pick })
           const locRes = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
