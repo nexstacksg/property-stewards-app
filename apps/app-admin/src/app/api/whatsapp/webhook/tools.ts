@@ -489,8 +489,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskId: taskId,
               currentTaskName: taskName,
               currentTaskItemId: taskItemId,
-              currentTaskLocationId: task?.locationId || undefined,
-              currentTaskLocationName: task?.location?.name || undefined,
+              // Avoid duplicating sub-location context — rely on currentSubLocationId/Name
+              currentTaskLocationId: undefined,
+              currentTaskLocationName: undefined,
               currentTaskEntryId: undefined,
               currentTaskCondition: undefined,
               taskFlowStage: 'condition'
@@ -520,13 +521,15 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const taskId = (args.taskId as string | undefined) || session.currentTaskId
           const taskItemId = session.currentTaskItemId
           let taskLocationId = session.currentTaskLocationId as string | undefined
+          // Prefer sub-location context if available; do not mirror into currentTaskLocationId to avoid duplication
+          if (!taskLocationId && session.currentSubLocationId) {
+            taskLocationId = session.currentSubLocationId
+          }
           if (!taskLocationId && taskId) {
             try {
               const lookup = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { locationId: true } })
               taskLocationId = lookup?.locationId || undefined
-              if (taskLocationId && sessionId) {
-                await updateSessionState(sessionId, { currentTaskLocationId: taskLocationId })
-              }
+              // Do not persist currentTaskLocationId to avoid duplicating sub-location state
             } catch (error) {
               console.error('Failed to load task location for condition phase', error)
             }
@@ -711,7 +714,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
 
           const condition = session.currentTaskCondition || 'GOOD'
-          const entryId = session.currentTaskEntryId
+          let entryId = session.currentTaskEntryId
 
           let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true, name: true } })
           let targetItemId = task?.itemId || taskItemId
@@ -871,8 +874,9 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               currentTaskEntryId: entryId || undefined,
               currentTaskCondition: undefined,
               currentTaskItemId: targetItemId,
-              currentTaskLocationId: task?.locationId || session.currentTaskLocationId,
-              currentTaskLocationName: session.currentTaskLocationName,
+              // avoid duplicating sub-location context when finalizing
+              currentTaskLocationId: undefined,
+              currentTaskLocationName: undefined,
               pendingTaskRemarks: undefined
             })
           }
