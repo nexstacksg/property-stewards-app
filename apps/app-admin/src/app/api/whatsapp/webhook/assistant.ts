@@ -150,6 +150,41 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       }
     
 
+      // Numeric job selection when jobs list is on screen
+      if (numMatch && meta?.lastMenu === 'jobs') {
+        const pick = Number(numMatch[1])
+        dbg('jobs-select', { pick })
+        const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+        let data: any = null
+        try { data = JSON.parse(res) } catch {}
+        const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+        if (!jobs || jobs.length === 0) {
+          return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+        }
+        if (pick < 1 || pick > jobs.length) {
+          const options = jobs.map((j: any) => j.selectionNumber).join(', ')
+          return `That job number isn't valid. Type ${options} to select a job.`
+        }
+        const chosen = jobs[pick - 1]
+        const cRes = await executeTool('confirmJobSelection', { jobId: chosen.id }, undefined, phoneNumber)
+        let cData: any = null
+        try { cData = JSON.parse(cRes) } catch {}
+        if (!cData?.success) return 'There was an issue loading that job. Please try again.'
+        const lines: string[] = []
+        lines.push('Please confirm the destination details before starting the inspection:')
+        lines.push('')
+        lines.push(`🏠 Property: ${cData.jobDetails?.property}`)
+        lines.push(`⏰ Time: ${cData.jobDetails?.time}`)
+        lines.push(`👤 Customer: ${cData.jobDetails?.customer}`)
+        lines.push(`Status: ${cData.jobDetails?.status}`)
+        lines.push('')
+        lines.push('[1] Yes')
+        lines.push('[2] No')
+        lines.push('')
+        lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+        return lines.join('\\n')
+      }
+
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
         // Condition selection (only when in condition stage)
