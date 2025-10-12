@@ -85,7 +85,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           ].join('\\n')
         }
       }
-      // Jobs intent guard: reset context then list today's jobs
+      // Jobs intent guard: reset inspection context then list today's jobs
       const jobsIntent = (() => {
         const t = lower
         if (!t) return false
@@ -96,10 +96,10 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         return false
       })()
       if (jobsIntent) {
+        dbg('intent:jobs → reset inspection context and list')
         try {
           await updateSessionState(phoneNumber, {
-            jobStatus: 'none',
-            // clear job/location/task context
+            // clear inspection context only
             currentLocation: undefined,
             currentLocationId: undefined,
             currentSubLocationId: undefined,
@@ -118,12 +118,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             pendingTaskCause: undefined,
             pendingTaskResolution: undefined,
             locationSubLocations: undefined,
+            // treat as jobs menu
             lastMenu: 'jobs',
             lastMenuAt: new Date().toISOString(),
           })
         } catch {}
         const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
-        let data: any = null; try { data = JSON.parse(res) } catch {}
+        let data: any = null
+        try { data = JSON.parse(res) } catch {}
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
         const s = await getSessionState(phoneNumber)
         const inspectorName = s.inspectorName || ''
@@ -143,6 +145,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
         return lines.join('\n')
       }
+    
 
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
