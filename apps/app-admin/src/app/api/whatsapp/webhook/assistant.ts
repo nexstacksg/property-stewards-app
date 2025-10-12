@@ -96,32 +96,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         return false
       })()
       if (jobsIntent) {
-        dbg('intent:jobs → reset inspection context and list')
+        dbg('intent:jobs → list without resetting context')
         try {
           await updateSessionState(phoneNumber, {
-            // ensure we drop previous job selection so numbers don't route to old locations
-            workOrderId: undefined,
-            jobStatus: 'none',
-            // clear inspection context only
-            currentLocation: undefined,
-            currentLocationId: undefined,
-            currentSubLocationId: undefined,
-            currentSubLocationName: undefined,
-            currentItemId: undefined,
-            currentTaskId: undefined,
-            currentTaskName: undefined,
-            currentTaskItemId: undefined,
-            currentTaskEntryId: undefined,
-            currentTaskCondition: undefined,
-            currentTaskLocationId: undefined,
-            currentTaskLocationName: undefined,
-            currentLocationCondition: undefined,
-            taskFlowStage: undefined,
-            pendingTaskRemarks: undefined,
-            pendingTaskCause: undefined,
-            pendingTaskResolution: undefined,
-            locationSubLocations: undefined,
-            // treat as jobs menu
             lastMenu: 'jobs',
             lastMenuAt: new Date().toISOString(),
           })
