@@ -352,8 +352,25 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             return rr?.message ? `${rr.message}\\n\\n${body}` : body
           }
           if (gb && pick === gb) {
-            dbg('tasks-select goBack')
-            return await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            dbg('tasks-select goBack (to locations)')
+            // Always go back to job locations for a consistent UX and avoid raw JSON
+            const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+            const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            try {
+              await updateSessionState(phoneNumber, {
+                lastMenu: 'locations',
+                lastMenuAt: new Date().toISOString(),
+                currentTaskId: undefined,
+                currentTaskName: undefined,
+                currentTaskEntryId: undefined,
+                currentTaskCondition: undefined,
+                currentSubLocationId: undefined,
+                currentSubLocationName: undefined
+              })
+            } catch {}
+            return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\\n')
           }
           if (tasks.length > 0 && pick >= 1 && pick <= tasks.length) {
             const chosen = tasks[pick - 1]
