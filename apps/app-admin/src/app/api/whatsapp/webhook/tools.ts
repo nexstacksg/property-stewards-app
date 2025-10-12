@@ -122,6 +122,10 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
+        // Mark last menu context for numeric selection routing
+        if (sessionId) {
+          try { await updateSessionState(sessionId, { lastMenu: 'jobs', lastMenuAt: new Date().toISOString(), jobStatus: 'none' }) } catch {}
+        }
         dbg('getTodayJobs', { tookMs: Date.now() - t0, count: jobs.length, inspectorId: finalInspectorId })
         const jobsFormatted = jobs.map((job: any, index: number) => {
           const raw = job.scheduled_date
