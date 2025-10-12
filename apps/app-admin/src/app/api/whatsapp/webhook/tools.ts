@@ -154,7 +154,26 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             postalCode: postalCodeMatch ? (postalCodeMatch[1] as string) : 'unknown',
             jobStatus: 'confirming',
             lastMenu: 'confirm',
-            lastMenuAt: new Date().toISOString()
+            lastMenuAt: new Date().toISOString(),
+            // Reset inspection context for a clean start
+            currentLocation: undefined,
+            currentLocationId: undefined,
+            currentSubLocationId: undefined,
+            currentSubLocationName: undefined,
+            currentItemId: undefined,
+            currentTaskId: undefined,
+            currentTaskName: undefined,
+            currentTaskItemId: undefined,
+            currentTaskEntryId: undefined,
+            currentTaskCondition: undefined,
+            currentTaskLocationId: undefined,
+            currentTaskLocationName: undefined,
+            currentLocationCondition: undefined,
+            taskFlowStage: undefined,
+            pendingTaskRemarks: undefined,
+            pendingTaskCause: undefined,
+            pendingTaskResolution: undefined,
+            locationSubLocations: undefined
           }
           await updateSessionState(sessionId, updatedMetadata)
         }
