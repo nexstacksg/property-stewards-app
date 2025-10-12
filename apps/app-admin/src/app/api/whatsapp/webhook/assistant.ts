@@ -85,6 +85,65 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           ].join('\\n')
         }
       }
+      // Jobs intent guard: reset context then list today's jobs
+      const jobsIntent = (() => {
+        const t = lower
+        if (!t) return false
+        const keywords = ['jobs', 'job', 'schedule', 'today', 'my jobs', 'my schedule', 'work order', 'work orders', 'inspections', 'inspection', 'assignments', 'appointments']
+        if (keywords.some(k => t === k || t.includes(k))) return true
+        if (/today'?s?\s+(jobs?|schedule|inspections?|work\s*orders?)/.test(t)) return true
+        if (/(what('?s)?|show)\s+(my\s+)?(jobs?|schedule|inspections?)/.test(t)) return true
+        return false
+      })()
+      if (jobsIntent) {
+        try {
+          await updateSessionState(phoneNumber, {
+            jobStatus: 'none',
+            // clear job/location/task context
+            currentLocation: undefined,
+            currentLocationId: undefined,
+            currentSubLocationId: undefined,
+            currentSubLocationName: undefined,
+            currentItemId: undefined,
+            currentTaskId: undefined,
+            currentTaskName: undefined,
+            currentTaskItemId: undefined,
+            currentTaskEntryId: undefined,
+            currentTaskCondition: undefined,
+            currentTaskLocationId: undefined,
+            currentTaskLocationName: undefined,
+            currentLocationCondition: undefined,
+            taskFlowStage: undefined,
+            pendingTaskRemarks: undefined,
+            pendingTaskCause: undefined,
+            pendingTaskResolution: undefined,
+            locationSubLocations: undefined,
+            lastMenu: 'jobs',
+            lastMenuAt: new Date().toISOString(),
+          })
+        } catch {}
+        const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+        let data: any = null; try { data = JSON.parse(res) } catch {}
+        const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+        const s = await getSessionState(phoneNumber)
+        const inspectorName = s.inspectorName || ''
+        if (jobs.length === 0) return `Hi${inspectorName ? ' ' + inspectorName : ''}! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.`
+        const lines: string[] = []
+        lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+        for (const j of jobs) {
+          lines.push('')
+          lines.push(`${j.selectionNumber}`)
+          lines.push(`🏠 Property: ${j.property}`)
+          lines.push(`⏰ Time: ${j.time}`)
+          lines.push(`  👤 Customer: ${j.customer}`)
+          lines.push(`  ⭐ Priority: ${j.priority}`)
+          lines.push(`  Status: ${j.status}`)
+          lines.push('---')
+        }
+        lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+        return lines.join('\n')
+      }
+
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
         // Condition selection (only when in condition stage)
