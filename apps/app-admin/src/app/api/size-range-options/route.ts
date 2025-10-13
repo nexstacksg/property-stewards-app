@@ -39,12 +39,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'code and label are required' }, { status: 400 })
     }
 
-    // Ensure code is a valid enum member (property size range)
-    const validCodes = new Set(PROPERTY_SIZE_RANGE_OPTIONS.map((o) => o.value))
-    if (!validCodes.has(rawCode)) {
-      return NextResponse.json({ error: 'Invalid PropertySizeRange code' }, { status: 400 })
-    }
-
     const saved = await prisma.propertySizeRangeOption.upsert({
       where: { code: rawCode as any },
       update: { label, order, status: status as any },
@@ -56,4 +50,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to save size range option' }, { status: 500 })
   }
 }
-
