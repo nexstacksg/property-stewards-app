@@ -56,7 +56,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         const keywords = [
           'jobs', 'job', 'tasks', 'task', 'my tasks', 'schedule', 'today', 'my jobs', 'my schedule',
           'work order', 'work orders', 'inspections', 'inspection', 'assignments', 'appointments',
-          'show jobs', 'show schedule', 'list jobs', 'what are my jobs', "what's my schedule"
+          'show jobs', 'show schedule', 'list jobs', 'what are my jobs', "what's my schedule","Hi","Hey","Hello"
         ]
         if (keywords.some(k => lower === k || lower.includes(k))) return true
         if (/today'?s?\s+(jobs?|tasks?|schedule|inspections?|work\s*orders?)/.test(lower)) return true
@@ -138,8 +138,77 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         return lines.join('\n')
       }
 
-      // Job confirmation guard to prevent double confirm
+      // Job confirmation + edit-menu guard
       if (meta?.jobStatus === 'confirming' && meta?.workOrderId) {
+        // 1) If currently in the job edit menu, map numeric options
+        if (meta.jobEditMode === 'menu' && numMatch) {
+          const pick = Number(numMatch[1])
+          // [1] Different job selection → list today's jobs and exit confirm flow
+          if (pick === 1) {
+            dbg('job-edit [1] → different job selection; listing today jobs')
+            try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined, jobStatus: 'none' }) } catch {}
+            const idHint = meta.inspectorId
+            const res = await executeTool('getTodayJobs', idHint ? { inspectorId: idHint } : { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+            let data: any = null; try { data = JSON.parse(res) } catch {}
+            const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+            if (jobs.length === 0) return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+            const lines: string[] = []
+            const latest = await getSessionState(phoneNumber)
+            const inspectorName = latest.inspectorName || ''
+            lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+            for (const j of jobs) {
+              lines.push('')
+              lines.push(`${j.selectionNumber}`)
+              lines.push(`🏠 Property: ${j.property}`)
+              lines.push(`⏰ Time: ${j.time}`)
+              lines.push(`  👤 Customer: ${j.customer}`)
+              lines.push(`  ⭐ Priority: ${j.priority}`)
+              lines.push(`  Status: ${j.status}`)
+              lines.push('---')
+            }
+            lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+            return lines.join('\n')
+          }
+          // [2]-[5] enter await_value for the specific field
+          if (pick >= 2 && pick <= 5) {
+            const type = (pick === 2 ? 'customer' : pick === 3 ? 'address' : pick === 4 ? 'time' : 'status') as 'customer'|'address'|'time'|'status'
+            try { await updateSessionState(phoneNumber, { jobEditMode: 'await_value', jobEditType: type }) } catch {}
+            const prompts: Record<string, string> = {
+              customer: 'Please provide the new customer name.',
+              address: 'Please provide the new address (you can include postal after a comma).',
+              time: 'Please provide the new time (e.g., 14:30 or 2:30 pm).',
+              status: 'Please provide the new status (SCHEDULED/STARTED/CANCELLED/COMPLETED).'
+            }
+            return prompts[type]
+          }
+        }
+
+        // 2) If awaiting a value for job update, treat any non-numeric input as the new value
+        if (meta.jobEditMode === 'await_value' && meta.jobEditType && raw && !numMatch) {
+          const type = meta.jobEditType
+          dbg('job-edit await_value → updateJobDetails', { type })
+          const out = await executeTool('updateJobDetails', { jobId: meta.workOrderId, updateType: type, newValue: raw }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(out) } catch {}
+          try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined }) } catch {}
+          // Re-show single confirmation
+          const cRes = await executeTool('confirmJobSelection', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let cData: any = null; try { cData = JSON.parse(cRes) } catch {}
+          const lines: string[] = []
+          lines.push('Please confirm the destination details before starting the inspection:')
+          lines.push('')
+          lines.push(`🏠 Property: ${cData?.jobDetails?.property}`)
+          lines.push(`⏰ Time: ${cData?.jobDetails?.time}`)
+          lines.push(`👤 Customer: ${cData?.jobDetails?.customer}`)
+          lines.push(`Status: ${cData?.jobDetails?.status}`)
+          lines.push('')
+          lines.push('[1] Yes')
+          lines.push('[2] No')
+          lines.push('')
+          lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+          return lines.join('\n')
+        }
+
+        // 3) Default confirm menu handling
         if (raw === '1' || lower === 'yes' || lower === 'y') {
           dbg('confirm yes → startJob', { workOrderId: meta.workOrderId })
           const res = await executeTool('startJob', { jobId: meta.workOrderId }, undefined, phoneNumber)
@@ -160,6 +229,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
         if (raw === '2' || lower === 'no' || lower === 'n') {
           dbg('confirm no → edit menu')
+          try { await updateSessionState(phoneNumber, { jobEditMode: 'menu', jobEditType: undefined }) } catch {}
           return [
             'What would you like to change about the job? Here are some options:',
             '',
