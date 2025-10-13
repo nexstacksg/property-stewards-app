@@ -1,9 +1,30 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
-export const COLUMN_WIDTHS = [40, 120, 120, 120, 123]
 export const TABLE_MARGIN = 36
-const TABLE_WIDTH = COLUMN_WIDTHS.reduce((sum, width) => sum + width, 0)
+// Base weights derived from previous fixed widths [40, 120, 120, 120, 123]
+// We now scale these to fill the full printable width dynamically (portrait/landscape).
+const BASE_COLUMN_WEIGHTS = [40, 120, 120, 120, 123] as const
+
+function getAvailableTableWidth(doc: any): number {
+  return Math.max(0, (doc?.page?.width || 0) - TABLE_MARGIN * 2)
+}
+
+function getColumnWidths(doc: any): number[] {
+  const available = getAvailableTableWidth(doc)
+  const totalWeight = BASE_COLUMN_WEIGHTS.reduce((a, b) => a + b, 0)
+  // First pass: proportional widths
+  const provisional = BASE_COLUMN_WEIGHTS.map(w => Math.floor((available * w) / totalWeight))
+  // Fix rounding by assigning remainder to the last column
+  const used = provisional.reduce((a, b) => a + b, 0)
+  const remainder = Math.max(0, available - used)
+  provisional[provisional.length - 1] += remainder
+  return provisional
+}
+
+function getTableWidth(doc: any): number {
+  return getAvailableTableWidth(doc)
+}
 const CELL_PADDING = 8
 const PHOTO_HEIGHT = 70
 const PHOTO_CAPTION_GAP = 2
@@ -667,8 +688,9 @@ async function buildTableRows(
 function calculateRowHeight(doc: any, cells: TableCell[]) {
   let rowHeight = 0
 
+  const colWidths = getColumnWidths(doc)
   cells.forEach((cell, index) => {
-    const width = COLUMN_WIDTHS[index] - CELL_PADDING * 2
+    const width = colWidths[index] - CELL_PADDING * 2
     const segments = getCellSegments(cell)
     let cellHeight = 0
 
@@ -724,8 +746,9 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
   const rowHeight = calculateRowHeight(doc, cells)
   let x = TABLE_MARGIN
 
+  const colWidths2 = getColumnWidths(doc)
   cells.forEach((cell, index) => {
-    const width = COLUMN_WIDTHS[index]
+    const width = colWidths2[index]
     doc.lineWidth(0.7)
 
     if (header) {
@@ -895,7 +918,7 @@ function calculateMediaBlocksHeight(doc: any, segments?: CellSegment | CellSegme
   const normalized = normalizeSegments(segments)
   if (normalized.length === 0) return 0
 
-  const contentWidth = TABLE_WIDTH - CELL_PADDING * 2
+  const contentWidth = getTableWidth(doc) - CELL_PADDING * 2
   let total = 0
 
   normalized.forEach((segment, index) => {
@@ -950,7 +973,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
   const normalized = normalizeSegments(segments)
   if (normalized.length === 0) return 0
 
-  const contentWidth = TABLE_WIDTH - CELL_PADDING * 2
+  const contentWidth = getTableWidth(doc) - CELL_PADDING * 2
   let currentY = startY
 
   normalized.forEach((segment, index) => {
@@ -992,7 +1015,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
     }
 
     doc.lineWidth(0.7)
-    doc.rect(TABLE_MARGIN, currentY, TABLE_WIDTH, blockHeight).stroke()
+    doc.rect(TABLE_MARGIN, currentY, getTableWidth(doc), blockHeight).stroke()
 
     let contentY = currentY + CELL_PADDING
 

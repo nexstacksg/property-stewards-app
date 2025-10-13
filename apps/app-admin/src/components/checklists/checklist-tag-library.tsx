@@ -93,7 +93,7 @@ export function ChecklistTagLibrary({ onApplyTag }: ChecklistTagLibraryProps) {
             placeholder="Search tags"
             className="h-8 w-40"
           />
-          <Input
+          {/* <Input
             value={newTag}
             onChange={(event) => setNewTag(event.target.value)}
             placeholder="Add new"
@@ -104,10 +104,10 @@ export function ChecklistTagLibrary({ onApplyTag }: ChecklistTagLibraryProps) {
                 handleCreateTag()
               }
             }}
-          />
-          <Button type="button" size="sm" onClick={handleCreateTag} disabled={creating}>
+          /> */}
+          {/* <Button type="button" size="sm" onClick={handleCreateTag} disabled={creating}>
             {creating ? "Saving…" : "Save"}
-          </Button>
+          </Button> */}
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">

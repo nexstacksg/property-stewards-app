@@ -86,7 +86,8 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
   }
 
   const PDFDocument = await getPDFDocumentCtor()
-  const doc: any = new PDFDocument({ size: "A4", margin: TABLE_MARGIN })
+  // Use landscape layout for single work-order report as well
+  const doc: any = new PDFDocument({ size: "A4", layout: 'landscape', margin: TABLE_MARGIN })
   const stream = new PassThrough()
   doc.pipe(stream)
 
