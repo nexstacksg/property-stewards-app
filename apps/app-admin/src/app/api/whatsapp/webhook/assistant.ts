@@ -632,6 +632,82 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
         }
       }
+      // Fallback: random text while in a guided step → re-show current step
+      if (!numAny && !isJobsIntent) {
+        // If in condition stage
+        if (meta?.taskFlowStage === 'condition') {
+          return [
+            "I didn't understand that. Please set the condition:",
+            '[1] Good',
+            '[2] Fair',
+            '[3] Un-Satisfactory',
+            '[4] Un-Observable',
+            '[5] Not Applicable',
+            '',
+            'Next: reply 1–5 with your selection.'
+          ].join('\n')
+        }
+        // If awaiting cause/resolution text, keep their text; otherwise re-prompt
+        if (meta?.taskFlowStage === 'cause') {
+          return 'Please describe the cause for this issue (a short sentence is fine).'
+        }
+        if (meta?.taskFlowStage === 'resolution') {
+          return 'Please describe the resolution (a short sentence is fine).'
+        }
+        // If in job confirmation
+        if (meta?.jobStatus === 'confirming' || meta?.lastMenu === 'confirm') {
+          try {
+            const cRes = await executeTool('confirmJobSelection', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            let cData: any = null; try { cData = JSON.parse(cRes) } catch {}
+            const lines: string[] = []
+            lines.push("I didn't understand that. Please confirm the destination:")
+            lines.push('')
+            lines.push(`🏠 Property: ${cData?.jobDetails?.property}`)
+            lines.push(`⏰ Time: ${cData?.jobDetails?.time}`)
+            lines.push(`👤 Customer: ${cData?.jobDetails?.customer}`)
+            lines.push(`Status: ${cData?.jobDetails?.status}`)
+            lines.push('')
+            lines.push('[1] Yes')
+            lines.push('[2] No')
+            lines.push('')
+            lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+            return lines.join('\n')
+          } catch {}
+        }
+        // If at locations
+        if (meta?.lastMenu === 'locations' && meta?.workOrderId) {
+          const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+          const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+          const header = "I didn't understand that. Here are the locations available for inspection:"
+          return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
+        }
+        // If at sub-locations
+        if (meta?.lastMenu === 'sublocations' && meta?.currentLocationId) {
+          const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, locationName: meta.currentLocation }, undefined, phoneNumber)
+          let subData: any = null; try { subData = JSON.parse(subRes) } catch {}
+          const formatted: string[] = Array.isArray(subData?.subLocationsFormatted) ? subData.subLocationsFormatted : []
+          const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+          return [`I didn't understand that. You've selected ${meta.currentLocation}. Here are the available sub-locations:`, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
+        }
+        // If at tasks
+        if (meta?.lastMenu === 'tasks' && meta?.currentLocationId) {
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          const lines: string[] = []
+          lines.push(`I didn't understand that. In ${meta.currentSubLocationName || meta.currentLocation || 'this location'}, here are the tasks:`)
+          lines.push('')
+          for (const t of tasks) {
+            const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+            lines.push(`[${t.number}] ${t.description}${status}`)
+          }
+          lines.push(`[${tasks.length + 1}] Go back`)
+          lines.push('')
+          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          return lines.join('\n')
+        }
+      }
     } catch (e) {
       debugLog('pre-route guard failed', e)
     }
