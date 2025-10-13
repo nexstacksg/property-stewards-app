@@ -1,3 +1,4 @@
+
 import prisma from '@/lib/prisma'
 import { Status } from '@prisma/client'
 import { cacheDel } from '@/lib/memcache'
@@ -23,19 +24,7 @@ import { resolveInspectorIdForSession } from './utils'
 export const assistantTools = [
   {
     type: 'function' as const,
-    function: {
-      name: 'getTodayJobs',
-      description: "Get today's inspection jobs",
-      parameters: {
-        type: 'object',
-        properties: {
-          inspectorId: { type: 'string' },
-          inspectorPhone: { type: 'string' },
-          reset: { type: 'boolean', description: 'When true, clear current job/location/task context and set lastMenu=jobs' }
-        },
-        required: []
-      }
-    }
+    function: { name: 'getTodayJobs', description: "Get today's inspection jobs", parameters: { type: 'object', properties: { inspectorId: { type: 'string' }, inspectorPhone: { type: 'string' } }, required: [] } }
   },
   { type: 'function' as const, function: { name: 'confirmJobSelection', description: 'Confirm job selection and show job details', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'startJob', description: 'Start the job', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
@@ -82,7 +71,6 @@ export async function executeTool(toolName: string, args: any, threadId?: string
       case 'getTodayJobs': {
         const t0 = Date.now()
         const { inspectorId, inspectorPhone } = args
-        const doReset = Boolean(args?.reset)
         let finalInspectorId = metadata.inspectorId
 
         // Normalize inputs
@@ -148,7 +136,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
-        if (sessionId && doReset) {
+        // Reset stale inspection context and mark lastMenu for numeric routing
+        if (sessionId) {
           try {
             await updateSessionState(sessionId, {
               // keep identity, reset job and inspection context

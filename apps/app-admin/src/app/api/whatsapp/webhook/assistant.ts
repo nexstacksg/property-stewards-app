@@ -43,14 +43,10 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     // Minimal stateful guard: when the user is in a strict step, translate
     // the message directly into the corresponding tool call to keep session
     // in sync and avoid the model skipping steps (e.g., asking for media early).
-    // Optional pre-route guard that only adjusts session or adds guidance hints —
-    // it does NOT send text directly. OpenAI renders the final text.
-    const guardHints: string[] = []
     try {
       const meta = await getSessionState(phoneNumber)
       const raw = (message || '').trim()
-      const num1to5 = /^\s*([1-5])\s*$/.exec(raw)
-      const numAny = /^\s*(\d{1,2})\s*$/.exec(raw)
+      const numMatch = /^\s*([1-5])\s*$/.exec(raw)
       const lower = raw.toLowerCase()
       const dbg = (...a: any[]) => { if ((process.env.WHATSAPP_DEBUG || '').toLowerCase() !== 'false') console.log('[wh-guard]', ...a) }
 
@@ -69,7 +65,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       })()
 
       if (isJobsIntent) {
-        dbg('intent:jobs → reset context; OpenAI will list jobs')
+        dbg('intent:jobs → reset context and list')
+        const inspectorIdHint = meta?.inspectorId
+        const inspectorPhoneHint = meta?.inspectorPhone || phoneNumber
         try {
           await updateSessionState(phoneNumber, {
             jobStatus: 'none',
@@ -99,42 +97,150 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             lastMenuAt: new Date().toISOString(),
           })
         } catch {}
-        guardHints.push('User requested today\'s jobs. Call getTodayJobs with reset:true using inspectorId from session (fallback to inspectorPhone) and present the numbered jobs list per INSTRUCTIONS.')
+        const t0 = Date.now()
+        const res = await executeTool(
+          'getTodayJobs',
+          inspectorIdHint ? { inspectorId: inspectorIdHint } : { inspectorPhone: inspectorPhoneHint },
+          undefined,
+          phoneNumber
+        )
+        dbg('tool:getTodayJobs (guard) done in', Date.now() - t0, 'ms')
+        let data: any = null
+        try { data = JSON.parse(res) } catch {}
+        if (data && data.identifyRequired) {
+          return [
+            'Hello! To assign you today\'s inspection jobs, I need your details. Please provide:',
+            '  [1] Your full name',
+            '  [2] Your phone number (with country code, e.g., +65 for Singapore)',
+            '',
+            'Send in the format: Name, +CountryCodeNumber (e.g., Ken, +6591234567)'
+          ].join('\n')
+        }
+        const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+        const latest = await getSessionState(phoneNumber)
+        const inspectorName = latest.inspectorName || ''
+        if (jobs.length === 0) {
+          return `Hi${inspectorName ? ' ' + inspectorName : ''}! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.`
+        }
+        const lines: string[] = []
+        lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+        for (const j of jobs) {
+          lines.push('')
+          lines.push(`${j.selectionNumber}`)
+          lines.push(`🏠 Property: ${j.property}`)
+          lines.push(`⏰ Time: ${j.time}`)
+          lines.push(`  👤 Customer: ${j.customer}`)
+          lines.push(`  ⭐ Priority: ${j.priority}`)
+          lines.push(`  Status: ${j.status}`)
+          lines.push('---')
+        }
+        lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+        return lines.join('\n')
       }
 
       // Job confirmation + edit-menu guard
       if (meta?.jobStatus === 'confirming' && meta?.workOrderId) {
         // 1) If currently in the job edit menu, map numeric options
-        if (meta.jobEditMode === 'menu' && numAny) {
-          const pick = Number(numAny[1])
+        if (meta.jobEditMode === 'menu' && numMatch) {
+          const pick = Number(numMatch[1])
+          // [1] Different job selection → list today's jobs and exit confirm flow
           if (pick === 1) {
-            dbg('job-edit [1] → different job selection; advisory only')
-            try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined, jobStatus: 'none', lastMenu: 'jobs', lastMenuAt: new Date().toISOString() }) } catch {}
-            guardHints.push('User chose Different job selection. Call getTodayJobs with reset:true and present the numbered jobs list; do not start any job yet.')
-          } else if (pick >= 2 && pick <= 5) {
+            dbg('job-edit [1] → different job selection; listing today jobs')
+            try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined, jobStatus: 'none' }) } catch {}
+            const idHint = meta.inspectorId
+            const res = await executeTool('getTodayJobs', idHint ? { inspectorId: idHint } : { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+            let data: any = null; try { data = JSON.parse(res) } catch {}
+            const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+            if (jobs.length === 0) return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+            const lines: string[] = []
+            const latest = await getSessionState(phoneNumber)
+            const inspectorName = latest.inspectorName || ''
+            lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+            for (const j of jobs) {
+              lines.push('')
+              lines.push(`${j.selectionNumber}`)
+              lines.push(`🏠 Property: ${j.property}`)
+              lines.push(`⏰ Time: ${j.time}`)
+              lines.push(`  👤 Customer: ${j.customer}`)
+              lines.push(`  ⭐ Priority: ${j.priority}`)
+              lines.push(`  Status: ${j.status}`)
+              lines.push('---')
+            }
+            lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+            return lines.join('\n')
+          }
+          // [2]-[5] enter await_value for the specific field
+          if (pick >= 2 && pick <= 5) {
             const type = (pick === 2 ? 'customer' : pick === 3 ? 'address' : pick === 4 ? 'time' : 'status') as 'customer'|'address'|'time'|'status'
             try { await updateSessionState(phoneNumber, { jobEditMode: 'await_value', jobEditType: type }) } catch {}
-            guardHints.push(`Ask the inspector for the new ${type}. After they reply, call updateJobDetails(workOrderId, '${type}', <value>), then show a single confirmation.`)
+            const prompts: Record<string, string> = {
+              customer: 'Please provide the new customer name.',
+              address: 'Please provide the new address (you can include postal after a comma).',
+              time: 'Please provide the new time (e.g., 14:30 or 2:30 pm).',
+              status: 'Please provide the new status (SCHEDULED/STARTED/CANCELLED/COMPLETED).'
+            }
+            return prompts[type]
           }
         }
 
         // 2) If awaiting a value for job update, treat any non-numeric input as the new value
-        if (meta.jobEditMode === 'await_value' && meta.jobEditType && raw && !numAny) {
+        if (meta.jobEditMode === 'await_value' && meta.jobEditType && raw && !numMatch) {
           const type = meta.jobEditType
-          dbg('job-edit await_value → advisory to update and re-confirm', { type })
-          guardHints.push(`Call updateJobDetails(workOrderId, '${type}', '${raw.replace(/'/g, "\'")}'), then call confirmJobSelection(workOrderId) and show a single confirmation.`)
+          dbg('job-edit await_value → updateJobDetails', { type })
+          const out = await executeTool('updateJobDetails', { jobId: meta.workOrderId, updateType: type, newValue: raw }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(out) } catch {}
+          try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined }) } catch {}
+          // Re-show single confirmation
+          const cRes = await executeTool('confirmJobSelection', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let cData: any = null; try { cData = JSON.parse(cRes) } catch {}
+          const lines: string[] = []
+          lines.push('Please confirm the destination details before starting the inspection:')
+          lines.push('')
+          lines.push(`🏠 Property: ${cData?.jobDetails?.property}`)
+          lines.push(`⏰ Time: ${cData?.jobDetails?.time}`)
+          lines.push(`👤 Customer: ${cData?.jobDetails?.customer}`)
+          lines.push(`Status: ${cData?.jobDetails?.status}`)
+          lines.push('')
+          lines.push('[1] Yes')
+          lines.push('[2] No')
+          lines.push('')
+          lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+          return lines.join('\n')
         }
 
         // 3) Default confirm menu handling
         if (raw === '1' || lower === 'yes' || lower === 'y') {
-          dbg('confirm yes → startJob (guard executes tool)')
-          try { await executeTool('startJob', { jobId: meta.workOrderId }, undefined, phoneNumber) } catch {}
-          guardHints.push('Job confirmed and started. Call getJobLocations with the current workOrderId and present the locations list. Do not show a second confirmation.')
+          dbg('confirm yes → startJob', { workOrderId: meta.workOrderId })
+          const res = await executeTool('startJob', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          try {
+            const data = JSON.parse(res)
+            const locs: string[] = data?.locationsFormatted || []
+            if (Array.isArray(locs) && locs.length > 0) {
+              const lines: string[] = []
+              lines.push('The job has been successfully started! Here are the locations available for inspection:')
+              lines.push('')
+              for (const l of locs) lines.push(l)
+              lines.push('')
+              lines.push('Next: reply with the location number (e.g., [1], [2], etc.).')
+              return lines.join('\\n')
+            }
+          } catch {}
+          return res
         }
         if (raw === '2' || lower === 'no' || lower === 'n') {
-          dbg('confirm no → edit menu advisory')
+          dbg('confirm no → edit menu')
           try { await updateSessionState(phoneNumber, { jobEditMode: 'menu', jobEditType: undefined }) } catch {}
-          guardHints.push('Present the job edit menu: [1] Different job selection, [2] Customer, [3] Address, [4] Time, [5] Status. After any update, show one confirmation.')
+          return [
+            'What would you like to change about the job? Here are some options:',
+            '',
+            '[1] Different job selection',
+            '[2] Customer name update',
+            '[3] Property address change',
+            '[4] Time rescheduling',
+            '[5] Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)',
+            '',
+            'Next: reply [1-5] with your choice.'
+          ].join('\\n')
         }
       }
       // Jobs intent guard: reset inspection context then list today's jobs
@@ -180,8 +286,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     
 
       // Numeric job selection when jobs list is on screen
-      if (numAny && meta?.lastMenu === 'jobs') {
-        const pick = Number(numAny[1])
+      if (numMatch && meta?.lastMenu === 'jobs') {
+        const pick = Number(numMatch[1])
         dbg('jobs-select', { pick })
         const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
         let data: any = null
@@ -217,8 +323,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
         // Condition selection (only when in condition stage)
-        if (num1to5 && meta.taskFlowStage === 'condition') {
-          const conditionNumber = Number(num1to5[1])
+        if (numMatch && meta.taskFlowStage === 'condition') {
+          const conditionNumber = Number(numMatch[1])
           const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
@@ -235,14 +341,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
         }
         // Cause text
-        if (meta.taskFlowStage === 'cause' && raw && !numAny) {
+        if (meta.taskFlowStage === 'cause' && raw && !numMatch) {
           const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
         }
         // Resolution text
-        if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
+        if (meta.taskFlowStage === 'resolution' && raw && !numMatch) {
           const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
@@ -261,8 +367,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Finalize confirmation step: [1] complete, [2] not yet
-        if (numAny && meta.taskFlowStage === 'confirm') {
-          const pick = Number(numAny[1])
+        if (numMatch && meta.taskFlowStage === 'confirm') {
+          const pick = Number(numMatch[1])
           if (pick === 1 || pick === 2) {
             dbg('finalize → completeTask', { completed: pick === 1 })
             const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, completed: pick === 1 }, undefined, phoneNumber)
@@ -293,8 +399,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Location selection: numeric reply while viewing locations list
-        if (numAny && meta.lastMenu === 'locations') {
-          const pick = Number(numAny[1])
+        if (numMatch && meta.lastMenu === 'locations') {
+          const pick = Number(numMatch[1])
           dbg('locations-select', { pick })
           const locRes = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
           let locData: any = null
@@ -378,8 +484,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Sub-location selection: numeric reply while viewing sub-locations list
-        if (numAny && (meta.lastMenu === 'sublocations' || (meta.workOrderId && meta.currentLocation && !meta.currentSubLocationId))) {
-          const pick = Number(numAny[1])
+        if (numMatch && (meta.lastMenu === 'sublocations' || (meta.workOrderId && meta.currentLocation && !meta.currentSubLocationId))) {
+          const pick = Number(numMatch[1])
           const latest = await getSessionState(phoneNumber)
           const itemId = latest.currentLocationId
           if (!itemId) {
@@ -544,9 +650,6 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         messages.push({ role: 'system', content: `Session: ${hintParts.join(', ')}. ${policy}` })
       }
     } catch {}
-    if (guardHints.length > 0) {
-      messages.push({ role: 'system', content: `Assistant guard hints: ${guardHints.join(' \n')}` })
-    }
     for (const m of history) messages.push({ role: m.role, content: m.content, tool_call_id: (m as any).tool_call_id, name: (m as any).name })
     messages.push({ role: 'user', content: message })
 
