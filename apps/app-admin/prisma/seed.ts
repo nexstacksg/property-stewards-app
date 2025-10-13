@@ -160,6 +160,8 @@ async function main() {
 
   console.log('Created customers:', { customer1, customer2, customer3 })
 
+  // Marketing sources are seeded via prisma/seed-marketing-sources.ts
+
   // Seed property catalogue (used for dropdowns and validation)
   const propertyHdb = await prisma.property.create({
     data: {

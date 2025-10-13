@@ -5,7 +5,7 @@ import { Loader2, Save } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import type { ContractStatus, ContractType, MarketingSource } from "@/components/contracts/types"
+import type { ContractStatus, ContractType } from "@/components/contracts/types"
 
 interface ContractEditSummaryProps {
   contractId: string | null
@@ -13,7 +13,7 @@ interface ContractEditSummaryProps {
   contractType: ContractType
   contractTypeLabel: string
   value: string
-  marketingSource: MarketingSource
+  marketingSourceName: string | null
   saving: boolean
 }
 
@@ -32,7 +32,7 @@ export function ContractEditSummary({
   contractType,
   contractTypeLabel,
   value,
-  marketingSource,
+  marketingSourceName,
   saving,
 }: ContractEditSummaryProps) {
   return (
@@ -67,16 +67,10 @@ export function ContractEditSummary({
           </div>
         )}
 
-        {marketingSource !== "NONE" && (
+        {marketingSourceName && (
           <div>
             <p className="text-sm text-muted-foreground">Source of Marketing</p>
-            <Badge variant="outline">
-              {marketingSource === "GOOGLE"
-                ? "Google"
-                : marketingSource === "REFERRAL"
-                ? "Referral"
-                : "Others"}
-            </Badge>
+            <Badge variant="outline">{marketingSourceName}</Badge>
           </div>
         )}
 

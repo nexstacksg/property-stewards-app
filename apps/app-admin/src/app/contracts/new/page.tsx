@@ -36,7 +36,8 @@ import type {
   ContactPersonDraft,
   ContractType,
   Customer,
-  MarketingSource,
+  MarketingSourceOption,
+  MarketingSourceSelectValue,
 } from "@/components/contracts/types"
 import { ChecklistTagLibrary, type ChecklistTag } from "@/components/checklists/checklist-tag-library"
 import { showToast } from "@/lib/toast"
@@ -162,7 +163,8 @@ function NewContractPageContent() {
 
   const [availableReferences, setAvailableReferences] = useState<ContractReferenceOption[]>([])
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([])
-  const [marketingSource, setMarketingSource] = useState<MarketingSource>("NONE")
+  const [marketingSource, setMarketingSource] = useState<MarketingSourceSelectValue>("NONE")
+  const [marketingSourceOptions, setMarketingSourceOptions] = useState<MarketingSourceOption[]>([])
 
   const [contactPersons, setContactPersons] = useState<ContactPersonDraft[]>([])
   const [contactEditIndex, setContactEditIndex] = useState<number | null>(null)
@@ -174,6 +176,16 @@ function NewContractPageContent() {
     if (preselectedCustomerId) {
       fetchCustomer(preselectedCustomerId)
     }
+    // load marketing sources
+    ;(async () => {
+      try {
+        const res = await fetch('/api/marketing-sources')
+        const data = await res.json().catch(() => ({}))
+        setMarketingSourceOptions(Array.isArray(data.sources) ? data.sources : [])
+      } catch {
+        setMarketingSourceOptions([])
+      }
+    })()
   }, [preselectedCustomerId])
 
   const fetchCustomer = async (customerId: string) => {
@@ -785,7 +797,7 @@ function NewContractPageContent() {
           firstPaymentOn: firstPaymentOn || scheduledStartDate,
           remarks,
           contractType,
-          marketingSource: marketingSource !== "NONE" ? marketingSource : undefined,
+          marketingSourceId: marketingSource !== "NONE" ? marketingSource : undefined,
           referenceIds: selectedReferenceIds,
           contactPersons: normalizedContactPersons,
         }),
@@ -877,6 +889,7 @@ function NewContractPageContent() {
                   servicePackage={servicePackage}
                   contractType={contractType}
                   marketingSource={marketingSource}
+                  marketingSourceOptions={marketingSourceOptions}
                   value={value}
                   scheduledStartDate={scheduledStartDate}
                   scheduledEndDate={scheduledEndDate}
@@ -1364,7 +1377,7 @@ function NewContractPageContent() {
               contractType={contractType}
               contractTypeLabel={contractTypeLabel}
               value={value}
-              marketingSource={marketingSource}
+              marketingSourceName={marketingSource !== 'NONE' ? (marketingSourceOptions.find((s) => s.id === marketingSource)?.name || null) : null}
               canSubmit={canSubmit}
               loading={loading}
             />

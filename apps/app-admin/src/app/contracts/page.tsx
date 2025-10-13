@@ -22,7 +22,7 @@ interface Contract {
   contractType: string
   customerRating?: number
   status: string
-  marketingSource?: 'GOOGLE' | 'REFERRAL' | 'OTHERS'
+  marketingSource?: { id: string; name: string } | null
   referenceIds?: string[]
   customer: {
     id: string

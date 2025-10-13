@@ -141,7 +141,8 @@ model Contract {
   contractType       ContractType       @default(INSPECTION)
   customerComments   String?
   customerRating     Int?
-  marketingSource    MarketingSource?
+  marketingSourceId  String?
+  marketingSource    MarketingSource?   @relation(fields: [marketingSourceId], references: [id])
   referenceIds       String[]           @default([])
   createdOn          DateTime           @default(now())
   updatedOn          DateTime           @updatedAt
@@ -378,6 +379,17 @@ model ContractReport {
   @@index([generatedOn])
 }
 
+/// Configurable labels for area size ranges (e.g., 50–399 sqft)
+model PropertySizeRangeOption {
+  id        String             @id @default(cuid())
+  code      PropertySizeRange  @unique
+  label     String
+  order     Int                @default(0)
+  status    Status             @default(ACTIVE)
+  createdOn DateTime           @default(now())
+  updatedOn DateTime           @updatedAt
+}
+
 model ChecklistTag {
   id        String   @id @default(cuid())
   label     String   @unique
@@ -530,10 +542,17 @@ enum ContractRemarkStatus {
   COMPLETED
 }
 
-enum MarketingSource {
-  GOOGLE
-  REFERRAL
-  OTHERS
+model MarketingSource {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  status    Status   @default(ACTIVE)
+  createdOn DateTime @default(now())
+  updatedOn DateTime @updatedAt
+
+  contracts Contract[]
+
+  @@index([status])
 }
 
 enum WorkOrderStatus {
