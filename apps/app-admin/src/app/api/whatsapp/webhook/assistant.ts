@@ -335,11 +335,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             if (nextStage === 'cause') {
               return 'Please describe the cause for this issue.'
             }
-            const condUpper = String(data?.condition || meta.currentTaskCondition || '').toUpperCase()
-            if (condUpper === 'NOT_APPLICABLE') {
-              return 'Condition saved. You can send photos/videos with a caption for remarks, or type "skip" to continue.'
-            }
-            return 'Condition saved. Please send photos/videos now — include remarks as a caption. Media is required for this condition.'
+            const c = String(data?.condition || meta.currentTaskCondition || '').toUpperCase()
+            const allowSkip = c === 'NOT_APPLICABLE'
+            return allowSkip
+              ? 'Condition saved. Please add remarks for this task (or type "skip").'
+              : 'Condition saved. Please add remarks for this task.'
           }
         }
         // Cause text
@@ -354,7 +354,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Resolution saved. Please send any photos/videos now (you can add notes as caption), or type "skip" to continue.'
+          if (data?.success) {
+            const c = String(meta.currentTaskCondition || '').toUpperCase()
+            const allowSkip = c === 'NOT_APPLICABLE'
+            return data?.message || (allowSkip
+              ? 'Resolution saved. Please add remarks for this task (or type "skip").'
+              : 'Resolution saved. Please add remarks for this task.')
+          }
         }
         // Media stage skip
         if (meta.taskFlowStage === 'media' && (lower === 'skip' || lower === 'no')) {
@@ -366,6 +372,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
+        }
+        // Remarks step (new): free text remarks before media
+        if (meta.taskFlowStage === 'remarks' && raw && !numAny) {
+          const out = await executeTool('completeTask', { phase: 'set_remarks', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, remarks: raw }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(out) } catch {}
+          if (data?.success) return data?.message || 'Thanks. Please send any photos/videos now (captions will be saved per media), or type "skip" to continue.'
         }
 
         // Finalize confirmation step: [1] complete, [2] not yet

@@ -1,5 +1,5 @@
 "use client"
-import { Suspense, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,7 @@ function LoginPageContent() {
   const router = useRouter()
   const search = useSearchParams()
   const next = search.get('next') || '/'
+  const logoutFlag = search.get('logout')
   const confirmationState = search.get('confirmation')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -25,6 +26,18 @@ function LoginPageContent() {
         : confirmationState === 'server-error'
           ? 'We could not validate your confirmation due to a server configuration issue. Please contact support.'
           : null
+
+  // If we were force-redirected due to invalid/missing user, clear client storage
+  useEffect(() => {
+    if (logoutFlag) {
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage?.clear?.()
+          window.sessionStorage?.clear?.()
+        }
+      } catch {/* ignore */}
+    }
+  }, [logoutFlag])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()

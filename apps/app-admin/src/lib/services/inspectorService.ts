@@ -1729,7 +1729,7 @@ export async function updateWorkOrderDetails(
   }
 }
 
-async function refreshWorkOrdersCache() {
+export async function refreshWorkOrdersCache() {
   const workOrdersRaw = await prisma.workOrder.findMany({
     select: {
       id: true,

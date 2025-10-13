@@ -32,7 +32,30 @@ export async function middleware(req: NextRequest) {
   if (!payload) {
     const url = new URL('/login', req.url)
     url.searchParams.set('next', pathname)
-    return NextResponse.redirect(url)
+    const res = NextResponse.redirect(url)
+    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
+    return res
+  }
+
+  // Validate that the user still exists in DB via server route
+  try {
+    const validateUrl = new URL('/api/auth/validate', req.url)
+    const validateRes = await fetch(validateUrl, { headers: { cookie: req.headers.get('cookie') || '' } })
+    if (!validateRes.ok) {
+      const url = new URL('/login', req.url)
+      url.searchParams.set('next', pathname)
+      url.searchParams.set('logout', 'missing-user')
+      const res = NextResponse.redirect(url)
+      res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
+      return res
+    }
+  } catch (_) {
+    // On any unexpected validation error, fail closed
+    const url = new URL('/login', req.url)
+    url.searchParams.set('next', pathname)
+    const res = NextResponse.redirect(url)
+    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
+    return res
   }
 
   return NextResponse.next()

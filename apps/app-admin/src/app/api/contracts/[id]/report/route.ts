@@ -29,7 +29,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   const buffer = await createContractReportBuffer(contract, {
     titleOverride: customTitle,
     versionLabel,
-    generatedOn
+    generatedOn,
+    entryOnly: true,
   })
 
   const fileName = buildContractReportFilename(contract.customer?.name, contract.address?.postalCode, contract.id)

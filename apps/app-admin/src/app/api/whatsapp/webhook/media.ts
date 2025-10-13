@@ -236,23 +236,9 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
         await updateSessionState(phoneNumber, { currentTaskEntryId })
       }
       if (currentTaskEntryId) {
-        await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType)
-        if (mediaRemark) {
-          try {
-            const existing = await prisma.itemEntry.findUnique({ where: { id: currentTaskEntryId }, select: { remarks: true } })
-            const combined = existing?.remarks ? `${existing.remarks}\n${mediaRemark}` : mediaRemark
-            // Also persist pending cause/resolution if available in session
-            const updates: any = { remarks: combined }
-            try {
-              const latest = await getSessionState(phoneNumber)
-              if (latest.pendingTaskCause) updates.cause = latest.pendingTaskCause
-              if (latest.pendingTaskResolution) updates.resolution = latest.pendingTaskResolution
-            } catch {}
-            await prisma.itemEntry.update({ where: { id: currentTaskEntryId }, data: updates })
-          } catch (error) {
-            console.error('❌ Failed to attach bundled remarks to item entry', error)
-          }
-        }
+        // Save media and persist caption as ItemEntryMedia caption; do not merge into entry.remarks
+        const effectiveCaption = mediaRemark || (metadata.pendingTaskRemarks || undefined)
+        await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType, effectiveCaption)
         handledByTaskFlow = true
         // Prepare confirmation line for cause/resolution when applicable
         let crLine = ''
@@ -266,11 +252,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
           }
         } catch {}
 
-        if (mediaRemark) {
-          await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: mediaRemark })
-          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} and remarks saved successfully for ${activeTaskName || 'this task'}.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
-        }
-        await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: undefined })
+        await updateSessionState(phoneNumber, { taskFlowStage: 'confirm', currentTaskEntryId, pendingTaskRemarks: metadata.pendingTaskRemarks })
         return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved successfully for ${activeTaskName || 'this task'}.${crLine}\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.`
       }
     } catch (error) {
