@@ -195,7 +195,7 @@ function normalizeChecklistItemCacheEntry(item: any) {
   }
 }
 
-async function upsertWorkOrderCaches(prismaWorkOrder: any, previousInspectorIds: string[] = [], cachedAll?: any[]) {
+export async function upsertWorkOrderCaches(prismaWorkOrder: any, previousInspectorIds: string[] = [], cachedAll?: any[]) {
   try {
     const normalized = normalizeWorkOrderCacheEntry(prismaWorkOrder)
     const ttlOptions = { ttlSeconds: DEFAULT_TTL_SECONDS }
@@ -579,7 +579,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     }
 
     debugLog('getTodayJobsForInspector: workOrders for inspector', inspectorId, scopedWorkOrders.length)
-    const todays = scopedWorkOrders
+    let todays = scopedWorkOrders
       .filter((wo: any) => {
         if (wo.inspectorId !== inspectorId) return false
         const startRaw = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null

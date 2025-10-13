@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
-import { cacheDel } from '@/lib/memcache'
-import { refreshWorkOrdersCache } from '@/lib/services/inspectorService'
+import { upsertWorkOrderCaches } from '@/lib/services/inspectorService'
 import { generateWorkOrderId } from '@/lib/id-generator'
 
 type LocationSeed = {
@@ -542,24 +541,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Refresh chatbot caches so WhatsApp assistant sees the new work order
-    try {
-      const tzOffsetHours = Number(process.env.LOCAL_TZ_OFFSET_HOURS ?? 8)
-      const now = new Date()
-      const sgNow = new Date(now.getTime() + tzOffsetHours * 60 * 60 * 1000)
-      const sgStartLocal = new Date(Date.UTC(sgNow.getUTCFullYear(), sgNow.getUTCMonth(), sgNow.getUTCDate(), 0, 0, 0))
-      const startOfDay = new Date(sgStartLocal.getTime() - tzOffsetHours * 60 * 60 * 1000)
-      const dateKey = `${startOfDay.getUTCFullYear()}-${String(startOfDay.getUTCMonth() + 1).padStart(2, '0')}-${String(startOfDay.getUTCDate()).padStart(2, '0')}`
-      for (const iid of inspectorIds as string[]) {
-        try { await cacheDel(`mc:work-orders:today:${iid}:${dateKey}`) } catch {}
-        try { await cacheDel(`mc:work-orders:inspector:${iid}`) } catch {}
-      }
-      try { await refreshWorkOrdersCache() } catch {}
-      try { await cacheDel('mc:work-orders:all') } catch {}
-    } catch (e) {
-      console.error('work-order create: cache refresh failed', e)
-    }
-
+    try { await upsertWorkOrderCaches(transactionResult.workOrder, []) } catch (e) { console.error('work-order create: upsert caches failed', e) }
     return NextResponse.json(transactionResult.workOrder, { status: 201 })
   } catch (error) {
     console.error('Error creating work order:', error)

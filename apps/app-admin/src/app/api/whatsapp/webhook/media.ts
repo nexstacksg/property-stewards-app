@@ -24,7 +24,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const currentSubLocationId = metadata.currentSubLocationId
     const currentSubLocationName = metadata.currentSubLocationName
     const taskFlowStage = metadata.taskFlowStage
-    const isTaskFlowMedia = taskFlowStage === 'media' || taskFlowStage === 'remarks'
+    const isTaskFlowMedia = taskFlowStage === 'media' || taskFlowStage === 'remarks' || taskFlowStage === 'confirm'
     const activeTaskName = metadata.currentTaskName
     const activeTaskId = metadata.currentTaskId
     const activeTaskItemId = metadata.currentTaskItemId
@@ -113,22 +113,32 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const publicUrl = `${PUBLIC_URL}/${key}`
     debugLog('✅ Uploaded to DigitalOcean Spaces:', publicUrl)
 
-    // Possible remarks bundled with the media
-    const rawRemarkCandidates: unknown[] = [
-      data.caption,
-      data.text,
-      data.body,
-      data.message?.text?.body,
-      data.message?.caption,
-      data.message?.imageMessage?.caption,
-      data.message?.imageMessage?.text,
-      data.media?.caption,
-      data.media?.text
-    ]
-    const mediaRemarkRaw = rawRemarkCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
-    const mediaRemark = mediaRemarkRaw.trim()
+    // Extract caption (WhatsApp providers vary by payload shape)
+    const extractCaption = (payload: any): string | null => {
+      const tryString = (v: any) => (typeof v === 'string' && v.trim().length > 0 ? v.trim() : null)
+      // Common fields
+      const direct = tryString(payload?.caption) || tryString(payload?.text) || tryString(payload?.body)
+      if (direct) return direct
+      // Wassenger-like
+      const msg = payload?.message || {}
+      const media = payload?.media || {}
+      return (
+        tryString(msg?.text?.body) ||
+        tryString(msg?.caption) ||
+        tryString(msg?.imageMessage?.caption) ||
+        tryString(msg?.imageMessage?.text) ||
+        tryString(msg?.videoMessage?.caption) ||
+        tryString(msg?.videoMessage?.text) ||
+        tryString(msg?.documentMessage?.caption) ||
+        tryString(msg?.extendedTextMessage?.text) ||
+        tryString(media?.caption) ||
+        tryString(media?.text) ||
+        null
+      )
+    }
+    const mediaRemark = extractCaption(data) || ''
 
-    if (requiresRemarkForPhoto && !mediaRemark) {
+    if (requiresRemarkForPhoto && !mediaRemark && !isTaskFlowMedia) {
       const pendingUploads = Array.isArray(metadata.pendingMediaUploads) ? metadata.pendingMediaUploads : []
       const pendingEntry: PendingMediaUpload = {
         url: publicUrl,
@@ -219,7 +229,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
   let currentTaskEntryId = activeTaskEntryId || null
   const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
 
-  if (isTaskFlowMedia && activeTaskId) {
+  if (isTaskFlowMedia && (activeTaskId || currentTaskEntryId)) {
     try {
       if (!currentTaskEntryId && activeTaskItemId) {
         if (resolvedInspectorId) {
@@ -237,7 +247,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
       }
       if (currentTaskEntryId) {
         // Save media and persist caption as ItemEntryMedia caption; do not merge into entry.remarks
-        const effectiveCaption = mediaRemark || (metadata.pendingTaskRemarks || undefined)
+        const effectiveCaption = mediaRemark || ""
         await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType, effectiveCaption)
         handledByTaskFlow = true
         // Prepare confirmation line for cause/resolution when applicable

@@ -26,13 +26,13 @@ function getTableWidth(doc: any): number {
   return getAvailableTableWidth(doc)
 }
 const CELL_PADDING = 8
-const PHOTO_HEIGHT = 70
+const PHOTO_HEIGHT = 100
 const PHOTO_CAPTION_GAP = 2
 const PHOTO_CAPTION_FONT_SIZE = 8
 const PHOTO_CAPTION_COLOR = "#475569"
-const VIDEO_HEIGHT = 48
-const MAX_MEDIA_LINKS = 4
-const MEDIA_PER_ROW = 1
+const VIDEO_HEIGHT = 64
+const MAX_MEDIA_LINKS = 9999
+const MEDIA_PER_ROW = 4
 const MEDIA_GUTTER = 8
 const SEGMENT_SPACING = 12
 const LOGO_PATH = join(process.cwd(), "public", "logo.png")
@@ -210,39 +210,36 @@ async function fetchImage(url: string): Promise<Buffer | null> {
   }
 }
 
-function preparePhotoLayout(
+function prepareGridLayout(
   doc: any,
-  photoCount: number,
+  itemCount: number,
   captions: (string | null)[] | undefined,
-  availableWidth: number
+  availableWidth: number,
+  tileHeight: number
 ) {
-  if (photoCount === 0) {
-    const usableWidth = availableWidth - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
-    const thumbWidth = usableWidth / MEDIA_PER_ROW
-    return {
-      thumbWidth,
-      rowHeights: [] as number[],
-      totalHeight: 0,
-    }
+  const usableWidth = availableWidth - MEDIA_GUTTER * (MEDIA_PER_ROW - 1)
+  const tileWidth = MEDIA_PER_ROW > 0 ? usableWidth / MEDIA_PER_ROW : usableWidth
+
+  if (itemCount === 0) {
+    return { tileWidth, rowHeights: [] as number[], totalHeight: 0 }
   }
 
-  const thumbWidth = availableWidth
-  const rows = photoCount
-  const rowHeights = new Array(rows).fill(PHOTO_HEIGHT)
+  const rows = Math.ceil(itemCount / MEDIA_PER_ROW)
+  const rowHeights = new Array(rows).fill(tileHeight)
   const normalizedCaptions = captions ?? []
 
   doc.save()
   doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE)
-  for (let index = 0; index < photoCount; index += 1) {
-    const row = index
+  for (let index = 0; index < itemCount; index += 1) {
+    const row = Math.floor(index / MEDIA_PER_ROW)
     const captionValue = normalizedCaptions[index]
     const caption = typeof captionValue === 'string' ? captionValue.trim() : ''
     if (!caption) continue
     const captionHeight = doc.heightOfString(caption, {
-      width: thumbWidth,
+      width: tileWidth,
       align: 'center'
     })
-    const blockHeight = PHOTO_HEIGHT + PHOTO_CAPTION_GAP + captionHeight
+    const blockHeight = tileHeight + PHOTO_CAPTION_GAP + captionHeight
     rowHeights[row] = Math.max(rowHeights[row], blockHeight)
   }
   doc.restore()
@@ -250,12 +247,10 @@ function preparePhotoLayout(
   let totalHeight = 0
   for (let row = 0; row < rowHeights.length; row += 1) {
     totalHeight += rowHeights[row]
-    if (row < rowHeights.length - 1) {
-      totalHeight += MEDIA_GUTTER
-    }
+    if (row < rowHeights.length - 1) totalHeight += MEDIA_GUTTER
   }
 
-  return { thumbWidth, rowHeights, totalHeight }
+  return { tileWidth, rowHeights, totalHeight }
 }
 
 function resolveEntryAuthor(entry: EntryLike) {
@@ -396,7 +391,10 @@ async function buildRemarkSegment({
     }
     if (buffer) {
       images.push(buffer)
-      photoCaptions.push(source.caption && source.caption.length > 0 ? source.caption : null)
+      const caption = (typeof source.caption === 'string' && source.caption.trim().length > 0)
+        ? source.caption.trim()
+        : null
+      photoCaptions.push(caption)
     }
   }
 
@@ -410,11 +408,13 @@ async function buildRemarkSegment({
     return null
   }
 
+  const videoItems: VideoItem[] = uniqueVideos.map((url) => ({ url, label: '' }))
+
   return {
     text: lines.length > 0 ? lines.join("\n") : undefined,
     photos: images,
     photoCaptions,
-    videos: []
+    videos: videoItems
   }
 }
 
@@ -477,7 +477,7 @@ async function buildTableRows(
     const item = items[itemIndex]
     const standaloneEntries = (item.contributions || []).filter((entry: any) => !entry.taskId)
     const reportEntries = standaloneEntries
-      .filter((entry: any) => entry?.includeInReport !== false)
+      .filter((entry: any) => entry?.includeInReport === true)
       .filter((entry: any) => isConditionAllowed(entry?.condition, allowedConditions))
 
     const seenItemPhotos = new Set<string>()
@@ -592,7 +592,7 @@ async function buildTableRows(
         const taskConditionAllowed = isConditionAllowed(task?.condition, allowedConditions)
         const entries = Array.isArray(task.entries) ? task.entries : []
         const filteredEntries = entries
-          .filter((entry: EntryLike) => (entry as any)?.includeInReport !== false)
+          .filter((entry: EntryLike) => (entry as any)?.includeInReport === true)
           .filter((entry: EntryLike) => isConditionAllowed((entry as any)?.condition, allowedConditions))
 
         const rowSegments: CellSegment[] = []
@@ -621,7 +621,7 @@ async function buildTableRows(
         const taskNumber = `${locationNumber}.${taskIdx + 1}`
         const subtaskLabel = `${taskNumber} ${task.name || 'Subtask'}`
 
-        if (!taskConditionAllowed && rowSegments.length === 0 && filteredEntries.length === 0) {
+        if (!taskConditionAllowed && !entryOnly && rowSegments.length === 0 && filteredEntries.length === 0) {
           continue
         }
 
@@ -646,12 +646,43 @@ async function buildTableRows(
         })
 
         if (filteredEntries.length > 0) {
+          // First show all entry media (photos/videos) in a full-width grid block
+          const combinedPhotos = mergePhotoEntries(
+            ...filteredEntries.map((e: any) => entryPhotoEntries(e))
+          )
+          const combinedVideos: string[] = ([] as string[]).concat(
+            ...filteredEntries.map((e: any) => Array.isArray(e.videos) ? e.videos : [])
+          )
+
+          const mediaSegment = await buildRemarkSegment({
+            text: undefined,
+            photoEntries: combinedPhotos,
+            videoUrls: combinedVideos,
+            imageCache,
+            seenPhotos: seenItemPhotos,
+            seenVideos: seenItemVideos
+          })
+
+          if (mediaSegment && (mediaSegment.photos?.length || mediaSegment.videos?.length)) {
+            rows.push({
+              cells: [
+                { text: '' },
+                { text: '' },
+                { text: '' },
+                { text: '' },
+                { text: '' }
+              ],
+              summaryMedia: mediaSegment
+            })
+          }
+
+          // Then render up to 4 entry text blocks per row (no photos/videos inside cells)
           const entrySegments: (CellSegment | null)[] = []
           for (const entry of filteredEntries as EntryLike[]) {
             const entrySegment = await buildRemarkSegment({
               text: formatEntryLine(entry),
-              photoEntries: entryPhotoEntries(entry),
-              videoUrls: Array.isArray(entry.videos) ? (entry.videos as string[]) : [],
+              photoEntries: [],
+              videoUrls: [],
               imageCache,
               seenPhotos: seenItemPhotos,
               seenVideos: seenItemVideos
@@ -699,16 +730,14 @@ function calculateRowHeight(doc: any, cells: TableCell[]) {
       let mediaHeight = 0
 
       if (segment.photos && segment.photos.length) {
-        const { totalHeight } = preparePhotoLayout(doc, segment.photos.length, segment.photoCaptions, width)
+        const { totalHeight } = prepareGridLayout(doc, segment.photos.length, segment.photoCaptions, width, PHOTO_HEIGHT)
         mediaHeight += totalHeight
       }
 
       if (segment.videos && segment.videos.length) {
-        if (mediaHeight > 0) {
-          mediaHeight += MEDIA_GUTTER
-        }
-        const videoRows = Math.ceil(segment.videos.length / MEDIA_PER_ROW)
-        mediaHeight += videoRows * VIDEO_HEIGHT + (videoRows - 1) * MEDIA_GUTTER
+        if (mediaHeight > 0) mediaHeight += MEDIA_GUTTER
+        const { totalHeight } = prepareGridLayout(doc, segment.videos.length, undefined, width, VIDEO_HEIGHT)
+        mediaHeight += totalHeight
       }
 
       let textHeight = 0
@@ -769,7 +798,7 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
     const drawPhotos = (startY: number, photos?: Buffer[], captions?: (string | null)[]) => {
       if (!photos || photos.length === 0) return 0
       const availableWidth = width - CELL_PADDING * 2
-      const { thumbWidth, rowHeights, totalHeight } = preparePhotoLayout(doc, photos.length, captions, availableWidth)
+      const { tileWidth, rowHeights, totalHeight } = prepareGridLayout(doc, photos.length, captions, availableWidth, PHOTO_HEIGHT)
       if (rowHeights.length === 0) return 0
 
       const rowStartYs: number[] = []
@@ -783,22 +812,24 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
       }
 
       photos.forEach((buffer, index) => {
-        const drawX = x + CELL_PADDING
-        const drawY = rowStartYs[index]
+        const row = Math.floor(index / MEDIA_PER_ROW)
+        const col = index % MEDIA_PER_ROW
+        const drawX = x + CELL_PADDING + col * (tileWidth + MEDIA_GUTTER)
+        const drawY = rowStartYs[row]
 
         try {
           doc.image(buffer, drawX, drawY, {
-            fit: [thumbWidth, PHOTO_HEIGHT],
+            fit: [tileWidth, PHOTO_HEIGHT],
             align: "center",
             valign: "top"
           })
         } catch (error) {
           console.error("Failed to render photo in PDF", error)
           doc.save()
-          doc.rect(drawX, drawY, thumbWidth, PHOTO_HEIGHT).stroke("#ef4444")
+          doc.rect(drawX, drawY, tileWidth, PHOTO_HEIGHT).stroke("#ef4444")
           doc.font("Helvetica").fontSize(8).fillColor("#ef4444")
           doc.text("Photo unavailable", drawX + 4, drawY + 4, {
-            width: thumbWidth - 8,
+            width: tileWidth - 8,
             align: "left"
           })
           doc.fillColor("#111827").restore()
@@ -810,7 +841,7 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
           doc.save()
           doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(PHOTO_CAPTION_COLOR)
           doc.text(caption, drawX, drawY + PHOTO_HEIGHT + PHOTO_CAPTION_GAP, {
-            width: thumbWidth,
+            width: tileWidth,
             align: 'center'
           })
           doc.restore()
@@ -823,13 +854,23 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
 
     const drawVideos = (startY: number, videos?: VideoItem[]) => {
       if (!videos || videos.length === 0) return 0
-      const cardWidth = width - CELL_PADDING * 2
-      const rows = videos.length
-      videos.forEach((_video, index) => {
-        const drawX = x + CELL_PADDING
-        const drawY = startY + index * (VIDEO_HEIGHT + MEDIA_GUTTER)
+      const availableWidth = width - CELL_PADDING * 2
+      const { tileWidth, rowHeights, totalHeight } = prepareGridLayout(doc, videos.length, undefined, availableWidth, VIDEO_HEIGHT)
+      const rowStartYs: number[] = []
+      let pointerY = startY
+      for (let row = 0; row < rowHeights.length; row += 1) {
+        rowStartYs[row] = pointerY
+        pointerY += rowHeights[row]
+        if (row < rowHeights.length - 1) pointerY += MEDIA_GUTTER
+      }
+
+      videos.forEach((video, index) => {
+        const row = Math.floor(index / MEDIA_PER_ROW)
+        const col = index % MEDIA_PER_ROW
+        const drawX = x + CELL_PADDING + col * (tileWidth + MEDIA_GUTTER)
+        const drawY = rowStartYs[row]
         doc.save()
-        doc.roundedRect(drawX, drawY, cardWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
+        doc.roundedRect(drawX, drawY, tileWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
 
         const centerY = drawY + VIDEO_HEIGHT / 2
         const iconRadius = 12
@@ -843,8 +884,10 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
 
         doc.restore()
         doc.fillColor("#111827")
+
+        // No video labels
       })
-      return rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+      return totalHeight
     }
 
     const segments = getCellSegments(cell)
@@ -943,15 +986,13 @@ function calculateMediaBlocksHeight(doc: any, segments?: CellSegment | CellSegme
 
     let mediaHeight = 0
     if (hasPhotos) {
-      const { totalHeight } = preparePhotoLayout(doc, photos.length, photoCaptions, contentWidth)
+      const { totalHeight } = prepareGridLayout(doc, photos.length, photoCaptions, contentWidth, PHOTO_HEIGHT)
       mediaHeight += totalHeight
     }
     if (hasVideos) {
-      if (mediaHeight > 0) {
-        mediaHeight += MEDIA_GUTTER
-      }
-      const rows = videos.length
-      mediaHeight += rows * VIDEO_HEIGHT + (rows - 1) * MEDIA_GUTTER
+      if (mediaHeight > 0) mediaHeight += MEDIA_GUTTER
+      const { totalHeight } = prepareGridLayout(doc, videos.length, undefined, contentWidth, VIDEO_HEIGHT)
+      mediaHeight += totalHeight
     }
 
     if (textHeight > 0 && mediaHeight > 0) {
@@ -996,7 +1037,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
     let photoHeight = 0
     let photoLayout: ReturnType<typeof preparePhotoLayout> | null = null
     if (hasPhotos) {
-      photoLayout = preparePhotoLayout(doc, photos.length, photoCaptions, contentWidth)
+      photoLayout = prepareGridLayout(doc, photos.length, photoCaptions, contentWidth, PHOTO_HEIGHT)
       photoHeight = photoLayout.totalHeight
     }
 
@@ -1034,7 +1075,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
 
     const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof preparePhotoLayout>) => {
       if (!hasPhotos || layout.rowHeights.length === 0) return 0
-      const { thumbWidth, rowHeights } = layout
+      const { tileWidth, rowHeights } = layout
       const rowStartYs: number[] = []
       let pointerY = start
       for (let row = 0; row < rowHeights.length; row += 1) {
@@ -1046,22 +1087,24 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       }
 
       photos.forEach((buffer, photoIndex) => {
-        const drawX = TABLE_MARGIN + CELL_PADDING
-        const drawY = rowStartYs[photoIndex]
+        const row = Math.floor(photoIndex / MEDIA_PER_ROW)
+        const col = photoIndex % MEDIA_PER_ROW
+        const drawX = TABLE_MARGIN + CELL_PADDING + col * (tileWidth + MEDIA_GUTTER)
+        const drawY = rowStartYs[row]
 
         try {
           doc.image(buffer, drawX, drawY, {
-            fit: [thumbWidth, PHOTO_HEIGHT],
+            fit: [tileWidth, PHOTO_HEIGHT],
             align: "center",
             valign: "top"
           })
         } catch (error) {
           console.error("Failed to render photo in PDF", error)
           doc.save()
-          doc.rect(drawX, drawY, thumbWidth, PHOTO_HEIGHT).stroke("#ef4444")
+          doc.rect(drawX, drawY, tileWidth, PHOTO_HEIGHT).stroke("#ef4444")
           doc.font("Helvetica").fontSize(8).fillColor("#ef4444")
           doc.text("Photo unavailable", drawX + 4, drawY + 4, {
-            width: thumbWidth - 8,
+            width: tileWidth - 8,
             align: "left"
           })
           doc.fillColor("#111827").restore()
@@ -1073,7 +1116,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
           doc.save()
           doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(PHOTO_CAPTION_COLOR)
           doc.text(caption, drawX, drawY + PHOTO_HEIGHT + PHOTO_CAPTION_GAP, {
-            width: thumbWidth,
+            width: tileWidth,
             align: 'center'
           })
           doc.restore()
@@ -1086,12 +1129,22 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
 
     const drawFullWidthVideos = (start: number) => {
       if (!hasVideos) return 0
-      const cardWidth = contentWidth
-      videos.forEach((_video, videoIndex) => {
-        const drawX = TABLE_MARGIN + CELL_PADDING
-        const drawY = start + videoIndex * (VIDEO_HEIGHT + MEDIA_GUTTER)
+      const { tileWidth, rowHeights, totalHeight } = prepareGridLayout(doc, videos.length, undefined, contentWidth, VIDEO_HEIGHT)
+      const rowStartYs: number[] = []
+      let pointerY = start
+      for (let row = 0; row < rowHeights.length; row += 1) {
+        rowStartYs[row] = pointerY
+        pointerY += rowHeights[row]
+        if (row < rowHeights.length - 1) pointerY += MEDIA_GUTTER
+      }
+
+      videos.forEach((video, videoIndex) => {
+        const row = Math.floor(videoIndex / MEDIA_PER_ROW)
+        const col = videoIndex % MEDIA_PER_ROW
+        const drawX = TABLE_MARGIN + CELL_PADDING + col * (tileWidth + MEDIA_GUTTER)
+        const drawY = rowStartYs[row]
         doc.save()
-        doc.roundedRect(drawX, drawY, cardWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
+        doc.roundedRect(drawX, drawY, tileWidth, VIDEO_HEIGHT, 8).fill("#1e293b")
 
         const centerY = drawY + VIDEO_HEIGHT / 2
         const iconRadius = 12
@@ -1105,8 +1158,10 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
 
         doc.restore()
         doc.fillColor("#111827")
+
+        // No video labels
       })
-      return videoHeight
+      return totalHeight
     }
 
     if (hasPhotos && photoLayout) {
