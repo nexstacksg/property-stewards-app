@@ -24,7 +24,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const currentSubLocationId = metadata.currentSubLocationId
     const currentSubLocationName = metadata.currentSubLocationName
     const taskFlowStage = metadata.taskFlowStage
-    const isTaskFlowMedia = taskFlowStage === 'media' || taskFlowStage === 'remarks'
+    const isTaskFlowMedia = taskFlowStage === 'media' || taskFlowStage === 'remarks' || taskFlowStage === 'confirm'
     const activeTaskName = metadata.currentTaskName
     const activeTaskId = metadata.currentTaskId
     const activeTaskItemId = metadata.currentTaskItemId
@@ -128,7 +128,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const mediaRemarkRaw = rawRemarkCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
     const mediaRemark = mediaRemarkRaw.trim()
 
-    if (requiresRemarkForPhoto && !mediaRemark) {
+    if (requiresRemarkForPhoto && !mediaRemark && !isTaskFlowMedia) {
       const pendingUploads = Array.isArray(metadata.pendingMediaUploads) ? metadata.pendingMediaUploads : []
       const pendingEntry: PendingMediaUpload = {
         url: publicUrl,
@@ -219,7 +219,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
   let currentTaskEntryId = activeTaskEntryId || null
   const resolvedInspectorId = await resolveInspectorIdForSession(phoneNumber, metadata, workOrderId, metadata?.inspectorPhone || phoneNumber)
 
-  if (isTaskFlowMedia && activeTaskId) {
+  if (isTaskFlowMedia && (activeTaskId || currentTaskEntryId)) {
     try {
       if (!currentTaskEntryId && activeTaskItemId) {
         if (resolvedInspectorId) {
