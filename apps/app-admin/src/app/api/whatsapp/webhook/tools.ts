@@ -17,7 +17,8 @@ import {
   getWorkOrderProgress,
   getContractChecklistItemIdByLocation,
   getTaskMedia as getTaskMediaService,
-  refreshChecklistItemCache
+  refreshChecklistItemCache,
+  refreshChecklistItemsForWorkOrder
 } from '@/lib/services/inspectorService'
 import { resolveInspectorIdForSession } from './utils'
 
@@ -520,7 +521,10 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             data: { status: 'COMPLETED', enteredOn: new Date(), enteredById: s.inspectorId || undefined }
           })
           // Refresh caches so subsequent reads reflect the latest status without a full cold miss
-          try { await refreshChecklistItemCache(contractChecklistItemId) } catch (e) { console.error('markLocationComplete: refresh cache failed', e) }
+          try {
+            await refreshChecklistItemCache(contractChecklistItemId)
+            await refreshChecklistItemsForWorkOrder(workOrderId)
+          } catch (e) { console.error('markLocationComplete: refresh cache failed', e) }
           // Keep session context consistent with UI flow
           if (sessionId) {
             try {
@@ -536,7 +540,14 @@ export async function executeTool(toolName: string, args: any, threadId?: string
               })
             } catch {}
           }
-          return JSON.stringify({ success: true, message: '✅ Location marked complete.' })
+          // Return an updated locations list to ensure the UI can refresh immediately
+          try {
+            const refreshed = await getLocationsWithCompletionStatus(workOrderId) as any[]
+            const locationsFormatted = refreshed.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
+            return JSON.stringify({ success: true, message: '✅ Location marked complete.', locationsFormatted })
+          } catch {
+            return JSON.stringify({ success: true, message: '✅ Location marked complete.' })
+          }
         } catch (error) {
           console.error('markLocationComplete: failed to update item', error)
           return JSON.stringify({ success: false, error: 'Failed to mark location complete.' })

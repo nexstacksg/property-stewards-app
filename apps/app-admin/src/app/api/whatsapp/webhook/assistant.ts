@@ -579,9 +579,12 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             dbg('tasks-select markComplete')
             const r = await executeTool('markLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId }, undefined, phoneNumber)
             let rr: any = null; try { rr = JSON.parse(r) } catch {}
-            const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
-            let locData: any = null; try { locData = JSON.parse(locs) } catch {}
-            const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            let formattedLocations: string[] = Array.isArray(rr?.locationsFormatted) ? rr.locationsFormatted : []
+            if (!formattedLocations.length) {
+              const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+              let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+              formattedLocations = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            }
             const header = 'Here are the locations available for inspection:'
             const body = formattedLocations.length > 0
               ? [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\\n')

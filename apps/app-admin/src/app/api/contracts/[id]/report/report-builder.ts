@@ -12,7 +12,8 @@ import {
   drawFooter
 } from "@/lib/reports/work-order-pdf"
 
-const WATERMARK_OPACITY = 0.15
+// Make watermark subtler to avoid obscuring table content in landscape
+const WATERMARK_OPACITY = 0.1
 
 export type ReportBuildOptions = {
   titleOverride?: string | null
@@ -284,7 +285,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
 
 export async function createContractReportBuffer(contract: any, options: ReportBuildOptions) {
   const PDFDocument = await getPDFDocumentCtor()
-  const doc: any = new PDFDocument({ size: "A4", margin: TABLE_MARGIN })
+  // Switch report orientation to landscape for wider tables/media layouts
+  const doc: any = new PDFDocument({ size: "A4", layout: 'landscape', margin: TABLE_MARGIN })
   const stream = new PassThrough()
   const chunks: Buffer[] = []
 
