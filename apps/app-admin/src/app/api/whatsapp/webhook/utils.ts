@@ -147,7 +147,7 @@ export async function saveMediaForItem(itemId: string, inspectorId: string | nul
 }
 
 // Utility: append media to an existing item entry (per task)
-export async function saveMediaToItemEntry(entryId: string, publicUrl: string, mediaType: 'photo' | 'video') {
+export async function saveMediaToItemEntry(entryId: string, publicUrl: string, mediaType: 'photo' | 'video', caption?: string) {
   const entry = await prisma.itemEntry.update({
     where: { id: entryId },
     data: mediaType === 'photo'
@@ -155,6 +155,21 @@ export async function saveMediaToItemEntry(entryId: string, publicUrl: string, m
       : { videos: { push: publicUrl } },
     select: { taskId: true }
   })
+
+  // Create an ItemEntryMedia row with optional caption
+  try {
+    await prisma.itemEntryMedia.create({
+      data: {
+        entryId,
+        url: publicUrl,
+        caption: caption && caption.trim().length > 0 ? caption.trim() : null,
+        type: mediaType === 'photo' ? 'PHOTO' : 'VIDEO',
+        // order is auto defaulted; could be improved by counting existing
+      }
+    })
+  } catch (e) {
+    console.error('Failed to create ItemEntryMedia record', e)
+  }
 
   if (entry.taskId) {
     await prisma.checklistTask.update({
