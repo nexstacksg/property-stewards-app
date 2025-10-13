@@ -135,9 +135,38 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
-        // Mark last menu context for numeric selection routing
+        // Reset stale inspection context and mark lastMenu for numeric routing
         if (sessionId) {
-          try { await updateSessionState(sessionId, { lastMenu: 'jobs', lastMenuAt: new Date().toISOString(), jobStatus: 'none' }) } catch {}
+          try {
+            await updateSessionState(sessionId, {
+              // keep identity, reset job and inspection context
+              jobStatus: 'none',
+              workOrderId: undefined,
+              customerName: undefined,
+              propertyAddress: undefined,
+              postalCode: undefined,
+              currentLocation: undefined,
+              currentLocationId: undefined,
+              currentSubLocationId: undefined,
+              currentSubLocationName: undefined,
+              currentItemId: undefined,
+              currentTaskId: undefined,
+              currentTaskName: undefined,
+              currentTaskItemId: undefined,
+              currentTaskEntryId: undefined,
+              currentTaskCondition: undefined,
+              currentTaskLocationId: undefined,
+              currentTaskLocationName: undefined,
+              currentLocationCondition: undefined,
+              taskFlowStage: undefined,
+              pendingTaskRemarks: undefined,
+              pendingTaskCause: undefined,
+              pendingTaskResolution: undefined,
+              locationSubLocations: undefined,
+              lastMenu: 'jobs',
+              lastMenuAt: new Date().toISOString(),
+            })
+          } catch {}
         }
         dbg('getTodayJobs', { tookMs: Date.now() - t0, count: jobs.length, inspectorId: finalInspectorId })
         const jobsFormatted = jobs.map((job: any, index: number) => {
@@ -194,6 +223,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
       }
       case 'startJob': {
+        // Guard: only allow after an explicit confirmation step
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          if (s?.jobStatus !== 'confirming') {
+            return JSON.stringify({ success: false, error: 'Please confirm the destination first. Reply [1] Yes or [2] No to the confirmation prompt.' })
+          }
+        }
         const perf = process.env.WHATSAPP_PERF_LOG === 'true'
         const t0 = Date.now()
         // Resolve a valid work order id robustly to avoid P2025
@@ -262,6 +298,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: true, locations: locations.map(loc => loc.displayName), locationsFormatted, locationsDetail: locations, progress })
       }
       case 'getJobLocations': {
+        // Guard: only after job has been started
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          if (s?.jobStatus !== 'started') {
+            return JSON.stringify({ success: false, error: 'Please start the job first (confirm the destination and reply [1]).' })
+          }
+        }
         const { jobId } = args
         const locationsWithStatus = await getLocationsWithCompletionStatus(jobId) as any[]
         const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
@@ -301,6 +344,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         })
       }
       case 'getSubLocations': {
+        // Guard: only after job has been started
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          if (s?.jobStatus !== 'started') {
+            return JSON.stringify({ success: false, error: 'Please start the job first (confirm the destination and reply [1]).' })
+          }
+        }
         const { workOrderId, contractChecklistItemId, locationName } = args
         const subLocations = await getChecklistLocationsForItem(contractChecklistItemId) as any[]
         let derivedName = locationName as string | undefined
@@ -343,6 +393,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         return JSON.stringify({ success: true, subLocations: formatted, subLocationsFormatted: formattedStrings, nextPrompt: 'Reply with the sub-location number you want to inspect.' })
       }
       case 'getTasksForLocation': {
+        // Guard: only after job has been started
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          if (s?.jobStatus !== 'started') {
+            return JSON.stringify({ success: false, error: 'Please start the job first (confirm the destination and reply [1]).' })
+          }
+        }
         const { workOrderId, location, contractChecklistItemId, subLocationId } = args
         let effectiveSubLocationId = subLocationId as string | undefined
         let subLocationOptions: Array<{ id: string; name: string; status: string }> | undefined
