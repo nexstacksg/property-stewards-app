@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { upsertWorkOrderCaches, refreshWorkOrdersCache } from '@/lib/services/inspectorService'
 
 // GET /api/work-orders/[id] - Get a single work order
 export async function GET(
@@ -94,6 +95,10 @@ export async function PATCH(
       }
     }
 
+    // Capture previous inspectors to clean up per-inspector caches
+    const before = await prisma.workOrder.findUnique({ where: { id }, select: { inspectors: { select: { id: true } } } })
+    const previousInspectorIds = Array.isArray(before?.inspectors) ? before!.inspectors.map((i: any) => i.id) : []
+
     const workOrder = await prisma.workOrder.update({
       where: { id },
       data: {
@@ -150,6 +155,7 @@ export async function PATCH(
       }
     }
 
+    try { await upsertWorkOrderCaches(workOrder, previousInspectorIds) } catch (e) { console.error('upsertWorkOrderCaches failed after update', e) }
     return NextResponse.json(workOrder)
   } catch (error) {
     console.error('Error updating work order:', error)
@@ -190,10 +196,8 @@ export async function DELETE(
     await prisma.workOrder.delete({
       where: { id }
     })
-
-    return NextResponse.json({ 
-      message: 'Work order deleted successfully' 
-    })
+    try { await refreshWorkOrdersCache() } catch (e) { console.error('refreshWorkOrdersCache failed after delete', e) }
+    return NextResponse.json({ message: 'Work order deleted successfully' })
   } catch (error) {
     console.error('Error deleting work order:', error)
     return NextResponse.json(
