@@ -247,7 +247,7 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
       }
       if (currentTaskEntryId) {
         // Save media and persist caption as ItemEntryMedia caption; do not merge into entry.remarks
-        const effectiveCaption = mediaRemark || (metadata.pendingTaskRemarks || undefined)
+        const effectiveCaption = mediaRemark || ""
         await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType, effectiveCaption)
         handledByTaskFlow = true
         // Prepare confirmation line for cause/resolution when applicable

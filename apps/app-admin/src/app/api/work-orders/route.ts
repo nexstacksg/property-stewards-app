@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
+import { upsertWorkOrderCaches } from '@/lib/services/inspectorService'
 import { generateWorkOrderId } from '@/lib/id-generator'
 
 type LocationSeed = {
@@ -540,6 +541,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    try { await upsertWorkOrderCaches(transactionResult.workOrder, []) } catch (e) { console.error('work-order create: upsert caches failed', e) }
     return NextResponse.json(transactionResult.workOrder, { status: 201 })
   } catch (error) {
     console.error('Error creating work order:', error)
