@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json().catch(() => null) as { label?: string } | null
+    const body = (await request.json().catch(() => null)) as { label?: string; taskTemplates?: any } | null
     const rawLabel = body?.label ?? ""
     const trimmed = rawLabel.trim()
 
@@ -45,11 +45,12 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedLabel = trimmed.replace(/\s+/g, " ")
+    const taskTemplates = Array.isArray(body?.taskTemplates) ? body!.taskTemplates : undefined
 
     const tag = await prisma.checklistTag.upsert({
       where: { label: normalizedLabel },
-      update: { updatedOn: new Date() },
-      create: { label: normalizedLabel },
+      update: { updatedOn: new Date(), taskTemplates: taskTemplates ?? undefined },
+      create: { label: normalizedLabel, taskTemplates: taskTemplates ?? undefined },
     })
 
     return NextResponse.json(tag, { status: 201 })

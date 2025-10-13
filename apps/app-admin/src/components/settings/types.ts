@@ -23,7 +23,9 @@ export type PropertySummary = {
 export type MasterSettingsSectionKey =
   | "user-settings"
   | "data-settings"
+  | "marketing-sources"
   | "property-size"
+  | "checklist-tags"
   | "documentation"
 
 export type MasterSettingsPanelProps = {

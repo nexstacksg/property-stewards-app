@@ -18,7 +18,9 @@ import type {
 const masterSections: MasterSettingsSectionKey[] = [
   "user-settings",
   "data-settings",
+  "marketing-sources",
   "property-size",
+  "checklist-tags",
   "documentation",
 ]
 

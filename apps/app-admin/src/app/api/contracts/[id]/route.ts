@@ -42,6 +42,7 @@ export async function GET(
           }
         },
         contactPersons: true,
+        marketingSource: true,
         workOrders: {
           include: {
             inspectors: true
@@ -114,7 +115,7 @@ export async function PATCH(
       customerComments,
       customerRating,
       status,
-      marketingSource,
+      marketingSourceId,
       referenceIds,
       contactPersons
     } = body
@@ -123,11 +124,13 @@ export async function PATCH(
       ? contractType
       : undefined
 
-    const normalizedMarketingSource = marketingSource && ['GOOGLE', 'REFERRAL', 'OTHERS'].includes(marketingSource)
-      ? marketingSource
-      : marketingSource === null
-        ? null
-        : undefined
+    let normalizedMarketingSourceId: string | null | undefined = undefined
+    if (marketingSourceId === null) {
+      normalizedMarketingSourceId = null
+    } else if (typeof marketingSourceId === 'string' && marketingSourceId.trim().length > 0) {
+      const ms = await prisma.marketingSource.findUnique({ where: { id: marketingSourceId } })
+      normalizedMarketingSourceId = ms ? ms.id : null
+    }
 
     const sanitizedReferenceIds = Array.isArray(referenceIds)
       ? referenceIds.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
@@ -159,7 +162,7 @@ export async function PATCH(
         customerComments,
         customerRating,
         status,
-        marketingSource: normalizedMarketingSource,
+        marketingSourceId: normalizedMarketingSourceId,
         referenceIds: sanitizedReferenceIds,
       },
       include: {
@@ -205,6 +208,7 @@ export async function PATCH(
           },
           orderBy: { scheduledStartDateTime: 'desc' }
         },
+        marketingSource: true,
         inspectorRatings: {
           include: {
             inspector: {

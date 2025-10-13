@@ -18,6 +18,7 @@
     "db:seed:item-entries": "tsx prisma/seed-item-entries.ts",
     "db:seed:checklist-tags": "tsx prisma/seed-checklist-tags.ts",
     "db:seed:size-ranges": "tsx prisma/seed-size-ranges.ts",
+    "db:seed:marketing-sources": "tsx prisma/seed-marketing-sources.ts",
     "db:seed:checklists:v2": "tsx prisma/seed-checklists-hierarchy.ts",
     "db:studio": "prisma studio",
     "cache:warm": "tsx scripts/warm-cache.ts",

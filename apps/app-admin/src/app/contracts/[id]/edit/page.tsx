@@ -38,7 +38,8 @@ import type {
   ContactPersonDraft,
   ContractStatus,
   ContractType,
-  MarketingSource,
+  MarketingSourceOption,
+  MarketingSourceSelectValue,
 } from "@/components/contracts/types"
 
 const CATEGORIES = [
@@ -221,7 +222,7 @@ interface ContractResponse {
   contractType?: ContractType | null
   remarks?: string | null
   status: ContractStatus
-  marketingSource?: Exclude<MarketingSource, "NONE"> | null
+  marketingSource?: { id: string; name: string } | null
   referenceIds?: string[]
   customer: ContractCustomerSummary
   address: ContractAddressSummary
@@ -292,7 +293,8 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
 
   const [availableReferences, setAvailableReferences] = useState<ContractReferenceOption[]>([])
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([])
-  const [marketingSource, setMarketingSource] = useState<MarketingSource>("NONE")
+  const [marketingSource, setMarketingSource] = useState<MarketingSourceSelectValue>("NONE")
+  const [marketingSourceOptions, setMarketingSourceOptions] = useState<MarketingSourceOption[]>([])
 
   const [contactPersons, setContactPersons] = useState<ContactPersonDraft[]>([])
   const [contactEditIndex, setContactEditIndex] = useState<number | null>(null)
@@ -311,6 +313,16 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       await fetchContract(resolvedParams.id)
     }
     loadContract()
+    // load marketing sources
+    ;(async () => {
+      try {
+        const res = await fetch('/api/marketing-sources')
+        const data = await res.json().catch(() => ({}))
+        setMarketingSourceOptions(Array.isArray(data.sources) ? data.sources : [])
+      } catch {
+        setMarketingSourceOptions([])
+      }
+    })()
   }, [params])
 
   const fetchContract = async (id: string) => {
@@ -333,7 +345,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       setRemarks(contract.remarks || "")
       setCustomer(contract.customer)
       setAddress(contract.address)
-      setMarketingSource(contract.marketingSource || "NONE")
+      setMarketingSource(contract.marketingSource?.id || "NONE")
       setSelectedReferenceIds(Array.isArray(contract.referenceIds) ? contract.referenceIds : [])
       setContactPersons(
         Array.isArray(contract.contactPersons)
@@ -1038,7 +1050,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
           finalPaymentOn: finalPaymentOn || null,
           status,
           remarks,
-          marketingSource: marketingSource !== "NONE" ? marketingSource : null,
+          marketingSourceId: marketingSource !== "NONE" ? marketingSource : null,
           referenceIds: selectedReferenceIds.filter((id) => id !== (contractId ?? "")),
           contactPersons: normalizedContactPersons,
         }),
@@ -1127,6 +1139,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                   contractType={contractType}
                   onContractTypeChange={setContractType}
                   marketingSource={marketingSource}
+                  marketingSourceOptions={marketingSourceOptions}
                   onMarketingSourceChange={setMarketingSource}
                   status={status}
                   onStatusChange={setStatus}
@@ -1611,7 +1624,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
               contractType={contractType}
               contractTypeLabel={contractTypeLabel}
               value={value}
-              marketingSource={marketingSource}
+              marketingSourceName={marketingSource !== 'NONE' ? (marketingSourceOptions.find((s) => s.id === marketingSource)?.name || null) : null}
               saving={saving}
             />
 
