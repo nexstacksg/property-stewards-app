@@ -509,7 +509,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     let cacheHit = false
     try {
       const cachedToday = await cacheGetJSON<any[]>(todayCacheKey)
-      if (cachedToday && Array.isArray(cachedToday)) {
+      if (Array.isArray(cachedToday) && cachedToday.length > 0) {
         debugLog('getTodayJobsForInspector: returning from per-day cache', inspectorId, cachedToday.length)
         if (process.env.WHATSAPP_PERF_LOG === 'true') console.log('[perf] svc:getTodayJobsForInspector cache-hit:', Date.now() - perfStart, 'ms')
         return cachedToday
@@ -579,7 +579,7 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     }
 
     debugLog('getTodayJobsForInspector: workOrders for inspector', inspectorId, scopedWorkOrders.length)
-    const todays = scopedWorkOrders
+    let todays = scopedWorkOrders
       .filter((wo: any) => {
         if (wo.inspectorId !== inspectorId) return false
         const startRaw = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
@@ -592,9 +592,54 @@ export async function getTodayJobsForInspector(inspectorId: string) {
         const bStart = b.scheduledStartDateTime ? new Date(b.scheduledStartDateTime) : new Date(0)
         return aStart.getTime() - bStart.getTime()
       })
+    // Safety net: if cache returned no jobs, hit DB directly for today's window
+    if ((!todays || todays.length === 0)) {
+      try {
+        const direct = await prisma.workOrder.findMany({
+          where: {
+            inspectors: { some: { id: inspectorId } },
+            scheduledStartDateTime: { gte: startOfDay, lte: endOfDay }
+          },
+          select: {
+            id: true,
+            inspectors: { select: { id: true } },
+            contractId: true,
+            status: true,
+            scheduledStartDateTime: true,
+            scheduledEndDateTime: true,
+            remarks: true,
+            contract: {
+              select: {
+                customer: { select: { id: true, name: true } },
+                address: { select: { id: true, address: true, postalCode: true, propertyType: true } }
+              }
+            }
+          }
+        })
+        todays = (direct || []).map((wo: any) => ({
+          id: wo.id,
+          inspectorId: Array.isArray(wo.inspectors) && wo.inspectors.length > 0 ? wo.inspectors[0].id : null,
+          inspectorIds: Array.isArray(wo.inspectors) ? wo.inspectors.map((ins: any) => ins.id) : [],
+          contractId: wo.contractId,
+          status: wo.status,
+          scheduledStartDateTime: wo.scheduledStartDateTime,
+          scheduledEndDateTime: wo.scheduledEndDateTime,
+          remarks: wo.remarks,
+          customer: wo.contract?.customer ? { id: wo.contract.customer.id, name: wo.contract.customer.name } : null,
+          address: wo.contract?.address ? {
+            id: wo.contract.address.id,
+            address: wo.contract.address.address,
+            postalCode: wo.contract.address.postalCode,
+            propertyType: wo.contract.address.propertyType
+          } : null
+        }))
+      } catch (e) {
+        console.error('getTodayJobsForInspector: direct DB fallback failed', e)
+      }
+    }
     debugLog('getTodayJobsForInspector: todays =', todays.length, 'inspectorId=', inspectorId)
 
-    const mapped = todays.map((wo: any) => {
+    const mapped = (todays || []).map((wo: any) => {
       const scheduledStart = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
       const primaryDate = scheduledStart || new Date()
       return {
@@ -612,7 +657,10 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     })
 
     try {
-      await cacheSetJSON(todayCacheKey, mapped, { ttlSeconds: Number(process.env.WHATSAPP_TODAY_CACHE_TTL ?? 300) })
+      // Do not persist an empty list as a sticky negative cache; allow recomputation on next call
+      if (Array.isArray(mapped) && mapped.length > 0) {
+        await cacheSetJSON(todayCacheKey, mapped, { ttlSeconds: Number(process.env.WHATSAPP_TODAY_CACHE_TTL ?? 300) })
+      }
     } catch (error) {
       console.error('getTodayJobsForInspector: failed to cache today result', error)
     }
@@ -1729,7 +1777,7 @@ export async function updateWorkOrderDetails(
   }
 }
 
-export async function refreshWorkOrdersCache() {
+ async function refreshWorkOrdersCache() {
   const workOrdersRaw = await prisma.workOrder.findMany({
     select: {
       id: true,
