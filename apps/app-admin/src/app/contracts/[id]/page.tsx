@@ -13,7 +13,6 @@ import {
   Calendar,
   DollarSign,
   FileText,
-  Plus,
   Clock,
   CheckCircle,
   XCircle,
@@ -22,6 +21,8 @@ import {
 import prisma from "@/lib/prisma"
 import { PreviewPdfButton } from "@/components/preview-pdf-button"
 import { GenerateContractReportButton } from "@/components/generate-contract-report-button"
+import { ConfirmContractButton } from "@/components/confirm-contract-button"
+import { AddWorkOrderButton } from "@/components/add-work-order-button"
 import { ContractFollowUpRemarks } from "@/components/contract-follow-up-remarks"
 import { buildContractReportFilename } from "@/lib/filename"
 import { ContractGeneratedReports } from "@/components/contract-generated-reports"
@@ -184,7 +185,8 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
       }))
     : []
   const marketingSourceLabel = contract.marketingSource?.name || null
-  const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
+  // Show PDF actions only for confirmed contracts
+  const showPdfActions = contract.status === 'CONFIRMED'
 
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
@@ -218,7 +220,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               Edit Contract
             </Button>
           </Link>
-          {showPdfActions && (
+          {showPdfActions ? (
             <div className="flex flex-1 flex-wrap gap-2 sm:flex-none">
               <PreviewPdfButton
                 href={`/api/contracts/${contract.id}/report`}
@@ -233,6 +235,8 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                 className="flex-1 sm:flex-none"
               />
             </div>
+          ) : (
+            <ConfirmContractButton contractId={contract.id} className="flex-1 sm:flex-none" />
           )}
         </div>
       </div>
@@ -388,12 +392,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                   <CardTitle>Work Orders</CardTitle>
                   <CardDescription>{contract.workOrders.length} work order(s)</CardDescription>
                 </div>
-                <Link href={`/work-orders/new?contractId=${contract.id}`}>
-                  <Button size="sm">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Work Order
-                  </Button>
-                </Link>
+                <AddWorkOrderButton contractId={contract.id} status={contract.status} />
               </div>
             </CardHeader>
             <CardContent>
