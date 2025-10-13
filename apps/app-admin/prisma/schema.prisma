@@ -51,7 +51,7 @@ model CustomerAddress {
   postalCode   String
   propertyType PropertyType
   propertySize PropertySize
-  propertySizeRange PropertySizeRange?
+  propertySizeRange String?
   relationship PropertyRelationship?
   remarks      String?
   createdOn    DateTime     @default(now())
@@ -382,7 +382,7 @@ model ContractReport {
 /// Configurable labels for area size ranges (e.g., 50–399 sqft)
 model PropertySizeRangeOption {
   id        String             @id @default(cuid())
-  code      PropertySizeRange  @unique
+  code      String             @unique
   label     String
   order     Int                @default(0)
   status    Status             @default(ACTIVE)
@@ -477,16 +477,7 @@ enum PropertySize {
   GOOD_CLASS_BUNGALOW
 }
 
-enum PropertySizeRange {
-  RANGE_50_399
-  RANGE_400_699
-  RANGE_700_899
-  RANGE_900_1200
-  RANGE_1201_1399
-  RANGE_1400_1599
-  RANGE_1600_1999
-  RANGE_2000_PLUS
-}
+// Removed enum PropertySizeRange – size ranges now dynamic via PropertySizeRangeOption
 
 // Status for contract checklist items
 enum ChecklistItemStatus {

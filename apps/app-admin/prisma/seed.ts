@@ -1,7 +1,7 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, Prisma } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
-import { generateContractId, generateWorkOrderId } from '../src/lib/id-generator'
+import { generateWorkOrderId } from '../src/lib/id-generator'
 
 const prisma = new PrismaClient()
 
@@ -349,75 +349,109 @@ async function main() {
 
   console.log('Created checklists:', { checklistHDB, checklistCondo })
 
-  // Create Contracts
-  const contract1 = await prisma.contract.create({
-    data: {
-      id: await generateContractId(prisma),
-      customerId: customer1.id,
-      addressId: address1.id,
-      value: 850.00,
-      firstPaymentOn: new Date('2024-08-20'),
-      finalPaymentOn: new Date('2024-08-30'),
-      basedOnChecklistId: checklistHDB.id,
-      scheduledStartDate: new Date('2024-08-25T10:00:00Z'),
-      scheduledEndDate: new Date('2024-08-25T12:00:00Z'),
-      actualStartDate: new Date('2024-08-25T10:15:00Z'),
-      actualEndDate: new Date('2024-08-25T11:45:00Z'),
-      servicePackage: 'Premium Inspection',
-      contractType: 'INSPECTION',
-      customerComments: 'Very thorough inspection, satisfied with service',
-      customerRating: 5,
-      status: 'COMPLETED'
-    }
+  // Helpers to handle both pre/post marketingSourceId schemas via raw SQL
+  async function nextContractId(): Promise<string> {
+    const now = new Date()
+    const prefix = `C-${now.getFullYear()}-`
+    const rows = await prisma.$queryRaw<{ id: string }[]>`SELECT "id" FROM "Contract" WHERE "id" LIKE ${prefix + '%'} ORDER BY "id" DESC LIMIT 1`
+    if (!rows[0]?.id) return `${prefix}00001`
+    const latest = rows[0].id
+    const seq = parseInt(latest.slice(prefix.length), 10)
+    const next = Number.isFinite(seq) && seq >= 0 ? seq + 1 : 1
+    return `${prefix}${String(next).padStart(5, '0')}`
+  }
+
+  async function createContractCompat(data: {
+    customerId: string
+    addressId: string
+    value: number
+    firstPaymentOn: Date
+    finalPaymentOn?: Date | null
+    basedOnChecklistId?: string | null
+    scheduledStartDate: Date
+    scheduledEndDate: Date
+    actualStartDate?: Date | null
+    actualEndDate?: Date | null
+    servicePackage?: string | null
+    contractType: 'INSPECTION' | 'REPAIR'
+    customerComments?: string | null
+    customerRating?: number | null
+    remarks?: string | null
+    status: 'DRAFT' | 'CONFIRMED' | 'SCHEDULED' | 'COMPLETED' | 'TERMINATED' | 'CANCELLED'
+    referenceIds?: string[]
+  }): Promise<{ id: string }> {
+    const id = await nextContractId()
+    const ref = Array.isArray(data.referenceIds) ? data.referenceIds : []
+    const rows = await prisma.$queryRaw<{ id: string }[]>`
+      INSERT INTO "Contract" (
+        "id","customerId","addressId","value","firstPaymentOn","finalPaymentOn","basedOnChecklistId",
+        "scheduledStartDate","scheduledEndDate","actualStartDate","actualEndDate","servicePackage","contractType",
+        "customerComments","customerRating","remarks","status","referenceIds","createdOn","updatedOn"
+      ) VALUES (
+        ${id}, ${data.customerId}, ${data.addressId}, ${data.value}, ${data.firstPaymentOn}, ${data.finalPaymentOn ?? null}, ${data.basedOnChecklistId ?? null},
+        ${data.scheduledStartDate}, ${data.scheduledEndDate}, ${data.actualStartDate ?? null}, ${data.actualEndDate ?? null}, ${data.servicePackage ?? null}, ${Prisma.sql`CAST(${data.contractType} AS "ContractType")`},
+        ${data.customerComments ?? null}, ${data.customerRating ?? null}, ${data.remarks ?? null}, ${Prisma.sql`CAST(${data.status} AS "ContractStatus")`}, ${ref.length > 0 ? Prisma.sql`ARRAY[${Prisma.join(ref)}]::text[]` : Prisma.sql`ARRAY[]::text[]`}, NOW(), NOW()
+      ) RETURNING "id"`
+    return { id: rows[0].id }
+  }
+
+  // Create Contracts (raw SQL for compatibility with existing DB schema)
+  const contract1 = await createContractCompat({
+    customerId: customer1.id,
+    addressId: address1.id,
+    value: 850.0,
+    firstPaymentOn: new Date('2024-08-20'),
+    finalPaymentOn: new Date('2024-08-30'),
+    basedOnChecklistId: checklistHDB.id,
+    scheduledStartDate: new Date('2024-08-25T10:00:00Z'),
+    scheduledEndDate: new Date('2024-08-25T12:00:00Z'),
+    actualStartDate: new Date('2024-08-25T10:15:00Z'),
+    actualEndDate: new Date('2024-08-25T11:45:00Z'),
+    servicePackage: 'Premium Inspection',
+    contractType: 'INSPECTION',
+    customerComments: 'Very thorough inspection, satisfied with service',
+    customerRating: 5,
+    status: 'COMPLETED',
   })
 
-  const contract2 = await prisma.contract.create({
-    data: {
-      id: await generateContractId(prisma),
-      customerId: customer2.id,
-      addressId: address2.id,
-      value: 650.00,
-      firstPaymentOn: new Date('2024-08-22'),
-      basedOnChecklistId: checklistHDB.id,
-      scheduledStartDate: new Date('2024-08-27T14:00:00Z'),
-      scheduledEndDate: new Date('2024-08-27T16:00:00Z'),
-      servicePackage: 'Standard Inspection',
-      contractType: 'INSPECTION',
-      status: 'SCHEDULED'
-    }
+  const contract2 = await createContractCompat({
+    customerId: customer2.id,
+    addressId: address2.id,
+    value: 650.0,
+    firstPaymentOn: new Date('2024-08-22'),
+    basedOnChecklistId: checklistHDB.id,
+    scheduledStartDate: new Date('2024-08-27T14:00:00Z'),
+    scheduledEndDate: new Date('2024-08-27T16:00:00Z'),
+    servicePackage: 'Standard Inspection',
+    contractType: 'INSPECTION',
+    status: 'SCHEDULED',
   })
 
-  const contract3 = await prisma.contract.create({
-    data: {
-      id: await generateContractId(prisma),
-      customerId: customer3.id,
-      addressId: address3.id,
-      value: 550.00,
-      firstPaymentOn: new Date('2024-08-23'),
-      basedOnChecklistId: checklistHDB.id,
-      scheduledStartDate: new Date('2024-08-28T09:00:00Z'),
-      scheduledEndDate: new Date('2024-08-28T11:00:00Z'),
-      servicePackage: 'Basic Inspection',
-      contractType: 'REPAIR',
-      status: 'CONFIRMED'
-    }
+  const contract3 = await createContractCompat({
+    customerId: customer3.id,
+    addressId: address3.id,
+    value: 550.0,
+    firstPaymentOn: new Date('2024-08-23'),
+    basedOnChecklistId: checklistHDB.id,
+    scheduledStartDate: new Date('2024-08-28T09:00:00Z'),
+    scheduledEndDate: new Date('2024-08-28T11:00:00Z'),
+    servicePackage: 'Basic Inspection',
+    contractType: 'REPAIR',
+    status: 'CONFIRMED',
   })
 
-  const contract4 = await prisma.contract.create({
-    data: {
-      id: await generateContractId(prisma),
-      customerId: customer1.id,
-      addressId: address4.id,
-      value: 1200.00,
-      firstPaymentOn: new Date('2024-08-15'),
-      basedOnChecklistId: checklistCondo.id,
-      scheduledStartDate: new Date('2024-08-30T10:00:00Z'),
-      scheduledEndDate: new Date('2024-08-30T13:00:00Z'),
-      servicePackage: 'Luxury Property Inspection',
-      contractType: 'INSPECTION',
-      remarks: 'High-priority client, ensure senior inspector',
-      status: 'CONFIRMED'
-    }
+  const contract4 = await createContractCompat({
+    customerId: customer1.id,
+    addressId: address4.id,
+    value: 1200.0,
+    firstPaymentOn: new Date('2024-08-15'),
+    basedOnChecklistId: checklistCondo.id,
+    scheduledStartDate: new Date('2024-08-30T10:00:00Z'),
+    scheduledEndDate: new Date('2024-08-30T13:00:00Z'),
+    servicePackage: 'Luxury Property Inspection',
+    contractType: 'INSPECTION',
+    remarks: 'High-priority client, ensure senior inspector',
+    status: 'CONFIRMED',
   })
 
   console.log('Created contracts:', { contract1, contract2, contract3, contract4 })
