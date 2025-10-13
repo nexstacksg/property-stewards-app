@@ -46,7 +46,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     try {
       const meta = await getSessionState(phoneNumber)
       const raw = (message || '').trim()
-      const numMatch = /^\s*([1-5])\s*$/.exec(raw)
+      // Parse numeric input: any 1–2 digit for list selections; 1–5 for condition only
+      const numAny = /^\s*(\d{1,2})\s*$/.exec(raw)
+      const num1to5 = /^\s*([1-5])\s*$/.exec(raw)
       const lower = raw.toLowerCase()
       const dbg = (...a: any[]) => { if ((process.env.WHATSAPP_DEBUG || '').toLowerCase() !== 'false') console.log('[wh-guard]', ...a) }
 
@@ -100,7 +102,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         const t0 = Date.now()
         const res = await executeTool(
           'getTodayJobs',
-          inspectorIdHint ? { inspectorId: inspectorIdHint } : { inspectorPhone: inspectorPhoneHint },
+          inspectorIdHint ? { inspectorId: inspectorIdHint, reset: true } : { inspectorPhone: inspectorPhoneHint, reset: true },
           undefined,
           phoneNumber
         )
@@ -141,14 +143,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       // Job confirmation + edit-menu guard
       if (meta?.jobStatus === 'confirming' && meta?.workOrderId) {
         // 1) If currently in the job edit menu, map numeric options
-        if (meta.jobEditMode === 'menu' && numMatch) {
-          const pick = Number(numMatch[1])
+        if (meta.jobEditMode === 'menu' && numAny) {
+          const pick = Number(numAny[1])
           // [1] Different job selection → list today's jobs and exit confirm flow
           if (pick === 1) {
             dbg('job-edit [1] → different job selection; listing today jobs')
-            try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined, jobStatus: 'none' }) } catch {}
+            try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined, jobStatus: 'none', lastMenu: 'jobs', lastMenuAt: new Date().toISOString() }) } catch {}
             const idHint = meta.inspectorId
-            const res = await executeTool('getTodayJobs', idHint ? { inspectorId: idHint } : { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+            const res = await executeTool('getTodayJobs', idHint ? { inspectorId: idHint, reset: true } : { inspectorPhone: phoneNumber, reset: true }, undefined, phoneNumber)
             let data: any = null; try { data = JSON.parse(res) } catch {}
             const jobs = Array.isArray(data?.jobs) ? data.jobs : []
             if (jobs.length === 0) return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
@@ -184,7 +186,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // 2) If awaiting a value for job update, treat any non-numeric input as the new value
-        if (meta.jobEditMode === 'await_value' && meta.jobEditType && raw && !numMatch) {
+        if (meta.jobEditMode === 'await_value' && meta.jobEditType && raw && !numAny) {
           const type = meta.jobEditType
           dbg('job-edit await_value → updateJobDetails', { type })
           const out = await executeTool('updateJobDetails', { jobId: meta.workOrderId, updateType: type, newValue: raw }, undefined, phoneNumber)
@@ -286,10 +288,10 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     
 
       // Numeric job selection when jobs list is on screen
-      if (numMatch && meta?.lastMenu === 'jobs') {
-        const pick = Number(numMatch[1])
+      if (numAny && meta?.lastMenu === 'jobs') {
+        const pick = Number(numAny[1])
         dbg('jobs-select', { pick })
-        const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+        const res = await executeTool('getTodayJobs', { inspectorId: meta?.inspectorId || undefined, inspectorPhone: meta?.inspectorPhone || phoneNumber }, undefined, phoneNumber)
         let data: any = null
         try { data = JSON.parse(res) } catch {}
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
@@ -323,8 +325,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
         // Condition selection (only when in condition stage)
-        if (numMatch && meta.taskFlowStage === 'condition') {
-          const conditionNumber = Number(numMatch[1])
+        if (num1to5 && meta.taskFlowStage === 'condition') {
+          const conditionNumber = Number(num1to5[1])
           const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
@@ -341,14 +343,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
         }
         // Cause text
-        if (meta.taskFlowStage === 'cause' && raw && !numMatch) {
+        if (meta.taskFlowStage === 'cause' && raw && !numAny) {
           const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
         }
         // Resolution text
-        if (meta.taskFlowStage === 'resolution' && raw && !numMatch) {
+        if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
           const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
@@ -367,8 +369,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Finalize confirmation step: [1] complete, [2] not yet
-        if (numMatch && meta.taskFlowStage === 'confirm') {
-          const pick = Number(numMatch[1])
+        if (numAny && meta.taskFlowStage === 'confirm') {
+          const pick = Number(numAny[1])
           if (pick === 1 || pick === 2) {
             dbg('finalize → completeTask', { completed: pick === 1 })
             const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, completed: pick === 1 }, undefined, phoneNumber)
@@ -399,8 +401,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Location selection: numeric reply while viewing locations list
-        if (numMatch && meta.lastMenu === 'locations') {
-          const pick = Number(numMatch[1])
+        if (numAny && meta.lastMenu === 'locations') {
+          const pick = Number(numAny[1])
           dbg('locations-select', { pick })
           const locRes = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
           let locData: any = null
@@ -484,8 +486,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
 
         // Sub-location selection: numeric reply while viewing sub-locations list
-        if (numMatch && (meta.lastMenu === 'sublocations' || (meta.workOrderId && meta.currentLocation && !meta.currentSubLocationId))) {
-          const pick = Number(numMatch[1])
+        if (numAny && (meta.lastMenu === 'sublocations' || (meta.workOrderId && meta.currentLocation && !meta.currentSubLocationId))) {
+          const pick = Number(numAny[1])
           const latest = await getSessionState(phoneNumber)
           const itemId = latest.currentLocationId
           if (!itemId) {
