@@ -335,7 +335,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             if (nextStage === 'cause') {
               return 'Please describe the cause for this issue.'
             }
-            return 'Condition saved. Please add remarks for this task (or type "skip").'
+            const c = String(data?.condition || meta.currentTaskCondition || '').toUpperCase()
+            const allowSkip = c === 'NOT_APPLICABLE'
+            return allowSkip
+              ? 'Condition saved. Please add remarks for this task (or type "skip").'
+              : 'Condition saved. Please add remarks for this task.'
           }
         }
         // Cause text
@@ -350,7 +354,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Resolution saved. Please add remarks for this task (or type "skip").'
+          if (data?.success) {
+            const c = String(meta.currentTaskCondition || '').toUpperCase()
+            const allowSkip = c === 'NOT_APPLICABLE'
+            return data?.message || (allowSkip
+              ? 'Resolution saved. Please add remarks for this task (or type "skip").'
+              : 'Resolution saved. Please add remarks for this task.')
+          }
         }
         // Media stage skip
         if (meta.taskFlowStage === 'media' && (lower === 'skip' || lower === 'no')) {
