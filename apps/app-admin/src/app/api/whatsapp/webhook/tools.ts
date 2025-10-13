@@ -24,7 +24,19 @@ import { resolveInspectorIdForSession } from './utils'
 export const assistantTools = [
   {
     type: 'function' as const,
-    function: { name: 'getTodayJobs', description: "Get today's inspection jobs", parameters: { type: 'object', properties: { inspectorId: { type: 'string' }, inspectorPhone: { type: 'string' } }, required: [] } }
+    function: {
+      name: 'getTodayJobs',
+      description: "Get today's inspection jobs",
+      parameters: {
+        type: 'object',
+        properties: {
+          inspectorId: { type: 'string' },
+          inspectorPhone: { type: 'string' },
+          reset: { type: 'boolean', description: 'If true, clear job/location/task context and set lastMenu=jobs' }
+        },
+        required: []
+      }
+    }
   },
   { type: 'function' as const, function: { name: 'confirmJobSelection', description: 'Confirm job selection and show job details', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
   { type: 'function' as const, function: { name: 'startJob', description: 'Start the job', parameters: { type: 'object', properties: { jobId: { type: 'string' } }, required: ['jobId'] } } },
@@ -91,13 +103,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         if (/^0+\d+$/.test(rawPhone)) phoneCandidates.push(rawPhone.replace(/^0+/, ''))
 
         // Combined name+phone resolution if both provided
-        if (!finalInspectorId && candidateName && phone) {
+        if (!finalInspectorId && candidateName && rawPhone) {
           try {
-            const variants = [phone, phone.startsWith('+') ? phone.slice(1) : ('+' + phone)]
+            const variants = [rawPhone, rawPhone.startsWith('+') ? rawPhone.slice(1) : ('+' + rawPhone)]
             const found = await prisma.inspector.findFirst({ where: { status: Status.ACTIVE, name: { equals: candidateName, mode: 'insensitive' }, OR: variants.map(v => ({ mobilePhone: v })) }, select: { id: true, name: true, mobilePhone: true } })
             if (found?.id) {
               finalInspectorId = found.id
-              if (sessionId) await updateSessionState(sessionId, { inspectorId: found.id, inspectorName: found.name, inspectorPhone: found.mobilePhone || phone })
+              if (sessionId) await updateSessionState(sessionId, { inspectorId: found.id, inspectorName: found.name, inspectorPhone: found.mobilePhone || inspectorPhone })
             }
           } catch {}
         }
@@ -136,39 +148,39 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: false, identifyRequired: true, nextAction: 'collectInspectorInfo' })
         }
         const jobs = await getTodayJobsForInspector(finalInspectorId) as any[]
-        // Reset stale inspection context and mark lastMenu for numeric routing
-        if (sessionId) {
-          try {
-            await updateSessionState(sessionId, {
-              // keep identity, reset job and inspection context
-              jobStatus: 'none',
-              workOrderId: undefined,
-              customerName: undefined,
-              propertyAddress: undefined,
-              postalCode: undefined,
-              currentLocation: undefined,
-              currentLocationId: undefined,
-              currentSubLocationId: undefined,
-              currentSubLocationName: undefined,
-              currentItemId: undefined,
-              currentTaskId: undefined,
-              currentTaskName: undefined,
-              currentTaskItemId: undefined,
-              currentTaskEntryId: undefined,
-              currentTaskCondition: undefined,
-              currentTaskLocationId: undefined,
-              currentTaskLocationName: undefined,
-              currentLocationCondition: undefined,
-              taskFlowStage: undefined,
-              pendingTaskRemarks: undefined,
-              pendingTaskCause: undefined,
-              pendingTaskResolution: undefined,
-              locationSubLocations: undefined,
-              lastMenu: 'jobs',
-              lastMenuAt: new Date().toISOString(),
-            })
-          } catch {}
-        }
+        // // Reset stale inspection context and mark lastMenu for numeric routing
+        // if (sessionId) {
+        //   try {
+        //     await updateSessionState(sessionId, {
+        //       // keep identity, reset job and inspection context
+        //       jobStatus: 'none',
+        //       workOrderId: undefined,
+        //       customerName: undefined,
+        //       propertyAddress: undefined,
+        //       postalCode: undefined,
+        //       currentLocation: undefined,
+        //       currentLocationId: undefined,
+        //       currentSubLocationId: undefined,
+        //       currentSubLocationName: undefined,
+        //       currentItemId: undefined,
+        //       currentTaskId: undefined,
+        //       currentTaskName: undefined,
+        //       currentTaskItemId: undefined,
+        //       currentTaskEntryId: undefined,
+        //       currentTaskCondition: undefined,
+        //       currentTaskLocationId: undefined,
+        //       currentTaskLocationName: undefined,
+        //       currentLocationCondition: undefined,
+        //       taskFlowStage: undefined,
+        //       pendingTaskRemarks: undefined,
+        //       pendingTaskCause: undefined,
+        //       pendingTaskResolution: undefined,
+        //       locationSubLocations: undefined,
+        //       lastMenu: 'jobs',
+        //       lastMenuAt: new Date().toISOString(),
+        //     })
+        //   } catch {}
+        // }
         dbg('getTodayJobs', { tookMs: Date.now() - t0, count: jobs.length, inspectorId: finalInspectorId })
         const jobsFormatted = jobs.map((job: any, index: number) => {
           const raw = job.scheduled_date
