@@ -237,7 +237,7 @@ async function upsertWorkOrderCaches(prismaWorkOrder: any, previousInspectorIds:
   }
 }
 
-async function refreshChecklistItemCache(itemId: string) {
+export async function refreshChecklistItemCache(itemId: string) {
   try {
     const item = await prisma.contractChecklistItem.findUnique({
       where: { id: itemId },
@@ -335,15 +335,129 @@ async function refreshChecklistItemCache(itemId: string) {
 
     const normalized = normalizeChecklistItemCacheEntry(item)
 
-    if (cachedItems) {
+    if (cachedItems && Array.isArray(cachedItems)) {
+      // Update existing collection in-place to avoid stale reads
       const next = cachedItems.filter((it: any) => it.id !== itemId)
       next.push(normalized)
       await cacheSetLargeArrayNoFlush('mc:contract-checklist-items:all', next, undefined, ttlOptions)
     } else {
-      await cacheSetLargeArrayNoFlush('mc:contract-checklist-items:all', [normalized], undefined, ttlOptions)
+      // If the full collection cache is missing, do NOT write a singleton array.
+      // Leaving it absent lets readers fall back to DB for a complete list,
+      // preventing partial lists (e.g., showing only one location).
+      try { await cacheDel('mc:contract-checklist-items:all') } catch {}
     }
   } catch (error) {
     console.error('Failed to refresh checklist item cache:', error)
+  }
+}
+
+// Rebuild caches for all checklist items associated with a given work order.
+export async function refreshChecklistItemsForWorkOrder(workOrderId: string) {
+  try {
+    const ttlOptions = { ttlSeconds: DEFAULT_TTL_SECONDS }
+    const rawItems = await prisma.contractChecklistItem.findMany({
+      where: {
+        contractChecklist: { contract: { workOrders: { some: { id: workOrderId } } } }
+      },
+      select: {
+        id: true,
+        name: true,
+        remarks: true,
+        photos: true,
+        videos: true,
+        enteredOn: true,
+        enteredById: true,
+        order: true,
+        status: true,
+        condition: true,
+        checklistTasks: {
+          orderBy: { createdOn: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            condition: true,
+            photos: true,
+            videos: true,
+            entries: { select: { id: true } }
+          }
+        },
+        locations: {
+          orderBy: { order: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            order: true,
+            tasks: {
+              orderBy: { createdOn: 'asc' },
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                condition: true,
+                photos: true,
+                videos: true
+              }
+            }
+          }
+        },
+        contributions: {
+          select: {
+            id: true,
+            inspectorId: true,
+            inspector: { select: { id: true, name: true, mobilePhone: true } },
+            user: { select: { id: true, username: true, email: true } },
+            remarks: true,
+            includeInReport: true,
+            condition: true,
+            photos: true,
+            videos: true,
+            taskId: true,
+            task: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                condition: true,
+                photos: true,
+                videos: true
+              }
+            },
+            createdOn: true,
+            updatedOn: true
+          }
+        },
+        contractChecklist: {
+          select: {
+            contract: { select: { workOrders: { select: { id: true } } } }
+          }
+        }
+      }
+    }) as any[]
+
+    const normalizedItems = rawItems.map(normalizeChecklistItemCacheEntry)
+
+    // Update per-workorder cache key
+    try {
+      await cacheSetLargeArray(`mc:contract-checklist-items:workorder:${workOrderId}`, normalizedItems, undefined, ttlOptions)
+    } catch (e) {
+      console.error('refreshChecklistItemsForWorkOrder: failed to set workorder cache', e)
+    }
+
+    // Merge into all-items cache if present
+    try {
+      const all = await cacheGetLargeArray<any>('mc:contract-checklist-items:all')
+      if (all && Array.isArray(all)) {
+        const keep = all.filter((it: any) => !normalizedItems.some(n => n.id === it.id))
+        const next = [...keep, ...normalizedItems]
+        await cacheSetLargeArrayNoFlush('mc:contract-checklist-items:all', next, undefined, ttlOptions)
+      }
+    } catch (e) {
+      console.error('refreshChecklistItemsForWorkOrder: failed to merge into all cache', e)
+    }
+  } catch (error) {
+    console.error('refreshChecklistItemsForWorkOrder failed:', error)
   }
 }
 
@@ -654,6 +768,15 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
       if (cached) {
         items = cached.filter((item: any) => Array.isArray(item.workOrderIds) && item.workOrderIds.includes(workOrderId))
       }
+      // If global cache is missing/empty, try per-workorder cache
+      if (!items || items.length === 0) {
+        try {
+          const woItems = await cacheGetLargeArray<any>(`mc:contract-checklist-items:workorder:${workOrderId}`)
+          if (woItems && Array.isArray(woItems) && woItems.length > 0) items = woItems
+        } catch (e) {
+          console.error('getLocationsWithCompletionStatus: failed to load per-workorder cache', e)
+        }
+      }
     } catch (error) {
       console.error('Error loading checklist items from cache:', error)
     }
@@ -719,13 +842,17 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
         }
       } else {
         const tasks = Array.isArray(item.checklistTasks) ? item.checklistTasks : []
-        totalTasks = tasks.length || 1
+        totalTasks = tasks.length
         completedTasks = tasks.filter(task => task.status === 'COMPLETED').length
       }
 
+      // Completion rules:
+      // - If sub-locations exist: location is completed only when all sub-locations are completed
+      // - If no sub-locations and tasks exist: completed only when all tasks are completed
+      // - If no tasks exist: fall back to item.status
       const isCompleted = hasLocations
         ? locationSummaries.length > 0 && locationSummaries.every((loc: any) => loc.status === 'COMPLETED')
-        : item.status === 'COMPLETED' || (totalTasks > 0 && completedTasks === totalTasks)
+        : (totalTasks > 0 ? (completedTasks === totalTasks) : (item.status === 'COMPLETED'))
 
       return {
         id: item.id,

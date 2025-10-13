@@ -19,7 +19,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
 
     const workOrderId = metadata.workOrderId
     const primaryLocationName = metadata.currentLocation
-    let currentLocation = metadata.currentSubLocationName || primaryLocationName
+    let currentLocation = metadata.currentSubLocationName || primaryLocationName || metadata.currentTaskLocationName
     const currentLocationId = metadata.currentLocationId
     const currentSubLocationId = metadata.currentSubLocationId
     const currentSubLocationName = metadata.currentSubLocationName

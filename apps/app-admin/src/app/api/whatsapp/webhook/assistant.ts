@@ -3,7 +3,7 @@ import OpenAI from 'openai'
 import { cacheGetJSON, cacheSetJSON } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
 import { INSTRUCTIONS } from '@/app/api/assistant-instructions'
-import { getSessionState } from '@/lib/chat-session'
+import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
 
 const debugLog = (...args: unknown[]) => {
@@ -46,31 +46,311 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     try {
       const meta = await getSessionState(phoneNumber)
       const raw = (message || '').trim()
-      const numMatch = /^\s*([1-5])\s*$/.exec(raw)
+      // Parse numeric input: any 1–2 digit for list selections; 1–5 for condition only
+      const numAny = /^\s*(\d{1,2})\s*$/.exec(raw)
+      const num1to5 = /^\s*([1-5])\s*$/.exec(raw)
       const lower = raw.toLowerCase()
-      if (meta?.workOrderId && meta?.currentLocation) {
-        // Condition selection
-        if (meta.taskFlowStage === 'condition' && numMatch) {
-          const conditionNumber = Number(numMatch[1])
+      const dbg = (...a: any[]) => { if ((process.env.WHATSAPP_DEBUG || '').toLowerCase() !== 'false') console.log('[wh-guard]', ...a) }
+
+      // Jobs intent detection (reset context and list today's jobs first)
+      const isJobsIntent = (() => {
+        if (!lower) return false
+        const keywords = [
+          'jobs', 'job', 'tasks', 'task', 'my tasks', 'schedule', 'today', 'my jobs', 'my schedule',
+          'work order', 'work orders', 'inspections', 'inspection', 'assignments', 'appointments',
+          'show jobs', 'show schedule', 'list jobs', 'what are my jobs', "what's my schedule","Hi","Hey","Hello"
+        ]
+        if (keywords.some(k => lower === k || lower.includes(k))) return true
+        if (/today'?s?\s+(jobs?|tasks?|schedule|inspections?|work\s*orders?)/.test(lower)) return true
+        if (/(what('?s)?|show)\s+(my\s+)?(jobs?|tasks?|schedule|inspections?)/.test(lower)) return true
+        return false
+      })()
+
+      if (isJobsIntent) {
+        dbg('intent:jobs → reset context and list')
+        const inspectorIdHint = meta?.inspectorId
+        const inspectorPhoneHint = meta?.inspectorPhone || phoneNumber
+        try {
+          await updateSessionState(phoneNumber, {
+            jobStatus: 'none',
+            workOrderId: undefined,
+            customerName: undefined,
+            propertyAddress: undefined,
+            postalCode: undefined,
+            currentLocation: undefined,
+            currentLocationId: undefined,
+            currentSubLocationId: undefined,
+            currentSubLocationName: undefined,
+            currentItemId: undefined,
+            currentTaskId: undefined,
+            currentTaskName: undefined,
+            currentTaskItemId: undefined,
+            currentTaskEntryId: undefined,
+            currentTaskCondition: undefined,
+            currentTaskLocationId: undefined,
+            currentTaskLocationName: undefined,
+            currentLocationCondition: undefined,
+            taskFlowStage: undefined,
+            pendingTaskRemarks: undefined,
+            pendingTaskCause: undefined,
+            pendingTaskResolution: undefined,
+            locationSubLocations: undefined,
+            lastMenu: 'jobs',
+            lastMenuAt: new Date().toISOString(),
+          })
+        } catch {}
+        const t0 = Date.now()
+        const res = await executeTool(
+          'getTodayJobs',
+          inspectorIdHint ? { inspectorId: inspectorIdHint, reset: true } : { inspectorPhone: inspectorPhoneHint, reset: true },
+          undefined,
+          phoneNumber
+        )
+        dbg('tool:getTodayJobs (guard) done in', Date.now() - t0, 'ms')
+        let data: any = null
+        try { data = JSON.parse(res) } catch {}
+        if (data && data.identifyRequired) {
+          return [
+            'Hello! To assign you today\'s inspection jobs, I need your details. Please provide:',
+            '  [1] Your full name',
+            '  [2] Your phone number (with country code, e.g., +65 for Singapore)',
+            '',
+            'Send in the format: Name, +CountryCodeNumber (e.g., Ken, +6591234567)'
+          ].join('\n')
+        }
+        const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+        const latest = await getSessionState(phoneNumber)
+        const inspectorName = latest.inspectorName || ''
+        if (jobs.length === 0) {
+          return `Hi${inspectorName ? ' ' + inspectorName : ''}! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.`
+        }
+        const lines: string[] = []
+        lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+        for (const j of jobs) {
+          lines.push('')
+          lines.push(`${j.selectionNumber}`)
+          lines.push(`🏠 Property: ${j.property}`)
+          lines.push(`⏰ Time: ${j.time}`)
+          lines.push(`  👤 Customer: ${j.customer}`)
+          lines.push(`  ⭐ Priority: ${j.priority}`)
+          lines.push(`  Status: ${j.status}`)
+          lines.push('---')
+        }
+        lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+        return lines.join('\n')
+      }
+
+      // Job confirmation + edit-menu guard
+      if (meta?.jobStatus === 'confirming' && meta?.workOrderId) {
+        // 1) If currently in the job edit menu, map numeric options
+        if (meta.jobEditMode === 'menu' && numAny) {
+          const pick = Number(numAny[1])
+          // [1] Different job selection → list today's jobs and exit confirm flow
+          if (pick === 1) {
+            dbg('job-edit [1] → different job selection; listing today jobs')
+            try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined, jobStatus: 'none', lastMenu: 'jobs', lastMenuAt: new Date().toISOString() }) } catch {}
+            const idHint = meta.inspectorId
+            const res = await executeTool('getTodayJobs', idHint ? { inspectorId: idHint, reset: true } : { inspectorPhone: phoneNumber, reset: true }, undefined, phoneNumber)
+            let data: any = null; try { data = JSON.parse(res) } catch {}
+            const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+            if (jobs.length === 0) return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+            const lines: string[] = []
+            const latest = await getSessionState(phoneNumber)
+            const inspectorName = latest.inspectorName || ''
+            lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+            for (const j of jobs) {
+              lines.push('')
+              lines.push(`${j.selectionNumber}`)
+              lines.push(`🏠 Property: ${j.property}`)
+              lines.push(`⏰ Time: ${j.time}`)
+              lines.push(`  👤 Customer: ${j.customer}`)
+              lines.push(`  ⭐ Priority: ${j.priority}`)
+              lines.push(`  Status: ${j.status}`)
+              lines.push('---')
+            }
+            lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+            return lines.join('\n')
+          }
+          // [2]-[5] enter await_value for the specific field
+          if (pick >= 2 && pick <= 5) {
+            const type = (pick === 2 ? 'customer' : pick === 3 ? 'address' : pick === 4 ? 'time' : 'status') as 'customer'|'address'|'time'|'status'
+            try { await updateSessionState(phoneNumber, { jobEditMode: 'await_value', jobEditType: type }) } catch {}
+            const prompts: Record<string, string> = {
+              customer: 'Please provide the new customer name.',
+              address: 'Please provide the new address (you can include postal after a comma).',
+              time: 'Please provide the new time (e.g., 14:30 or 2:30 pm).',
+              status: 'Please provide the new status (SCHEDULED/STARTED/CANCELLED/COMPLETED).'
+            }
+            return prompts[type]
+          }
+        }
+
+        // 2) If awaiting a value for job update, treat any non-numeric input as the new value
+        if (meta.jobEditMode === 'await_value' && meta.jobEditType && raw && !numAny) {
+          const type = meta.jobEditType
+          dbg('job-edit await_value → updateJobDetails', { type })
+          const out = await executeTool('updateJobDetails', { jobId: meta.workOrderId, updateType: type, newValue: raw }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(out) } catch {}
+          try { await updateSessionState(phoneNumber, { jobEditMode: undefined, jobEditType: undefined }) } catch {}
+          // Re-show single confirmation
+          const cRes = await executeTool('confirmJobSelection', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let cData: any = null; try { cData = JSON.parse(cRes) } catch {}
+          const lines: string[] = []
+          lines.push('Please confirm the destination details before starting the inspection:')
+          lines.push('')
+          lines.push(`🏠 Property: ${cData?.jobDetails?.property}`)
+          lines.push(`⏰ Time: ${cData?.jobDetails?.time}`)
+          lines.push(`👤 Customer: ${cData?.jobDetails?.customer}`)
+          lines.push(`Status: ${cData?.jobDetails?.status}`)
+          lines.push('')
+          lines.push('[1] Yes')
+          lines.push('[2] No')
+          lines.push('')
+          lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+          return lines.join('\n')
+        }
+
+        // 3) Default confirm menu handling
+        if (raw === '1' || lower === 'yes' || lower === 'y') {
+          dbg('confirm yes → startJob', { workOrderId: meta.workOrderId })
+          const res = await executeTool('startJob', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          try {
+            const data = JSON.parse(res)
+            const locs: string[] = data?.locationsFormatted || []
+            if (Array.isArray(locs) && locs.length > 0) {
+              const lines: string[] = []
+              lines.push('The job has been successfully started! Here are the locations available for inspection:')
+              lines.push('')
+              for (const l of locs) lines.push(l)
+              lines.push('')
+              lines.push('Next: reply with the location number (e.g., [1], [2], etc.).')
+              return lines.join('\\n')
+            }
+          } catch {}
+          return res
+        }
+        if (raw === '2' || lower === 'no' || lower === 'n') {
+          dbg('confirm no → edit menu')
+          try { await updateSessionState(phoneNumber, { jobEditMode: 'menu', jobEditType: undefined }) } catch {}
+          return [
+            'What would you like to change about the job? Here are some options:',
+            '',
+            '[1] Different job selection',
+            '[2] Customer name update',
+            '[3] Property address change',
+            '[4] Time rescheduling',
+            '[5] Work order status change (SCHEDULED/STARTED/CANCELLED/COMPLETED)',
+            '',
+            'Next: reply [1-5] with your choice.'
+          ].join('\\n')
+        }
+      }
+      // Jobs intent guard: reset inspection context then list today's jobs
+      // const jobsIntent = (() => {
+      //   const t = lower
+      //   if (!t) return false
+      //   const keywords = ['jobs', 'job', 'tasks', 'task', 'my tasks', 'schedule', 'today', 'my jobs', 'my schedule', 'work order', 'work orders', 'inspections', 'inspection', 'assignments', 'appointments']
+      //   if (keywords.some(k => t === k || t.includes(k))) return true
+      //   if (/today'?s?\s+(jobs?|tasks?|schedule|inspections?|work\s*orders?)/.test(t)) return true
+      //   if (/(what('?s)?|show)\s+(my\s+)?(jobs?|tasks?|schedule|inspections?)/.test(t)) return true
+      //   return false
+      // })()
+      // if (jobsIntent) {
+      //   dbg('intent:jobs → list without resetting context')
+      //   try {
+      //     await updateSessionState(phoneNumber, {
+      //       lastMenu: 'jobs',
+      //       lastMenuAt: new Date().toISOString(),
+      //     })
+      //   } catch {}
+      //   const res = await executeTool('getTodayJobs', { inspectorPhone: phoneNumber }, undefined, phoneNumber)
+      //   let data: any = null
+      //   try { data = JSON.parse(res) } catch {}
+      //   const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+      //   const s = await getSessionState(phoneNumber)
+      //   const inspectorName = s.inspectorName || ''
+      //   if (jobs.length === 0) return `Hi${inspectorName ? ' ' + inspectorName : ''}! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.`
+      //   const lines: string[] = []
+      //   lines.push(`Hi${inspectorName ? ' ' + inspectorName : ''}! Here are your jobs for today:`)
+      //   for (const j of jobs) {
+      //     lines.push('')
+      //     lines.push(`${j.selectionNumber}`)
+      //     lines.push(`🏠 Property: ${j.property}`)
+      //     lines.push(`⏰ Time: ${j.time}`)
+      //     lines.push(`  👤 Customer: ${j.customer}`)
+      //     lines.push(`  ⭐ Priority: ${j.priority}`)
+      //     lines.push(`  Status: ${j.status}`)
+      //     lines.push('---')
+      //   }
+      //   lines.push(`Type ${jobs.map((j: any) => j.selectionNumber).join(', ')} to select a job.`)
+      //   return lines.join('\n')
+      // }
+    
+
+      // Numeric job selection when jobs list is on screen
+      if (numAny && meta?.lastMenu === 'jobs') {
+        const pick = Number(numAny[1])
+        dbg('jobs-select', { pick })
+        const res = await executeTool('getTodayJobs', { inspectorId: meta?.inspectorId || undefined, inspectorPhone: meta?.inspectorPhone || phoneNumber }, undefined, phoneNumber)
+        let data: any = null
+        try { data = JSON.parse(res) } catch {}
+        const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+        if (!jobs || jobs.length === 0) {
+          return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+        }
+        if (pick < 1 || pick > jobs.length) {
+          const options = jobs.map((j: any) => j.selectionNumber).join(', ')
+          return `That job number isn't valid. Type ${options} to select a job.`
+        }
+        const chosen = jobs[pick - 1]
+        const cRes = await executeTool('confirmJobSelection', { jobId: chosen.id }, undefined, phoneNumber)
+        let cData: any = null
+        try { cData = JSON.parse(cRes) } catch {}
+        if (!cData?.success) return 'There was an issue loading that job. Please try again.'
+        const lines: string[] = []
+        lines.push('Please confirm the destination details before starting the inspection:')
+        lines.push('')
+        lines.push(`🏠 Property: ${cData.jobDetails?.property}`)
+        lines.push(`⏰ Time: ${cData.jobDetails?.time}`)
+        lines.push(`👤 Customer: ${cData.jobDetails?.customer}`)
+        lines.push(`Status: ${cData.jobDetails?.status}`)
+        lines.push('')
+        lines.push('[1] Yes')
+        lines.push('[2] No')
+        lines.push('')
+        lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+        return lines.join('\\n')
+      }
+
+      // Guard these steps as long as we have a workOrder context; location is not mandatory
+      if (meta?.workOrderId) {
+        // Condition selection (only when in condition stage)
+        if (num1to5 && meta.taskFlowStage === 'condition') {
+          const conditionNumber = Number(num1to5[1])
           const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) {
-            if (String(data?.taskFlowStage || '').toLowerCase() === 'cause') {
+            const nextStage = String(data?.taskFlowStage || '').toLowerCase()
+            if (nextStage === 'cause') {
               return 'Please describe the cause for this issue.'
             }
-            return 'Condition saved. Please send any photos/videos now — you can include remarks as a caption. Or type "skip" to continue.'
+            const condUpper = String(data?.condition || meta.currentTaskCondition || '').toUpperCase()
+            if (condUpper === 'NOT_APPLICABLE') {
+              return 'Condition saved. You can send photos/videos with a caption for remarks, or type "skip" to continue.'
+            }
+            return 'Condition saved. Please send photos/videos now — include remarks as a caption. Media is required for this condition.'
           }
         }
         // Cause text
-        if (meta.taskFlowStage === 'cause' && raw && !numMatch) {
+        if (meta.taskFlowStage === 'cause' && raw && !numAny) {
           const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
         }
         // Resolution text
-        if (meta.taskFlowStage === 'resolution' && raw && !numMatch) {
+        if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
           const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
@@ -78,10 +358,357 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         }
         // Media stage skip
         if (meta.taskFlowStage === 'media' && (lower === 'skip' || lower === 'no')) {
+          const cond = String(meta.currentTaskCondition || '').toUpperCase()
+          if (cond !== 'NOT_APPLICABLE') {
+            return 'Media is required for this condition. Please send at least one photo (you can add remarks as a caption).'
+          }
           const out = await executeTool('completeTask', { phase: 'skip_media', workOrderId: meta.workOrderId, taskId: meta.currentTaskId }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Okay, skipping media. Reply [1] if this task is complete, [2] otherwise.'
+          if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
+        }
+
+        // Finalize confirmation step: [1] complete, [2] not yet
+        if (numAny && meta.taskFlowStage === 'confirm') {
+          const pick = Number(numAny[1])
+          if (pick === 1 || pick === 2) {
+            dbg('finalize → completeTask', { completed: pick === 1 })
+            const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, completed: pick === 1 }, undefined, phoneNumber)
+            let f: any = null
+            try { f = JSON.parse(finalize) } catch {}
+            if (!f?.success && typeof f?.error === 'string') {
+              return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
+            }
+            // Refresh tasks list to show updated state
+            const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(tasksRes) } catch {}
+            const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+            const locName = meta.currentTaskLocationName || meta.currentSubLocationName || meta.currentLocation || 'this location'
+            const lines: string[] = []
+            lines.push(`In ${locName}, here are the tasks available for inspection:`)
+            lines.push('')
+            for (const t of tasks) {
+              const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+              lines.push(`[${t.number}] ${t.description}${status}`)
+            }
+            lines.push(`[${tasks.length + 1}] Go back`)
+            lines.push('')
+            lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+            const header = (f?.message && typeof f.message === 'string') ? f.message : null
+            return header ? `${header}\n\n${lines.join('\n')}` : lines.join('\n')
+          }
+        }
+
+        // Location selection: numeric reply while viewing locations list
+        if (numAny && meta.lastMenu === 'locations') {
+          const pick = Number(numAny[1])
+          dbg('locations-select', { pick })
+          const locRes = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let locData: any = null
+          try { locData = JSON.parse(locRes) } catch {}
+          const list = Array.isArray(locData?.locations) ? locData.locations : []
+          if (!list || list.length === 0) {
+            return 'No locations were found for this job. Please try refreshing your jobs.'
+          }
+          if (pick < 1 || pick > list.length) {
+            const options = (locData?.locationsFormatted || []).join('\n')
+            return `That location number isn't valid.\n\n${options}\n\nNext: reply with the number of the location you want to inspect.`
+          }
+          const chosen = list[pick - 1]
+          // Proactively update session with the chosen location to avoid stale context
+          try {
+            await updateSessionState(phoneNumber, {
+              currentLocation: chosen?.name,
+              currentLocationId: chosen?.contractChecklistItemId,
+              currentSubLocationId: undefined,
+              currentSubLocationName: undefined,
+              lastMenu: 'locations',
+              lastMenuAt: new Date().toISOString(),
+              currentTaskId: undefined,
+              currentTaskName: undefined,
+              currentTaskEntryId: undefined,
+              currentTaskCondition: undefined
+            })
+          } catch {}
+          const hasSubs = Array.isArray(chosen?.subLocations) && chosen.subLocations.length > 0
+          if (hasSubs) {
+            const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: chosen.contractChecklistItemId, locationName: chosen.name }, undefined, phoneNumber)
+            let subData: any = null
+            try { subData = JSON.parse(subRes) } catch {}
+            const formatted: string[] = subData?.subLocationsFormatted || []
+            if (!formatted.length) {
+              const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phoneNumber)
+              let data: any = null
+              try { data = JSON.parse(tasksRes) } catch {}
+              const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+              if (tasks.length === 0) return 'No tasks found for this location.'
+              const lines: string[] = []
+              lines.push(`In ${chosen.name}, here are the tasks available for inspection:`)
+              lines.push('')
+              for (const t of tasks) {
+                const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+                lines.push(`[${t.number}] ${t.description}${status}`)
+              }
+              lines.push(`[${tasks.length + 1}] Go back`)
+              lines.push('')
+              lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+              return lines.join('\n')
+            }
+            const header = `You've selected ${chosen.name}. Here are the available sub-locations:`
+            const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+            return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
+          }
+          // No sub-locations → show tasks directly
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          // Ensure lastMenu reflects tasks
+          try {
+            await updateSessionState(phoneNumber, {
+              lastMenu: 'tasks',
+              lastMenuAt: new Date().toISOString(),
+            })
+          } catch {}
+          if (tasks.length === 0) return 'No tasks found for this location.'
+          const lines: string[] = []
+          lines.push(`In ${chosen.name}, here are the tasks available for inspection:`)
+          lines.push('')
+          for (const t of tasks) {
+            const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+            lines.push(`[${t.number}] ${t.description}${status}`)
+          }
+          lines.push(`[${tasks.length + 1}] Go back`)
+          lines.push('')
+          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          return lines.join('\n')
+        }
+
+        // Sub-location selection: numeric reply while viewing sub-locations list
+        if (numAny && (meta.lastMenu === 'sublocations' || (meta.workOrderId && meta.currentLocation && !meta.currentSubLocationId))) {
+          const pick = Number(numAny[1])
+          const latest = await getSessionState(phoneNumber)
+          const itemId = latest.currentLocationId
+          if (!itemId) {
+            // Fallback: reload locations and let user re-pick
+            const locRes = await executeTool('getJobLocations', { jobId: latest.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locRes) } catch {}
+            const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
+          }
+          // Resolve available sub-locations from cached mapping or tool
+          let subs: Array<{ id: string; name: string; status: string }> | undefined
+          const map = (latest as any).locationSubLocations as Record<string, Array<{ id: string; name: string; status: string }>> | undefined
+          if (map && map[itemId]) subs = map[itemId]
+          if (!subs) {
+            const subRes = await executeTool('getSubLocations', { workOrderId: latest.workOrderId, contractChecklistItemId: itemId, locationName: latest.currentLocation }, undefined, phoneNumber)
+            let subData: any = null; try { subData = JSON.parse(subRes) } catch {}
+            subs = Array.isArray(subData?.subLocations) ? subData.subLocations : []
+          }
+          const options = Array.isArray(subs) ? subs : []
+          if (options.length === 0) {
+            // No sub-locations → show tasks directly
+            const tasksRes = await executeTool('getTasksForLocation', { workOrderId: latest.workOrderId, location: latest.currentLocation, contractChecklistItemId: itemId }, undefined, phoneNumber)
+            let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
+            const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+            if (tasks.length === 0) return 'No tasks found for this location.'
+            const lines: string[] = []
+            lines.push(`In ${latest.currentLocation}, here are the tasks available for inspection:`)
+            lines.push('')
+            for (const t of tasks) {
+              const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+              lines.push(`[${t.number}] ${t.description}${status}`)
+            }
+            lines.push(`[${tasks.length + 1}] Go back`)
+            lines.push('')
+            lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+            try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString() }) } catch {}
+            return lines.join('\n')
+          }
+          const backNumber = options.length + 1
+          if (pick === backNumber) {
+            const locRes = await executeTool('getJobLocations', { jobId: latest.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locRes) } catch {}
+            const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            try { await updateSessionState(phoneNumber, { lastMenu: 'locations', lastMenuAt: new Date().toISOString(), currentSubLocationId: undefined, currentSubLocationName: undefined }) } catch {}
+            return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
+          }
+          if (pick < 1 || pick > backNumber) {
+            const formatted = options.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
+            const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+            return `That sub-location number isn't valid.\n\n${withBack.join('\n')}\n\nNext: reply with your sub-location choice, or [${withBack.length}] to go back.`
+          }
+          const chosenSub = options[pick - 1]
+          // Persist selected sub-location to session and fetch tasks
+          try {
+            await updateSessionState(phoneNumber, { currentSubLocationId: chosenSub.id, currentSubLocationName: chosenSub.name })
+          } catch {}
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: latest.workOrderId, location: latest.currentLocation, contractChecklistItemId: itemId, subLocationId: chosenSub.id }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          if (tasks.length === 0) return 'No tasks found for this sub-location.'
+          const lines: string[] = []
+          lines.push(`In ${latest.currentLocation}, here are the tasks available for inspection:`)
+          lines.push('')
+          for (const t of tasks) {
+            const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+            lines.push(`[${t.number}] ${t.description}${status}`)
+          }
+          lines.push(`[${tasks.length + 1}] Go back`)
+          lines.push('')
+          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString() }) } catch {}
+          return lines.join('\n')
+        }
+
+        // Numeric tasks selection mapping (lastMenu = tasks)
+        const taskPick = /^\s*(\d{1,2})\s*$/.exec(raw)
+        if (meta.lastMenu === 'tasks' && taskPick) {
+          const pick = Number(taskPick[1])
+          dbg('tasks-select', { pick })
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          const mc = data?.markCompleteNumber
+          const gb = data?.goBackNumber
+          if (mc && pick === mc) {
+            dbg('tasks-select markComplete')
+            const r = await executeTool('markLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId }, undefined, phoneNumber)
+            let rr: any = null; try { rr = JSON.parse(r) } catch {}
+            let formattedLocations: string[] = Array.isArray(rr?.locationsFormatted) ? rr.locationsFormatted : []
+            if (!formattedLocations.length) {
+              const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+              let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+              formattedLocations = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            }
+            const header = 'Here are the locations available for inspection:'
+            const body = formattedLocations.length > 0
+              ? [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\\n')
+              : 'Locations refreshed. Reply with the location number to continue.'
+            return rr?.message ? `${rr.message}\\n\\n${body}` : body
+          }
+          if (gb && pick === gb) {
+            dbg('tasks-select goBack (to locations)')
+            // Always go back to job locations for a consistent UX and avoid raw JSON
+            const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+            const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            const header = 'Here are the locations available for inspection:'
+            try {
+              await updateSessionState(phoneNumber, {
+                lastMenu: 'locations',
+                lastMenuAt: new Date().toISOString(),
+                currentTaskId: undefined,
+                currentTaskName: undefined,
+                currentTaskEntryId: undefined,
+                currentTaskCondition: undefined,
+                currentSubLocationId: undefined,
+                currentSubLocationName: undefined
+              })
+            } catch {}
+            return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\\n')
+          }
+          if (tasks.length > 0 && pick >= 1 && pick <= tasks.length) {
+            const chosen = tasks[pick - 1]
+            dbg('tasks-select start', { taskId: chosen?.id })
+            const start = await executeTool('completeTask', { phase: 'start', workOrderId: meta.workOrderId, taskId: chosen.id }, undefined, phoneNumber)
+            let st: any = null; try { st = JSON.parse(start) } catch {}
+            if (st?.success) {
+              return [
+                `Starting: ${chosen.description || 'Selected task'}`,
+                '',
+                'Set the condition for this task:',
+                '[1] Good',
+                '[2] Fair',
+                '[3] Un-Satisfactory',
+                '[4] Un-Observable',
+                '[5] Not Applicable',
+                '',
+                'Next: reply 1–5 to set the condition.'
+              ].join('\\n')
+            }
+            return 'There was an issue starting that task. Please pick a task again.'
+          }
+        }
+      }
+      // Fallback: random text while in a guided step → re-show current step
+      if (!numAny && !isJobsIntent) {
+        // If in condition stage
+        if (meta?.taskFlowStage === 'condition') {
+          return [
+            "I didn't understand that. Please set the condition:",
+            '[1] Good',
+            '[2] Fair',
+            '[3] Un-Satisfactory',
+            '[4] Un-Observable',
+            '[5] Not Applicable',
+            '',
+            'Next: reply 1–5 with your selection.'
+          ].join('\n')
+        }
+        // If awaiting cause/resolution text, keep their text; otherwise re-prompt
+        if (meta?.taskFlowStage === 'cause') {
+          return 'Please describe the cause for this issue (a short sentence is fine).'
+        }
+        if (meta?.taskFlowStage === 'resolution') {
+          return 'Please describe the resolution (a short sentence is fine).'
+        }
+        // If in job confirmation
+        if (meta?.jobStatus === 'confirming' || meta?.lastMenu === 'confirm') {
+          try {
+            const cRes = await executeTool('confirmJobSelection', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            let cData: any = null; try { cData = JSON.parse(cRes) } catch {}
+            const lines: string[] = []
+            lines.push("I didn't understand that. Please confirm the destination:")
+            lines.push('')
+            lines.push(`🏠 Property: ${cData?.jobDetails?.property}`)
+            lines.push(`⏰ Time: ${cData?.jobDetails?.time}`)
+            lines.push(`👤 Customer: ${cData?.jobDetails?.customer}`)
+            lines.push(`Status: ${cData?.jobDetails?.status}`)
+            lines.push('')
+            lines.push('[1] Yes')
+            lines.push('[2] No')
+            lines.push('')
+            lines.push('Next: reply [1] to confirm or [2] to pick another job.')
+            return lines.join('\n')
+          } catch {}
+        }
+        // If at locations
+        if (meta?.lastMenu === 'locations' && meta?.workOrderId) {
+          const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+          let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+          const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+          const header = "I didn't understand that. Here are the locations available for inspection:"
+          return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
+        }
+        // If at sub-locations
+        if (meta?.lastMenu === 'sublocations' && meta?.currentLocationId) {
+          const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, locationName: meta.currentLocation }, undefined, phoneNumber)
+          let subData: any = null; try { subData = JSON.parse(subRes) } catch {}
+          const formatted: string[] = Array.isArray(subData?.subLocationsFormatted) ? subData.subLocationsFormatted : []
+          const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+          return [`I didn't understand that. You've selected ${meta.currentLocation}. Here are the available sub-locations:`, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
+        }
+        // If at tasks
+        if (meta?.lastMenu === 'tasks' && meta?.currentLocationId) {
+          const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+          let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
+          const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+          const lines: string[] = []
+          lines.push(`I didn't understand that. In ${meta.currentSubLocationName || meta.currentLocation || 'this location'}, here are the tasks:`)
+          lines.push('')
+          for (const t of tasks) {
+            const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
+            lines.push(`[${t.number}] ${t.description}${status}`)
+          }
+          lines.push(`[${tasks.length + 1}] Go back`)
+          lines.push('')
+          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          return lines.join('\n')
         }
       }
     } catch (e) {
