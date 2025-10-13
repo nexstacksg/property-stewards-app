@@ -9,16 +9,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { prisma } from "@/lib/prisma"
 import { getAuthSecret } from "@/lib/auth-secret"
 import { verifyJwt } from "@/lib/jwt"
-
-import MasterSettingsPanel, {
-  type MasterSettingsSectionKey,
-  type PropertySummary,
-  type UserSummary
-} from "./master-settings-panel"
-
+import MasterSettingsPanel from "./master-settings-panel"
+import type {
+  MasterSettingsSectionKey,
+  PropertySummary,
+  UserSummary,
+} from "@/components/settings/types"
 const masterSections: MasterSettingsSectionKey[] = [
   "user-settings",
   "data-settings",
+  "property-size",
   "documentation",
 ]
 
@@ -89,9 +89,9 @@ export default async function SettingsPage() {
     redirect("/login")
   }
 
-  const propertySummaries: PropertySummary[] = properties.map((property) => ({
+  const propertySummaries: PropertySummary[] = properties.map((property:any) => ({
     ...property,
-    sizes: property.sizes.map((size) => ({ ...size })),
+    sizes: property.sizes.map((size:any) => ({ ...size })),
   }))
 
   return (

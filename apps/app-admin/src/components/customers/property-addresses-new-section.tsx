@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import PropertyTypeSelect from '@/components/property-type-select'
 import { Plus, X } from "lucide-react"
+import { useEffect, useState } from 'react'
 import {
   DEFAULT_PROPERTY_RELATIONSHIP,
   DEFAULT_PROPERTY_SIZE_RANGE,
@@ -49,6 +50,21 @@ export function PropertyAddressesNewSection({
   addAddress,
   removeAddress,
 }: Props) {
+  const [sizeRanges, setSizeRanges] = useState(PROPERTY_SIZE_RANGE_OPTIONS)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/size-range-options', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({})) as { options?: Array<{ code: string; label: string }> }
+        const options = Array.isArray(data?.options)
+          ? data.options.map((o) => ({ value: o.code, label: o.label }))
+          : []
+        if (options.length > 0) setSizeRanges(options as any)
+      } catch {}
+    }
+    load()
+  }, [])
   return (
     <Card className="mt-6">
       <CardHeader>
@@ -113,7 +129,7 @@ export function PropertyAddressesNewSection({
                     <SelectValue placeholder="Select size range" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROPERTY_SIZE_RANGE_OPTIONS.map((option) => (
+                    {sizeRanges.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>

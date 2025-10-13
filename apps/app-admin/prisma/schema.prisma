@@ -378,6 +378,17 @@ model ContractReport {
   @@index([generatedOn])
 }
 
+/// Configurable labels for area size ranges (e.g., 50–399 sqft)
+model PropertySizeRangeOption {
+  id        String             @id @default(cuid())
+  code      PropertySizeRange  @unique
+  label     String
+  order     Int                @default(0)
+  status    Status             @default(ACTIVE)
+  createdOn DateTime           @default(now())
+  updatedOn DateTime           @updatedAt
+}
+
 model ChecklistTag {
   id        String   @id @default(cuid())
   label     String   @unique

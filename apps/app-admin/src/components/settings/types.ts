@@ -23,6 +23,7 @@ export type PropertySummary = {
 export type MasterSettingsSectionKey =
   | "user-settings"
   | "data-settings"
+  | "property-size"
   | "documentation"
 
 export type MasterSettingsPanelProps = {

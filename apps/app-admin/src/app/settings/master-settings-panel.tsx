@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { DocumentationPanel } from "@/components/settings/documentation-panel"
 import { DataSettingsPanel } from "@/components/settings/data-settings-panel"
 import { UserAccountForm } from "@/components/settings/user-account-form"
+import { SizeRangePanel } from "@/components/settings/size-range-panel"
 import type {
   MasterSettingsPanelProps,
   MasterSettingsSectionKey,
@@ -25,8 +26,13 @@ const SECTION_METADATA: Record<MasterSettingsSectionKey, {
     icon: UserCog,
   },
   "data-settings": {
-    title: "Data Settings",
-    description: "Maintain property types and size options used across contracts.",
+    title: "Property Catalogue",
+    description: "Maintain property types and unit type options used across contracts.",
+    icon: Database,
+  },
+  "property-size": {
+    title: "Property Size (Area)",
+    description: "Manage size ranges (e.g., 700–899 sqft) shown in customer forms.",
     icon: Database,
   },
   documentation: {
@@ -56,8 +62,11 @@ export default function MasterSettingsPanel({
         return <UserAccountForm user={currentUser} />
       case "data-settings":
         return <DataSettingsPanel properties={properties} />
+         case "property-size":
+        return <SizeRangePanel />
       case "documentation":
         return <DocumentationPanel />
+     
       default:
         return null
     }

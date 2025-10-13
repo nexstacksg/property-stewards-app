@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import type { PropertySummary } from "./types"
+// import { SizeRangePanel } from "@/components/settings/size-range-panel"
 
 const statusVariantMap: Record<PropertySummary["status"], "default" | "outline"> = {
   ACTIVE: "default",
@@ -476,6 +477,9 @@ export function DataSettingsPanel({ properties }: DataSettingsPanelProps) {
           </form>
         </CardContent>
       </Card>
+
+      {/* Property Size (Area) configuration */}
+      {/* <SizeRangePanel />s */}
     </div>
   )
 }
