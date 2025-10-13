@@ -664,8 +664,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
 
           if (sessionId) {
-            // If FAIR or UNSATISFACTORY, branch to cause -> resolution -> media
-            const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'media'
+            // If FAIR or UNSATISFACTORY, branch to cause -> resolution -> remarks -> media
+            const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'remarks'
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
             dbg('completeTask:set_condition', { taskId, condition, nextStage })
             if (nextStage === 'cause') {
@@ -673,7 +673,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             }
           }
 
-          return JSON.stringify({ success: true, taskFlowStage: 'media', condition })
+          return JSON.stringify({ success: true, taskFlowStage: 'remarks', condition })
         }
 
         if (phase === 'set_cause') {
@@ -733,12 +733,12 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             if (latest.pendingTaskCause) updateData.cause = latest.pendingTaskCause
             await prisma.itemEntry.update({ where: { id: entryId }, data: updateData })
           }
-          await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
+          await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'remarks' })
           const condUpper = String(latest.currentTaskCondition || '').toUpperCase()
           const msg = condUpper === 'NOT_APPLICABLE'
-            ? 'Resolution saved. You can now send photos/videos with remarks (as caption), or type \"skip\" to continue.'
-            : 'Resolution saved. Please send photos/videos with remarks (as caption). Media is required for this condition.'
-          return JSON.stringify({ success: true, taskFlowStage: 'media', message: msg })
+            ? 'Resolution saved. Please add any remarks for this task (or type \"skip\").'
+            : 'Resolution saved. Please add remarks for this task.'
+          return JSON.stringify({ success: true, taskFlowStage: 'remarks', message: msg })
         }
 
         if (phase === 'skip_media') {
@@ -788,13 +788,16 @@ export async function executeTool(toolName: string, args: any, threadId?: string
 
           if (sessionId) {
             await updateSessionState(sessionId, {
-              taskFlowStage: 'confirm',
+              taskFlowStage: 'media',
               currentTaskEntryId: entryId || undefined,
               pendingTaskRemarks: shouldSkipRemarks ? undefined : (remarks || undefined)
             })
           }
 
-          return JSON.stringify({ success: true, taskFlowStage: 'confirm' })
+          const nextMsg = allowSkip
+            ? 'Thanks. You can now send photos/videos (captions will be saved per media), or type \"skip\" to continue.'
+            : 'Thanks. Please send photos/videos now (captions will be saved per media).'
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message: nextMsg })
         }
 
         if (phase === 'finalize') {
