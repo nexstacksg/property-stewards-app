@@ -67,7 +67,8 @@ async function getContract(id: string) {
           }
         },
         orderBy: { generatedOn: 'desc' }
-      }
+      },
+      marketingSource: true
     }
   })
 
@@ -182,7 +183,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         createdOn: new Date(entry.createdOn).toISOString(),
       }))
     : []
-  const marketingSourceLabel = contract.marketingSource ? formatEnumLabel(contract.marketingSource) : null
+  const marketingSourceLabel = contract.marketingSource?.name || null
   const showPdfActions = !(contract.status === 'DRAFT' && totalWorkOrders === 0)
 
   return (

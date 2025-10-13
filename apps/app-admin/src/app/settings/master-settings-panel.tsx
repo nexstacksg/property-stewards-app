@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { BookOpen, Database, UserCog } from "lucide-react"
+import { BookOpen, Database, Tag, UserCog, Megaphone } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/button"
 import { DocumentationPanel } from "@/components/settings/documentation-panel"
 import { DataSettingsPanel } from "@/components/settings/data-settings-panel"
 import { UserAccountForm } from "@/components/settings/user-account-form"
+import { SizeRangePanel } from "@/components/settings/size-range-panel"
+import { ChecklistTagsPanel } from "@/components/settings/checklist-tags-panel"
+import { MarketingSourcesPanel } from "@/components/settings/marketing-sources-panel"
 import type {
   MasterSettingsPanelProps,
   MasterSettingsSectionKey,
@@ -25,9 +28,24 @@ const SECTION_METADATA: Record<MasterSettingsSectionKey, {
     icon: UserCog,
   },
   "data-settings": {
-    title: "Data Settings",
-    description: "Maintain property types and size options used across contracts.",
+    title: "Property Catalogue",
+    description: "Maintain property types and unit type options used across contracts.",
     icon: Database,
+  },
+  "marketing-sources": {
+    title: "Marketing Sources",
+    description: "Manage values for contract marketing source.",
+    icon: Megaphone,
+  },
+  "property-size": {
+    title: "Property Size",
+    description: "Manage size ranges  shown in customer forms.",
+    icon: Database,
+  },
+  "checklist-tags": {
+    title: "Checklist Tags",
+    description: "Manage reusable tags and task templates for building checklists.",
+    icon: Tag,
   },
   documentation: {
     title: "Workspace Documentation",
@@ -56,8 +74,15 @@ export default function MasterSettingsPanel({
         return <UserAccountForm user={currentUser} />
       case "data-settings":
         return <DataSettingsPanel properties={properties} />
+      case "marketing-sources":
+        return <MarketingSourcesPanel />
+         case "property-size":
+        return <SizeRangePanel />
+      case "checklist-tags":
+        return <ChecklistTagsPanel />
       case "documentation":
         return <DocumentationPanel />
+    
       default:
         return null
     }

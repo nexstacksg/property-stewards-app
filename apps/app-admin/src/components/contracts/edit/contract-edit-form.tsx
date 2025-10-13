@@ -18,7 +18,8 @@ import type {
   ContractReferenceOption,
   ContractStatus,
   ContractType,
-  MarketingSource,
+  MarketingSourceOption,
+  MarketingSourceSelectValue,
 } from "@/components/contracts/types"
 
 interface ContractEditFormProps {
@@ -31,8 +32,9 @@ interface ContractEditFormProps {
   onServicePackageChange: (value: string) => void
   contractType: ContractType
   onContractTypeChange: (value: ContractType) => void
-  marketingSource: MarketingSource
-  onMarketingSourceChange: (value: MarketingSource) => void
+  marketingSource: MarketingSourceSelectValue
+  marketingSourceOptions: MarketingSourceOption[]
+  onMarketingSourceChange: (value: MarketingSourceSelectValue) => void
   status: ContractStatus
   onStatusChange: (value: ContractStatus) => void
   scheduledStartDate: string
@@ -74,6 +76,7 @@ export function ContractEditForm({
   contractType,
   onContractTypeChange,
   marketingSource,
+  marketingSourceOptions,
   onMarketingSourceChange,
   status,
   onStatusChange,
@@ -192,18 +195,15 @@ export function ContractEditForm({
 
         <div className="space-y-2">
           <Label>Source of Marketing</Label>
-          <Select
-            value={marketingSource}
-            onValueChange={(value) => onMarketingSourceChange(value as MarketingSource)}
-          >
+          <Select value={marketingSource} onValueChange={(value) => onMarketingSourceChange(value as MarketingSourceSelectValue)}>
             <SelectTrigger>
               <SelectValue placeholder="Select source" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="NONE">Not specified</SelectItem>
-              <SelectItem value="GOOGLE">Google</SelectItem>
-              <SelectItem value="REFERRAL">Referral</SelectItem>
-              <SelectItem value="OTHERS">Others</SelectItem>
+              {marketingSourceOptions.map((opt) => (
+                <SelectItem key={opt.id} value={opt.id}>{opt.name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

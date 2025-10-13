@@ -83,7 +83,8 @@ export type ContactPersonDraft = {
 
 export type ContractType = "INSPECTION" | "REPAIR"
 
-export type MarketingSource = "GOOGLE" | "REFERRAL" | "OTHERS" | "NONE"
+export type MarketingSourceOption = { id: string; name: string }
+export type MarketingSourceSelectValue = string | "NONE"
 
 export type ContractStatus =
   | "DRAFT"

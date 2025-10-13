@@ -17,6 +17,7 @@ import {
   formatPropertySizeRange,
 } from "@/lib/property-address"
 import { CustomerAddress, NewCustomerAddress } from "@/types/customer"
+import { useEffect, useState } from "react"
 
 interface SizeOption {
   code: string
@@ -61,6 +62,21 @@ export function CustomerAddressSection({
   addingAddress,
   onAddAddress,
 }: CustomerAddressSectionProps) {
+  const [sizeRanges, setSizeRanges] = useState(PROPERTY_SIZE_RANGE_OPTIONS)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/size-range-options', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json().catch(() => ({})) as { options?: Array<{ code: string; label: string }> }
+        const options = Array.isArray(data?.options)
+          ? data.options.map((o) => ({ value: o.code, label: o.label }))
+          : []
+        if (options.length > 0) setSizeRanges(options as any)
+      } catch {}
+    }
+    load()
+  }, [])
   return (
     <Card>
       <CardHeader>
@@ -134,7 +150,7 @@ export function CustomerAddressSection({
               </div>
 
               <div className="space-y-2">
-                <Label>Property Size Range</Label>
+                <Label>Property Size</Label>
                 <Select
                   value={newAddress.propertySizeRange || undefined}
                   onValueChange={(value) => onUpdateAddress({ propertySizeRange: value })}
@@ -143,7 +159,7 @@ export function CustomerAddressSection({
                     <SelectValue placeholder="Select size range" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROPERTY_SIZE_RANGE_OPTIONS.map((option) => (
+                    {sizeRanges.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label}
                       </SelectItem>

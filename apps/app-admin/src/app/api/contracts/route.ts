@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
           address: true,
           basedOnChecklist: true,
           contactPersons: true,
+          marketingSource: true,
           workOrders: {
             include: {
               inspectors: true
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
       servicePackage,
       remarks,
       contractType,
-      marketingSource,
+      marketingSourceId,
       referenceIds,
       contactPersons
     } = body
@@ -135,9 +136,11 @@ export async function POST(request: NextRequest) {
     // Create contract
     const normalizedContractType = contractType === 'REPAIR' ? 'REPAIR' : 'INSPECTION'
 
-    const normalizedMarketingSource = marketingSource && ['GOOGLE', 'REFERRAL', 'OTHERS'].includes(marketingSource)
-      ? marketingSource
-      : null
+    let normalizedMarketingSourceId: string | null = null
+    if (typeof marketingSourceId === 'string' && marketingSourceId.trim().length > 0) {
+      const ms = await prisma.marketingSource.findUnique({ where: { id: marketingSourceId } })
+      normalizedMarketingSourceId = ms ? ms.id : null
+    }
 
     const sanitizedReferenceIds = Array.isArray(referenceIds)
       ? referenceIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
@@ -166,7 +169,7 @@ export async function POST(request: NextRequest) {
       servicePackage,
       remarks,
       contractType: normalizedContractType,
-      marketingSource: normalizedMarketingSource ?? undefined,
+      marketingSourceId: normalizedMarketingSourceId ?? undefined,
       referenceIds: sanitizedReferenceIds,
       status: 'DRAFT' as const,
       contactPersons: sanitizedContactPersons.length > 0

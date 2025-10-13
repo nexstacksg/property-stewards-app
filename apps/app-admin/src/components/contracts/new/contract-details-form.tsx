@@ -10,13 +10,15 @@ import type {
   Customer,
   ContractReferenceOption,
   ContractType,
-  MarketingSource,
+  MarketingSourceOption,
+  MarketingSourceSelectValue,
 } from "../types"
 
 interface ContractDetailsFormProps {
   servicePackage: string
   contractType: ContractType
-  marketingSource: MarketingSource
+  marketingSource: MarketingSourceSelectValue
+  marketingSourceOptions: MarketingSourceOption[]
   value: string
   scheduledStartDate: string
   scheduledEndDate: string
@@ -27,7 +29,7 @@ interface ContractDetailsFormProps {
   selectedCustomer: Customer | null
   onServicePackageChange: (value: string) => void
   onContractTypeChange: (value: ContractType) => void
-  onMarketingSourceChange: (value: MarketingSource) => void
+  onMarketingSourceChange: (value: MarketingSourceSelectValue) => void
   onValueChange: (value: string) => void
   onScheduledStartDateChange: (value: string) => void
   onScheduledEndDateChange: (value: string) => void
@@ -40,6 +42,7 @@ export function ContractDetailsForm({
   servicePackage,
   contractType,
   marketingSource,
+  marketingSourceOptions,
   value,
   scheduledStartDate,
   scheduledEndDate,
@@ -104,18 +107,15 @@ export function ContractDetailsForm({
 
         <div className="space-y-2">
           <Label>Source of Marketing</Label>
-          <Select
-            value={marketingSource}
-            onValueChange={(value) => onMarketingSourceChange(value as MarketingSource)}
-          >
+          <Select value={marketingSource} onValueChange={(value) => onMarketingSourceChange(value as MarketingSourceSelectValue)}>
             <SelectTrigger>
               <SelectValue placeholder="Select source" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="NONE">Not specified</SelectItem>
-              <SelectItem value="GOOGLE">Google</SelectItem>
-              <SelectItem value="REFERRAL">Referral</SelectItem>
-              <SelectItem value="OTHERS">Others</SelectItem>
+              {marketingSourceOptions.map((opt) => (
+                <SelectItem key={opt.id} value={opt.id}>{opt.name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
