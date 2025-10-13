@@ -23,7 +23,21 @@ export const DEFAULT_PROPERTY_RELATIONSHIP = PROPERTY_RELATIONSHIP_OPTIONS[0].va
 
 export function formatPropertySizeRange(value?: string | null) {
   if (!value) return ''
-  return sizeRangeLookup.get(value) ?? value.replace(/_/g, ' ')
+  const fromStatic = sizeRangeLookup.get(value)
+  if (fromStatic) return fromStatic
+  // Heuristic: support dynamic codes like RANGE_1200_1500 or RANGE_2000_PLUS
+  const upper = String(value).toUpperCase()
+  const rangePair = upper.match(/^RANGE_(\d+?)_(\d+?)$/)
+  if (rangePair) {
+    const [, a, b] = rangePair
+    return `${a}-${b} sqft`
+  }
+  const rangePlus = upper.match(/^RANGE_(\d+?)_PLUS$/)
+  if (rangePlus) {
+    const [, a] = rangePlus
+    return `${a}+ sqft`
+  }
+  return value.replace(/_/g, ' ')
 }
 
 export function formatPropertyRelationship(value?: string | null) {
