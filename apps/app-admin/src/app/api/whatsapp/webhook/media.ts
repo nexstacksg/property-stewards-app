@@ -113,20 +113,30 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     const publicUrl = `${PUBLIC_URL}/${key}`
     debugLog('✅ Uploaded to DigitalOcean Spaces:', publicUrl)
 
-    // Possible remarks bundled with the media
-    const rawRemarkCandidates: unknown[] = [
-      data.caption,
-      data.text,
-      data.body,
-      data.message?.text?.body,
-      data.message?.caption,
-      data.message?.imageMessage?.caption,
-      data.message?.imageMessage?.text,
-      data.media?.caption,
-      data.media?.text
-    ]
-    const mediaRemarkRaw = rawRemarkCandidates.find((value): value is string => typeof value === 'string' && value.trim().length > 0) || ''
-    const mediaRemark = mediaRemarkRaw.trim()
+    // Extract caption (WhatsApp providers vary by payload shape)
+    const extractCaption = (payload: any): string | null => {
+      const tryString = (v: any) => (typeof v === 'string' && v.trim().length > 0 ? v.trim() : null)
+      // Common fields
+      const direct = tryString(payload?.caption) || tryString(payload?.text) || tryString(payload?.body)
+      if (direct) return direct
+      // Wassenger-like
+      const msg = payload?.message || {}
+      const media = payload?.media || {}
+      return (
+        tryString(msg?.text?.body) ||
+        tryString(msg?.caption) ||
+        tryString(msg?.imageMessage?.caption) ||
+        tryString(msg?.imageMessage?.text) ||
+        tryString(msg?.videoMessage?.caption) ||
+        tryString(msg?.videoMessage?.text) ||
+        tryString(msg?.documentMessage?.caption) ||
+        tryString(msg?.extendedTextMessage?.text) ||
+        tryString(media?.caption) ||
+        tryString(media?.text) ||
+        null
+      )
+    }
+    const mediaRemark = extractCaption(data) || ''
 
     if (requiresRemarkForPhoto && !mediaRemark && !isTaskFlowMedia) {
       const pendingUploads = Array.isArray(metadata.pendingMediaUploads) ? metadata.pendingMediaUploads : []

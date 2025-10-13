@@ -96,13 +96,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const title = titleInput.length ? titleInput : "Inspection Report"
   const versionLabel = `v${nextVersion}`
 
-  const allSelected = allowedConditions.length === CONDITION_VALUES.size
   const pdfBuffer = await createContractReportBuffer(contract, {
     titleOverride: title,
     versionLabel,
     generatedOn,
     allowedConditions,
-    entryOnly: !allSelected,
+    entryOnly: true,
   })
 
   const storageKey = buildStorageKey(contract, nextVersion)
