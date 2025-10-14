@@ -581,7 +581,9 @@ export async function getTodayJobsForInspector(inspectorId: string) {
     debugLog('getTodayJobsForInspector: workOrders for inspector', inspectorId, scopedWorkOrders.length)
     let todays = scopedWorkOrders
       .filter((wo: any) => {
-        if (wo.inspectorId !== inspectorId) return false
+        // Support multi-inspector work orders: prefer inspectorIds array
+        const assigned = (Array.isArray(wo.inspectorIds) && wo.inspectorIds.includes(inspectorId)) || wo.inspectorId === inspectorId
+        if (!assigned) return false
         const startRaw = wo.scheduledStartDateTime ? new Date(wo.scheduledStartDateTime) : null
         if (!startRaw) return false
         const t = startRaw.getTime()
