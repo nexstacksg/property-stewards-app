@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
 export const TABLE_MARGIN = 36
+// Space reserved at the bottom of every page for footer/version/paging
+export const FOOTER_RESERVED = 36
 // Base weights derived from previous fixed widths [40, 120, 120, 120, 123]
 // We now scale these to fill the full printable width dynamically (portrait/landscape).
 const BASE_COLUMN_WEIGHTS = [40, 120, 120, 120, 123] as const
@@ -172,6 +174,8 @@ type TableRow = [TableCell, TableCell, TableCell, TableCell, TableCell]
 type TableRowInfo = {
   cells: TableRow
   summaryMedia?: CellSegment | CellSegment[]
+  // Marks primary task rows (for alternating background)
+  isTaskRow?: boolean
 }
 
 function normalizeConditionValue(value: unknown): string | null {
@@ -642,7 +646,8 @@ async function buildTableRows(
 
         rows.push({
           cells: baseRow,
-          summaryMedia: entryOnly ? undefined : (rowSegments.length ? [...rowSegments] : undefined)
+          summaryMedia: entryOnly ? undefined : (rowSegments.length ? [...rowSegments] : undefined),
+          isTaskRow: true,
         })
 
         if (filteredEntries.length > 0) {
@@ -770,7 +775,7 @@ function calculateRowHeight(doc: any, cells: TableCell[]) {
   return Math.max(rowHeight + CELL_PADDING * 2, 24)
 }
 
-function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header?: boolean } = {}) {
+function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header?: boolean; background?: string | null } = {}) {
   const { header = false } = options
   const rowHeight = calculateRowHeight(doc, cells)
   let x = TABLE_MARGIN
@@ -787,6 +792,11 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
       doc.rect(x, y, width, rowHeight).stroke()
       doc.font("Helvetica-Bold")
     } else {
+      if (options.background) {
+        doc.save()
+        doc.rect(x, y, width, rowHeight).fill(options.background)
+        doc.restore()
+      }
       doc.rect(x, y, width, rowHeight).stroke()
       doc.font(cell.bold ? "Helvetica-Bold" : "Helvetica")
     }
@@ -1275,8 +1285,9 @@ export async function appendWorkOrderSection(
   const headerHeight = drawTableRow(doc, y, headerRow, { header: true })
   y += headerHeight
 
+  let taskShadeToggle = false
   tableRows.forEach((rowInfo) => {
-    const remainingSpace = doc.page.height - TABLE_MARGIN - y
+    const remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
     const requiredHeight = calculateRowHeight(doc, rowInfo.cells)
       + calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
 
@@ -1289,8 +1300,10 @@ export async function appendWorkOrderSection(
       y += headerAgainHeight
     }
 
-    const consumedHeight = drawTableRow(doc, y, rowInfo.cells)
+    const background = rowInfo.isTaskRow ? (taskShadeToggle ? '#f8fafc' : undefined) : undefined
+    const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
     y += consumedHeight
+    if (rowInfo.isTaskRow) taskShadeToggle = !taskShadeToggle
 
     if (rowInfo.summaryMedia) {
       const mediaHeight = drawMediaBlocks(doc, y, rowInfo.summaryMedia)
