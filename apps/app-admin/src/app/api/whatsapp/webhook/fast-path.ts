@@ -1,4 +1,4 @@
-import { executeTool } from './toolkit'
+import { executeTool } from './tools'
 import { getSessionState, updateSessionState, type ChatSessionState } from '@/lib/chat-session'
 
 function perfLog(label: string, ms: number) {
@@ -134,9 +134,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
               currentTaskLocationName: undefined
             })
           } catch {}
-          // Prefer server-formatted strings; 'locations' can be strings (not objects) in startJob
-          const locations: string[] = Array.isArray((data as any)?.locationsFormatted) ? (data as any).locationsFormatted
-            : (Array.isArray((data as any)?.locations) && typeof (data as any).locations[0] === 'string' ? (data as any).locations : [])
+          const locations: string[] = data.locationsFormatted || []
           const header = `Job started. Here are the locations available for inspection:`
           const next = 'Reply with the number of the location you want to inspect next.'
           return [header, '', ...locations, '', `Next: ${next}`].join('\n')
@@ -200,8 +198,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         // textual go back from sub-location stage → locations list
         const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
         const locData = safeParseJSON(locRes)
-        const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted
-          : (Array.isArray(locData?.locations) ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''}`) : [])
+        const formattedLocations: string[] = locData?.locationsFormatted || []
         const header = 'Here are the locations available for inspection:'
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
       }
@@ -213,8 +210,8 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const list = Array.isArray(locData?.locations) ? locData.locations : []
         if (list.length === 0) return null
         if (selectedNumber > list.length) {
-          const options = list.map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''}`)
-          return `That location number isn't valid.\n\n${options.join('\n')}\n\nNext: reply with the number of the location you want to inspect.`
+          const options = (locData?.locationsFormatted || []).join('\n')
+          return `That location number isn't valid.\n\n${options}\n\nNext: reply with the number of the location you want to inspect.`
         }
         const chosen = list[selectedNumber - 1]
         const hasSubs = Array.isArray(chosen?.subLocations) && chosen.subLocations.length > 0
@@ -222,9 +219,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           dbgFast('location has sub-locations; listing')
           const subRes = await executeTool('getSubLocations', { workOrderId: session.workOrderId, contractChecklistItemId: chosen.contractChecklistItemId, locationName: chosen.name }, undefined, phone)
           const subData = safeParseJSON(subRes)
-          const formatted: string[] = Array.isArray(subData?.subLocations)
-            ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
-            : (subData?.subLocationsFormatted || [])
+          const formatted: string[] = subData?.subLocationsFormatted || []
           if (!formatted.length) {
             const tasksRes = await executeTool('getTasksForLocation', { workOrderId: session.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phone)
             return formatTasksResponse(chosen.name, tasksRes)
@@ -243,8 +238,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           // textual go back → locations
           const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
           const locData = safeParseJSON(locRes)
-          const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted
-            : (Array.isArray(locData?.locations) ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''}`) : [])
+          const formattedLocations: string[] = locData?.locationsFormatted || []
           const header = 'Here are the locations available for inspection:'
           return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
         }
@@ -275,13 +269,12 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
             } catch {}
             const locRes2 = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
             const locData2 = safeParseJSON(locRes2)
-            const formattedLocations: string[] = Array.isArray(locData2?.locationsFormatted) ? locData2.locationsFormatted
-              : (Array.isArray(locData2?.locations) ? (locData2.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''}`) : [])
+            const formattedLocations: string[] = locData2?.locationsFormatted || []
             const header = 'Here are the locations available for inspection:'
             return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
           }
           if (selectedNumber > backNumber) {
-          const formatted = subOptions.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
+            const formatted = subOptions.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
             const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
             return `That sub-location number isn't valid.\n\n${withBack.join('\n')}\n\nNext: reply with your sub-location choice, or [${withBack.length}] to go back.`
           }
@@ -384,9 +377,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
     if (session?.workOrderId && (session?.lastMenu === 'locations' || (!session?.currentLocation && !session?.taskFlowStage))) {
       const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
       const locData = safeParseJSON(locRes)
-      const formattedLocations: string[] = Array.isArray(locData?.locations)
-        ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-        : (locData?.locationsFormatted || [])
+      const formattedLocations: string[] = locData?.locationsFormatted || []
       if (formattedLocations.length > 0) {
         const header = 'Here are the locations available for inspection:'
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
@@ -399,9 +390,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       if (currentItemId) {
         const subRes = await executeTool('getSubLocations', { workOrderId: session.workOrderId, contractChecklistItemId: currentItemId, locationName: session.currentLocation }, undefined, phone)
         const subData = safeParseJSON(subRes)
-        const formatted: string[] = Array.isArray(subData?.subLocations)
-          ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-          : (subData?.subLocationsFormatted || [])
+        const formatted: string[] = subData?.subLocationsFormatted || []
         if (formatted.length > 0) {
           const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
           const header = `You\'re at ${session.currentLocation}. Here are the sub-locations:`
@@ -418,8 +407,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const res = await executeTool('startJob', { jobId: session.workOrderId }, undefined, phone)
         const data = safeParseJSON(res)
         if (!data?.success) return null
-        const locations: string[] = Array.isArray((data as any)?.locationsFormatted) ? (data as any).locationsFormatted
-          : (Array.isArray((data as any)?.locations) && typeof (data as any).locations[0] === 'string' ? (data as any).locations : [])
+        const locations: string[] = data.locationsFormatted || []
         const header = `Job started. Here are the locations available for inspection:`
         const next = 'Reply with the number of the location you want to inspect next.'
         return [header, '', ...locations, '', `Next: ${next}`].join('\n')
@@ -486,17 +474,14 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         if (ctx.subLocationId) {
           const subs = await executeTool('getSubLocations', { workOrderId: ctx.workOrderId, contractChecklistItemId: ctx.itemId, locationName: ctx.locationName }, undefined, phone)
           const subData = safeParseJSON(subs)
-          const formatted: string[] = Array.isArray(subData?.subLocations)
-            ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-            : (subData?.subLocationsFormatted || [])
+          const formatted: string[] = subData?.subLocationsFormatted || []
           const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
           const header = `You're back at ${ctx.locationName}. Here are the sub-locations:`
           return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
         }
         const locs = await executeTool('getJobLocations', { jobId: ctx.workOrderId }, undefined, phone)
         const locData = safeParseJSON(locs)
-        const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted
-          : (Array.isArray(locData?.locations) ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''}`) : [])
+        const formattedLocations: string[] = locData?.locationsFormatted || []
         const header = 'Here are the locations available for inspection:'
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
       }
@@ -507,7 +492,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, completed: selectedNumber === 1 }, undefined, phone)
         const f = safeParseJSON(finalize)
         if (!f?.success && typeof f?.error === 'string') {
-          return `${f.error}\n\nNext: send the required media or add a remark.`
+          return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
         }
         const tasksRes = await executeTool('getTasksForLocation', { workOrderId: ctx.workOrderId, location: ctx.locationName, contractChecklistItemId: ctx.itemId, subLocationId: ctx.subLocationId }, undefined, phone)
         const header = (f?.message as string | undefined) || undefined
@@ -528,12 +513,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         if (s?.taskFlowStage === 'cause' || s?.message?.toLowerCase().includes('cause')) {
           return 'Please describe the cause for this issue.'
         }
-        // Only mention 'skip' when condition is Not Applicable
-        const cond = String(s?.condition || (latest as any)?.currentTaskCondition || '').toUpperCase()
-        const allowSkip = cond === 'NOT_APPLICABLE'
-        return allowSkip
-          ? `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption. Or type 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
-          : `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption.\n\nNext: send media with a caption (remarks).`
+        return `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption. Or type 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
       }
 
       // c) Media step: skip
@@ -557,12 +537,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const res = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, resolution: msg }, undefined, phone)
         const r = safeParseJSON(res)
         if (!r?.success && typeof r?.error === 'string') return r.error
-        {
-          const allowSkip = String((latest as any)?.currentTaskCondition || '').toUpperCase() === 'NOT_APPLICABLE'
-          return r?.message || (allowSkip
-            ? `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption), or type 'skip' to continue.`
-            : `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption).`)
-        }
+        return r?.message || `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption), or type 'skip' to continue.`
       }
 
       if ((ctx.stage === 'remarks' || ctx.stage === 'media') && msg && !selectedNumber) {
@@ -575,10 +550,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
       // d.5) Guard: In media/remarks but user sent an unrelated token (e.g., punctuation only)
       if ((ctx.stage === 'remarks' || ctx.stage === 'media') && !selectedNumber) {
-        const allowSkip = String((latest as any)?.currentTaskCondition || '').toUpperCase() === 'NOT_APPLICABLE'
-        return allowSkip
-          ? `Please send photos/videos now (you can add a caption for remarks), or reply 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
-          : `Please send photos/videos now (you can add a caption for remarks).\n\nNext: send media with a caption (remarks).`
+        return `Please send photos/videos now (you can add a caption for remarks), or reply 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
       }
 
       // e) Task selection by number (last option = Go back one step)
@@ -596,9 +568,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           if (ctx.subLocationId) {
             const subs = await executeTool('getSubLocations', { workOrderId: ctx.workOrderId, contractChecklistItemId: ctx.itemId, locationName: ctx.locationName }, undefined, phone)
             const subData = safeParseJSON(subs)
-            const formatted: string[] = Array.isArray(subData?.subLocations)
-              ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-              : (subData?.subLocationsFormatted || [])
+            const formatted: string[] = subData?.subLocationsFormatted || []
             const header = `You're back at ${ctx.locationName}. Here are the sub-locations:`
             if (formatted.length > 0) return [header, '', ...formatted, '', 'Next: reply with your sub-location choice.'].join('\n')
           }
