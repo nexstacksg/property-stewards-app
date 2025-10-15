@@ -119,6 +119,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           ].join('\n')
         }
         const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+        // Cache this jobs list in session to map immediate numeric selection without a second fetch
+        try {
+          const snapshot = jobs.map((j: any, idx: number) => ({ id: j.id, number: idx + 1 }))
+          await updateSessionState(phoneNumber, { lastJobsSnapshot: snapshot })
+        } catch {}
         const latest = await getSessionState(phoneNumber)
         const inspectorName = latest.inspectorName || ''
         if (jobs.length === 0) {
@@ -291,19 +296,28 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       if (numAny && meta?.lastMenu === 'jobs') {
         const pick = Number(numAny[1])
         dbg('jobs-select', { pick })
-        const res = await executeTool('getTodayJobs', { inspectorId: meta?.inspectorId || undefined, inspectorPhone: meta?.inspectorPhone || phoneNumber }, undefined, phoneNumber)
-        let data: any = null
-        try { data = JSON.parse(res) } catch {}
-        const jobs = Array.isArray(data?.jobs) ? data.jobs : []
-        if (!jobs || jobs.length === 0) {
-          return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+        // Prefer using cached lastJobsSnapshot to avoid re-fetching immediately
+        const latest = await getSessionState(phoneNumber)
+        const snap = Array.isArray(latest.lastJobsSnapshot) ? latest.lastJobsSnapshot : []
+        let chosenId: string | null = null
+        if (snap.length > 0 && pick >= 1 && pick <= snap.length) {
+          chosenId = snap[pick - 1]?.id || null
         }
-        if (pick < 1 || pick > jobs.length) {
-          const options = jobs.map((j: any) => j.selectionNumber).join(', ')
-          return `That job number isn't valid. Type ${options} to select a job.`
+        if (!chosenId) {
+          const res = await executeTool('getTodayJobs', { inspectorId: meta?.inspectorId || undefined, inspectorPhone: meta?.inspectorPhone || phoneNumber }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(res) } catch {}
+          const jobs = Array.isArray(data?.jobs) ? data.jobs : []
+          if (!jobs || jobs.length === 0) {
+            return 'Hi! You have no inspection jobs scheduled for today.\n\nNext: reply [1] to refresh your jobs.'
+          }
+          if (pick < 1 || pick > jobs.length) {
+            const options = jobs.map((j: any) => j.selectionNumber).join(', ')
+            return `That job number isn't valid. Type ${options} to select a job.`
+          }
+          chosenId = jobs[pick - 1]?.id || null
         }
-        const chosen = jobs[pick - 1]
-        const cRes = await executeTool('confirmJobSelection', { jobId: chosen.id }, undefined, phoneNumber)
+        const cRes = await executeTool('confirmJobSelection', { jobId: chosenId }, undefined, phoneNumber)
         let cData: any = null
         try { cData = JSON.parse(cRes) } catch {}
         if (!cData?.success) return 'There was an issue loading that job. Please try again.'
@@ -378,7 +392,15 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const out = await executeTool('completeTask', { phase: 'set_remarks', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, remarks: raw }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Thanks. Please send any photos/videos now (captions will be saved per media), or type "skip" to continue.'
+          if (data?.success) {
+            // If tool returned a message (already conditioned), use it; otherwise craft conditional message
+            if (typeof data?.message === 'string' && data.message.trim()) return data.message
+            const cond = String(meta.currentTaskCondition || '').toUpperCase()
+            const allowSkip = cond === 'NOT_APPLICABLE'
+            return allowSkip
+              ? 'Thanks. Please send any photos/videos now — you can include remarks in the same message as a caption. Or type "skip" to continue.'
+              : 'Thanks. Please send any photos/videos now — you can include remarks in the same message as a caption.'
+          }
         }
 
         // Finalize confirmation step: [1] complete, [2] not yet
@@ -390,7 +412,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             let f: any = null
             try { f = JSON.parse(finalize) } catch {}
             if (!f?.success && typeof f?.error === 'string') {
-              return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
+              // Do not suggest skip here; if media is required, skip is invalid
+              return `${f.error}\n\nNext: send the required media or add a remark.`
             }
             // Refresh tasks list to show updated state
             const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
@@ -588,6 +611,27 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const tasks = Array.isArray(data?.tasks) ? data.tasks : []
           const mc = data?.markCompleteNumber
           const gb = data?.goBackNumber
+          const backNumber = tasks.length + 1
+          // Handle Go back when assistant formatted list appended it locally
+          if ((!gb && pick === backNumber) || (gb && pick === gb)) {
+            dbg('tasks-select goBack (assistant guard)')
+            // If a sub-location is selected, go back to sub-locations; otherwise to locations
+            if (meta.currentSubLocationId) {
+              const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, locationName: meta.currentLocation }, undefined, phoneNumber)
+              let subData: any = null; try { subData = JSON.parse(subRes) } catch {}
+              const formatted: string[] = Array.isArray(subData?.subLocationsFormatted) ? subData.subLocationsFormatted : []
+              const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
+              try { await updateSessionState(phoneNumber, { lastMenu: 'sublocations', lastMenuAt: new Date().toISOString(), currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskCondition: undefined }) } catch {}
+              const header = `You're back at ${meta.currentLocation}. Here are the sub-locations:`
+              return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
+            }
+            const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
+            let locData: any = null; try { locData = JSON.parse(locs) } catch {}
+            const formattedLocations: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
+            try { await updateSessionState(phoneNumber, { lastMenu: 'locations', lastMenuAt: new Date().toISOString(), currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskCondition: undefined }) } catch {}
+            const header = 'Here are the locations available for inspection:'
+            return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
+          }
           if (mc && pick === mc) {
             dbg('tasks-select markComplete')
             const r = await executeTool('markLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId }, undefined, phoneNumber)
