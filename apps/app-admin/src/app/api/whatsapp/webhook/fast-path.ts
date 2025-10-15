@@ -134,9 +134,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
               currentTaskLocationName: undefined
             })
           } catch {}
-          const locations: string[] = Array.isArray(data?.locations)
-            ? (data.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-            : (data.locationsFormatted || [])
+          const locations: string[] = data.locationsFormatted || []
           const header = `Job started. Here are the locations available for inspection:`
           const next = 'Reply with the number of the location you want to inspect next.'
           return [header, '', ...locations, '', `Next: ${next}`].join('\n')
@@ -200,9 +198,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         // textual go back from sub-location stage → locations list
         const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
         const locData = safeParseJSON(locRes)
-        const formattedLocations: string[] = Array.isArray(locData?.locations)
-          ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-          : (locData?.locationsFormatted || [])
+        const formattedLocations: string[] = locData?.locationsFormatted || []
         const header = 'Here are the locations available for inspection:'
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
       }
@@ -214,8 +210,8 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const list = Array.isArray(locData?.locations) ? locData.locations : []
         if (list.length === 0) return null
         if (selectedNumber > list.length) {
-          const options = list.map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-          return `That location number isn't valid.\n\n${options.join('\n')}\n\nNext: reply with the number of the location you want to inspect.`
+          const options = (locData?.locationsFormatted || []).join('\n')
+          return `That location number isn't valid.\n\n${options}\n\nNext: reply with the number of the location you want to inspect.`
         }
         const chosen = list[selectedNumber - 1]
         const hasSubs = Array.isArray(chosen?.subLocations) && chosen.subLocations.length > 0
@@ -223,9 +219,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           dbgFast('location has sub-locations; listing')
           const subRes = await executeTool('getSubLocations', { workOrderId: session.workOrderId, contractChecklistItemId: chosen.contractChecklistItemId, locationName: chosen.name }, undefined, phone)
           const subData = safeParseJSON(subRes)
-          const formatted: string[] = Array.isArray(subData?.subLocations)
-            ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-            : (subData?.subLocationsFormatted || [])
+          const formatted: string[] = subData?.subLocationsFormatted || []
           if (!formatted.length) {
             const tasksRes = await executeTool('getTasksForLocation', { workOrderId: session.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phone)
             return formatTasksResponse(chosen.name, tasksRes)
@@ -244,9 +238,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           // textual go back → locations
           const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
           const locData = safeParseJSON(locRes)
-          const formattedLocations: string[] = Array.isArray(locData?.locations)
-            ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-            : (locData?.locationsFormatted || [])
+          const formattedLocations: string[] = locData?.locationsFormatted || []
           const header = 'Here are the locations available for inspection:'
           return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
         }
@@ -277,14 +269,12 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
             } catch {}
             const locRes2 = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
             const locData2 = safeParseJSON(locRes2)
-            const formattedLocations: string[] = Array.isArray(locData2?.locations)
-              ? (locData2.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-              : (locData2?.locationsFormatted || [])
+            const formattedLocations: string[] = locData2?.locationsFormatted || []
             const header = 'Here are the locations available for inspection:'
             return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
           }
           if (selectedNumber > backNumber) {
-            const formatted = subOptions.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number((s as any).completedTasks ?? 0)}/${Number((s as any).totalTasks ?? 0)}`)
+            const formatted = subOptions.map((s, i) => `[${i + 1}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''}`)
             const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
             return `That sub-location number isn't valid.\n\n${withBack.join('\n')}\n\nNext: reply with your sub-location choice, or [${withBack.length}] to go back.`
           }
@@ -387,9 +377,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
     if (session?.workOrderId && (session?.lastMenu === 'locations' || (!session?.currentLocation && !session?.taskFlowStage))) {
       const locRes = await executeTool('getJobLocations', { jobId: session.workOrderId }, undefined, phone)
       const locData = safeParseJSON(locRes)
-      const formattedLocations: string[] = Array.isArray(locData?.locations)
-        ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-        : (locData?.locationsFormatted || [])
+      const formattedLocations: string[] = locData?.locationsFormatted || []
       if (formattedLocations.length > 0) {
         const header = 'Here are the locations available for inspection:'
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
@@ -402,9 +390,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
       if (currentItemId) {
         const subRes = await executeTool('getSubLocations', { workOrderId: session.workOrderId, contractChecklistItemId: currentItemId, locationName: session.currentLocation }, undefined, phone)
         const subData = safeParseJSON(subRes)
-        const formatted: string[] = Array.isArray(subData?.subLocations)
-          ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-          : (subData?.subLocationsFormatted || [])
+        const formatted: string[] = subData?.subLocationsFormatted || []
         if (formatted.length > 0) {
           const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
           const header = `You\'re at ${session.currentLocation}. Here are the sub-locations:`
@@ -421,9 +407,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const res = await executeTool('startJob', { jobId: session.workOrderId }, undefined, phone)
         const data = safeParseJSON(res)
         if (!data?.success) return null
-        const locations: string[] = Array.isArray(data?.locations)
-          ? (data.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-          : (data.locationsFormatted || [])
+        const locations: string[] = data.locationsFormatted || []
         const header = `Job started. Here are the locations available for inspection:`
         const next = 'Reply with the number of the location you want to inspect next.'
         return [header, '', ...locations, '', `Next: ${next}`].join('\n')
@@ -490,18 +474,14 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         if (ctx.subLocationId) {
           const subs = await executeTool('getSubLocations', { workOrderId: ctx.workOrderId, contractChecklistItemId: ctx.itemId, locationName: ctx.locationName }, undefined, phone)
           const subData = safeParseJSON(subs)
-          const formatted: string[] = Array.isArray(subData?.subLocations)
-            ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-            : (subData?.subLocationsFormatted || [])
+          const formatted: string[] = subData?.subLocationsFormatted || []
           const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
           const header = `You're back at ${ctx.locationName}. Here are the sub-locations:`
           return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
         }
         const locs = await executeTool('getJobLocations', { jobId: ctx.workOrderId }, undefined, phone)
         const locData = safeParseJSON(locs)
-        const formattedLocations: string[] = Array.isArray(locData?.locations)
-          ? (locData.locations as any[]).map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-          : (locData?.locationsFormatted || [])
+        const formattedLocations: string[] = locData?.locationsFormatted || []
         const header = 'Here are the locations available for inspection:'
         return [header, '', ...formattedLocations, '', 'Next: reply with the location number to continue.'].join('\n')
       }
@@ -601,9 +581,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
           if (ctx.subLocationId) {
             const subs = await executeTool('getSubLocations', { workOrderId: ctx.workOrderId, contractChecklistItemId: ctx.itemId, locationName: ctx.locationName }, undefined, phone)
             const subData = safeParseJSON(subs)
-            const formatted: string[] = Array.isArray(subData?.subLocations)
-              ? (subData.subLocations as any[]).map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-              : (subData?.subLocationsFormatted || [])
+            const formatted: string[] = subData?.subLocationsFormatted || []
             const header = `You're back at ${ctx.locationName}. Here are the sub-locations:`
             if (formatted.length > 0) return [header, '', ...formatted, '', 'Next: reply with your sub-location choice.'].join('\n')
           }

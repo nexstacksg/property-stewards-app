@@ -221,16 +221,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const res = await executeTool('startJob', { jobId: meta.workOrderId }, undefined, phoneNumber)
           try {
             const data = JSON.parse(res)
-            const detail = Array.isArray(data?.locationsDetail) ? data.locationsDetail : (Array.isArray(data?.locations) ? data.locations : [])
-            const locs: string[] = Array.isArray(detail) && detail.length > 0
-              ? detail.map((l: any) => {
-                  const done = String(l?.status || '').toLowerCase() === 'completed'
-                  const name = String(l?.name || l?.displayName || 'Location')
-                  const completed = Number(l?.completed ?? 0)
-                  const total = Number(l?.tasks ?? 0)
-                  return `[${l.number}] ${name}${done ? ' (Done)' : ''} — ${completed}/${total}`
-                })
-              : (data?.locationsFormatted || [])
+            const locs: string[] = data?.locationsFormatted || []
             if (Array.isArray(locs) && locs.length > 0) {
               const lines: string[] = []
               lines.push('The job has been successfully started! Here are the locations available for inspection:')
@@ -457,11 +448,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             return 'No locations were found for this job. Please try refreshing your jobs.'
           }
           if (pick < 1 || pick > list.length) {
-            const options = list.map((l: any, idx: number) => {
-              const done = String(l?.status || '').toLowerCase() === 'completed'
-              return `[${idx + 1}] ${l?.name}${done ? ' (Done)' : ''} — ${Number(l?.completed ?? 0)}/${Number(l?.tasks ?? 0)}`
-            })
-            return `That location number isn't valid.\n\n${options.join('\n')}\n\nNext: reply with the number of the location you want to inspect.`
+            const options = (locData?.locationsFormatted || []).join('\n')
+            return `That location number isn't valid.\n\n${options}\n\nNext: reply with the number of the location you want to inspect.`
           }
           const chosen = list[pick - 1]
           // Proactively update session with the chosen location to avoid stale context
@@ -484,9 +472,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: chosen.contractChecklistItemId, locationName: chosen.name }, undefined, phoneNumber)
             let subData: any = null
             try { subData = JSON.parse(subRes) } catch {}
-            const formatted: string[] = Array.isArray(subData?.subLocations)
-              ? subData.subLocations.map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-              : (subData?.subLocationsFormatted || [])
+            const formatted: string[] = subData?.subLocationsFormatted || []
             if (!formatted.length) {
               const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: chosen.name, contractChecklistItemId: chosen.contractChecklistItemId }, undefined, phoneNumber)
               let data: any = null
@@ -505,7 +491,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
               lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
               return lines.join('\n')
             }
-            const header = `You've selected ${chosen.name}. Here are the available sub-locations (Done shows completed):`
+            const header = `You've selected ${chosen.name}. Here are the available sub-locations:`
             const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
             return [header, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
           }
@@ -752,10 +738,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         if (meta?.lastMenu === 'locations' && meta?.workOrderId) {
           const locs = await executeTool('getJobLocations', { jobId: meta.workOrderId }, undefined, phoneNumber)
           let locData: any = null; try { locData = JSON.parse(locs) } catch {}
-          const list = Array.isArray(locData?.locations) ? locData.locations : []
-          const formatted: string[] = list.length > 0
-            ? list.map((l: any, idx: number) => `[${idx + 1}] ${l.name}${String(l.status).toLowerCase() === 'completed' ? ' (Done)' : ''} — ${Number(l.completed ?? 0)}/${Number(l.tasks ?? 0)}`)
-            : (Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : [])
+          const formatted: string[] = Array.isArray(locData?.locationsFormatted) ? locData.locationsFormatted : []
           const header = "I didn't understand that. Here are the locations available for inspection:"
           return [header, '', ...formatted, '', 'Next: reply with the location number to continue.'].join('\n')
         }
@@ -763,10 +746,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         if (meta?.lastMenu === 'sublocations' && meta?.currentLocationId) {
           const subRes = await executeTool('getSubLocations', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, locationName: meta.currentLocation }, undefined, phoneNumber)
           let subData: any = null; try { subData = JSON.parse(subRes) } catch {}
-          const subs = Array.isArray(subData?.subLocations) ? subData.subLocations : []
-          const formatted: string[] = subs.length > 0
-            ? subs.map((s: any) => `[${s.number}] ${s.name}${s.status === 'completed' ? ' (Done)' : ''} — ${Number(s.completedTasks ?? 0)}/${Number(s.totalTasks ?? 0)}`)
-            : (Array.isArray(subData?.subLocationsFormatted) ? subData.subLocationsFormatted : [])
+          const formatted: string[] = Array.isArray(subData?.subLocationsFormatted) ? subData.subLocationsFormatted : []
           const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
           return [`I didn't understand that. You've selected ${meta.currentLocation}. Here are the available sub-locations:`, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
         }
