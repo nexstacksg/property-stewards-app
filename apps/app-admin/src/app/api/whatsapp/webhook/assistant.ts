@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 // chat-session not required for responses flow here; session state used elsewhere
 import { cacheGetJSON, cacheSetJSON } from '@/lib/memcache'
-import { assistantTools, executeTool } from './tools'
+import { assistantTools, executeTool } from './toolkit'
 import { INSTRUCTIONS } from '@/app/api/assistant-instructions'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
