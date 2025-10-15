@@ -793,9 +793,16 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
       doc.font("Helvetica-Bold")
     } else {
       if (options.background) {
+        // Light, semi-transparent fill so watermark remains visible
         doc.save()
-        doc.rect(x, y, width, rowHeight).fill(options.background)
-        doc.restore()
+        try {
+          doc.fillColor(options.background)
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.15)
+          doc.rect(x, y, width, rowHeight).fill()
+        } finally {
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+          doc.restore()
+        }
       }
       doc.rect(x, y, width, rowHeight).stroke()
       doc.font(cell.bold ? "Helvetica-Bold" : "Helvetica")
