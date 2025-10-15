@@ -262,14 +262,8 @@ model ItemEntry {
   @@index([taskId])
 }
 
-// Inspector rating per contract
-// Inspector ratings are now stored inline as JSON on Contract.inspectorRatings
-
-enum InspectorContractRatingValue {
-  GOOD
-  FAIR
-  BAD
-}
+// Inspector ratings are stored inline as JSON on Contract.inspectorRatings
+// Each entry maps an inspectorId to a 1–5 star number.
 
 model ItemEntryMedia {
   id        String               @id @default(cuid())
