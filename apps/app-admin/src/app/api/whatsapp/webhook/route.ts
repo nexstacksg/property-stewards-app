@@ -149,22 +149,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Try a deterministic fast-path (no LLM) for common flows
-    try {
-      const { tryHandleWithoutAI } = await import('./fast-path')
-      const quick = await tryHandleWithoutAI(phoneNumber, message || '', sessionMetadata)
-      if (quick && typeof quick === 'string' && quick.trim()) {
-        dbg('fast-path: handled')
-        await sendWhatsAppResponse(phoneNumber, quick)
-        const msgData = processedMessages.get(messageId)
-        if (msgData) { msgData.responded = true; processedMessages.set(messageId, msgData) }
-        return NextResponse.json({ success: true })
-      }
-    } catch (e) {
-      console.error('fast-path invocation failed; falling back to assistant', e)
-    }
-
-    // Fast-path fell through: use OpenAI Assistant for text handling
+    // Fast-path disabled: always use OpenAI Assistant for text handling
 
     if (process.env.NODE_ENV !== 'production') console.log(`📨 Processing message from ${phoneNumber}: "${message}" (ID: ${messageId})`)
     try {
