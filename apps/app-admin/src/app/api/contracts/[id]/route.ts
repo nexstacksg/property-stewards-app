@@ -73,7 +73,7 @@ export async function GET(
 
     // Transform inspectorRatings (JSON map) into array with inspector details to keep API shape stable
     try {
-      const ratingsJson = (contract as any).inspectorRatings as Record<string, string> | null | undefined
+      const ratingsJson = (contract as any).inspectorRatings as Record<string, number> | null | undefined
       if (ratingsJson && typeof ratingsJson === 'object') {
         const inspectorIds = Object.keys(ratingsJson).filter(Boolean)
         const inspectors = inspectorIds.length > 0 ? await prisma.inspector.findMany({
@@ -81,11 +81,27 @@ export async function GET(
           select: { id: true, name: true, mobilePhone: true }
         }) : []
         const inspectorMap = new Map(inspectors.map(i => [i.id, i]))
-        const normalized = inspectorIds.map((inspectorId) => ({
-          inspectorId,
-          rating: ratingsJson[inspectorId] || null,
-          inspector: inspectorMap.get(inspectorId) || null,
-        }))
+        const normalized = inspectorIds.map((inspectorId) => {
+          const raw = (ratingsJson as any)[inspectorId]
+          let rating: number | null = null
+          if (typeof raw === 'number') {
+            rating = Math.max(1, Math.min(5, Math.round(raw)))
+          } else if (typeof raw === 'string') {
+            const v = raw.trim().toUpperCase()
+            if (v === 'GOOD') rating = 5
+            else if (v === 'FAIR') rating = 3
+            else if (v === 'BAD') rating = 1
+            else {
+              const n = Number(v)
+              rating = Number.isNaN(n) ? null : Math.max(1, Math.min(5, Math.round(n)))
+            }
+          }
+          return {
+            inspectorId,
+            rating,
+            inspector: inspectorMap.get(inspectorId) || null,
+          }
+        })
         ;(contract as any).inspectorRatings = normalized
       }
     } catch (e) {

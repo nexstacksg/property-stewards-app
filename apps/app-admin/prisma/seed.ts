@@ -458,15 +458,15 @@ async function main() {
   // Seed inspector ratings JSON on contracts
   await prisma.contract.update({
     where: { id: contract1.id },
-    data: { inspectorRatings: { [inspector1.id]: 'GOOD', [inspector2.id]: 'FAIR' } as any },
+    data: { inspectorRatings: { [inspector1.id]: 5, [inspector2.id]: 3 } as any },
   })
   await prisma.contract.update({
     where: { id: contract2.id },
-    data: { inspectorRatings: { [inspector2.id]: 'GOOD' } as any },
+    data: { inspectorRatings: { [inspector2.id]: 5 } as any },
   })
   await prisma.contract.update({
     where: { id: contract3.id },
-    data: { inspectorRatings: { [inspector3.id]: 'BAD' } as any },
+    data: { inspectorRatings: { [inspector3.id]: 1 } as any },
   })
 
   console.log('Seeded inspector ratings JSON')

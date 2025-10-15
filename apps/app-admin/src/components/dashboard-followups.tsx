@@ -30,7 +30,9 @@ type ListResponse = {
 
 export function DashboardFollowUps({ defaultPage = 1, pageSize = 10 }: { defaultPage?: number; pageSize?: number }) {
   const [page, setPage] = useState(defaultPage)
-  const [statusFilter, setStatusFilter] = useState<"ALL" | "OPEN" | "COMPLETED">("ALL")
+  // Requirement: only display Open status on dashboard.
+  // Default the filter to OPEN and remove the ability to change it.
+  const [statusFilter] = useState<"ALL" | "OPEN" | "COMPLETED">("OPEN")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<ListResponse | null>(null)
@@ -86,13 +88,8 @@ export function DashboardFollowUps({ defaultPage = 1, pageSize = 10 }: { default
   const remarks = data?.remarks ?? []
 
   const headerNote = useMemo(() => {
-    if (statusFilter === "OPEN") {
-      return `${openCount} open follow-up${openCount === 1 ? "" : "s"}`
-    }
-    if (statusFilter === "COMPLETED") {
-      return `${completedCount} completed follow-up${completedCount === 1 ? "" : "s"}`
-    }
-    return `${totalCount} total follow-up${totalCount === 1 ? "" : "s"}`
+    // With the dashboard restricted to OPEN only, always show open summary
+    return `${openCount} open follow-up${openCount === 1 ? "" : "s"}`
   }, [statusFilter, openCount, completedCount, totalCount])
 
   return (
@@ -100,18 +97,7 @@ export function DashboardFollowUps({ defaultPage = 1, pageSize = 10 }: { default
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>Showing:</span>
-          <select
-            className="border rounded px-2 py-1 text-sm"
-            value={statusFilter}
-            onChange={(e) => {
-              setPage(1)
-              setStatusFilter(e.target.value as any)
-            }}
-          >
-            <option value="ALL">All</option>
-            <option value="OPEN">Open</option>
-            <option value="COMPLETED">Completed</option>
-          </select>
+          <span className="px-2 py-1 border rounded bg-background">Open</span>
           <span className="ml-2">{headerNote}</span>
         </div>
         <div className="text-xs text-muted-foreground">
@@ -222,4 +208,3 @@ export function DashboardFollowUps({ defaultPage = 1, pageSize = 10 }: { default
     </div>
   )
 }
-

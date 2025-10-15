@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
       })
       const ratingsArray = [] as { rating: any }[]
       for (const c of contracts) {
-        const map = (c as any).inspectorRatings as Record<string, string> | null | undefined
+        const map = (c as any).inspectorRatings as Record<string, number> | null | undefined
         const value = map && typeof map === 'object' ? map[inspector.id] : null
         if (value) ratingsArray.push({ rating: value })
       }

@@ -1,18 +1,24 @@
-import { InspectorContractRatingValue } from '@prisma/client'
-
-const RATING_SCORE: Record<InspectorContractRatingValue, number> = {
-  GOOD: 5,
-  FAIR: 3,
-  BAD: 1,
-}
+type StarRating = 1 | 2 | 3 | 4 | 5
 
 type RatingLike = {
-  rating: InspectorContractRatingValue | null | undefined
+  rating: StarRating | string | null | undefined
 }
 
-export function scoreFromRating(value: InspectorContractRatingValue | null | undefined): number | null {
-  if (!value) return null
-  return RATING_SCORE[value]
+export function scoreFromRating(value: StarRating | string | null | undefined): number | null {
+  if (typeof value === 'number') {
+    if (value < 1 || value > 5) return null
+    return value
+  }
+  if (typeof value === 'string') {
+    const v = value.trim().toUpperCase()
+    if (v === 'GOOD') return 5
+    if (v === 'FAIR') return 3
+    if (v === 'BAD') return 1
+    const n = Number(v)
+    if (!Number.isNaN(n) && n >= 1 && n <= 5) return Math.round(n)
+    return null
+  }
+  return null
 }
 
 export function summarizeRatings<T extends RatingLike>(ratings: T[]) {
