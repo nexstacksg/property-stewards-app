@@ -27,12 +27,12 @@ export async function PATCH(
       return NextResponse.json({ error: 'Inspector ID is required' }, { status: 400 })
     }
 
-    const contractExists = await prisma.contract.findUnique({
+    const contract = await prisma.contract.findUnique({
       where: { id: contractId },
-      select: { id: true },
+      select: { id: true, inspectorRatings: true },
     })
 
-    if (!contractExists) {
+    if (!contract) {
       return NextResponse.json({ error: 'Contract not found' }, { status: 404 })
     }
 
@@ -45,42 +45,18 @@ export async function PATCH(
       return NextResponse.json({ error: 'Inspector not found' }, { status: 404 })
     }
 
-    const compositeKey = {
-      inspectorId_contractId: {
-        inspectorId,
-        contractId,
-      },
-    }
-
+    const current = (contract.inspectorRatings as any) || {}
     if (!ratingInput) {
-      await prisma.inspectorContractRating.delete({ where: compositeKey }).catch(() => undefined)
+      if (current && typeof current === 'object') delete current[inspectorId]
+      await prisma.contract.update({ where: { id: contractId }, data: { inspectorRatings: current as any } })
       return NextResponse.json({ inspectorId, rating: null })
     }
 
-    const updated = await prisma.inspectorContractRating.upsert({
-      where: compositeKey,
-      update: { rating: ratingInput },
-      create: {
-        inspectorId,
-        contractId,
-        rating: ratingInput,
-      },
-      include: {
-        inspector: {
-          select: {
-            id: true,
-            name: true,
-            mobilePhone: true,
-          },
-        },
-      },
-    })
+    const next = { ...(current && typeof current === 'object' ? current : {}), [inspectorId]: ratingInput }
+    await prisma.contract.update({ where: { id: contractId }, data: { inspectorRatings: next as any } })
 
-    return NextResponse.json({
-      inspectorId,
-      rating: updated.rating,
-      inspector: updated.inspector,
-    })
+    const inspector = await prisma.inspector.findUnique({ where: { id: inspectorId }, select: { id: true, name: true, mobilePhone: true } })
+    return NextResponse.json({ inspectorId, rating: ratingInput, inspector })
   } catch (error) {
     console.error('Failed to update inspector rating:', error)
     return NextResponse.json({ error: 'Failed to update inspector rating' }, { status: 500 })

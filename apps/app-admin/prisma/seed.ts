@@ -55,7 +55,6 @@ async function main() {
   await prisma.contractChecklistItem.deleteMany()
   await prisma.contractChecklist.deleteMany()
   await prisma.workOrder.deleteMany()
-  await prisma.inspectorContractRating.deleteMany()
   await prisma.contract.deleteMany()
   await prisma.checklistItem.deleteMany()
   await prisma.checklist.deleteMany()
@@ -456,33 +455,21 @@ async function main() {
 
   console.log('Created contracts:', { contract1, contract2, contract3, contract4 })
 
-  await prisma.inspectorContractRating.createMany({
-    data: [
-      {
-        inspectorId: inspector1.id,
-        contractId: contract1.id,
-        rating: 'GOOD',
-      },
-      {
-        inspectorId: inspector2.id,
-        contractId: contract1.id,
-        rating: 'FAIR',
-      },
-      {
-        inspectorId: inspector2.id,
-        contractId: contract2.id,
-        rating: 'GOOD',
-      },
-      {
-        inspectorId: inspector3.id,
-        contractId: contract3.id,
-        rating: 'BAD',
-      },
-    ],
-    skipDuplicates: true,
+  // Seed inspector ratings JSON on contracts
+  await prisma.contract.update({
+    where: { id: contract1.id },
+    data: { inspectorRatings: { [inspector1.id]: 'GOOD', [inspector2.id]: 'FAIR' } as any },
+  })
+  await prisma.contract.update({
+    where: { id: contract2.id },
+    data: { inspectorRatings: { [inspector2.id]: 'GOOD' } as any },
+  })
+  await prisma.contract.update({
+    where: { id: contract3.id },
+    data: { inspectorRatings: { [inspector3.id]: 'BAD' } as any },
   })
 
-  console.log('Seeded inspector-contract ratings')
+  console.log('Seeded inspector ratings JSON')
 
   // Create Contract Checklists (for scheduled/completed contracts)
   const contractChecklist1 = await prisma.contractChecklist.create({

@@ -383,7 +383,7 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
       const ratingMap: Record<string, InspectorRatingValue | null> = {}
 
       if (Array.isArray(contract.inspectorRatings)) {
-        contract.inspectorRatings.forEach((entry) => {
+        contract.inspectorRatings.forEach((entry: any) => {
           if (!entry || typeof entry.inspectorId !== 'string') return
           if (entry.inspector && !inspectorMap.has(entry.inspector.id)) {
             inspectorMap.set(entry.inspector.id, {
@@ -393,9 +393,14 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
             })
           }
           if (entry.rating) {
-            ratingMap[entry.inspectorId] = entry.rating
+            ratingMap[entry.inspectorId] = entry.rating as any
           }
         })
+      } else if (contract && typeof (contract as any).inspectorRatings === 'object' && (contract as any).inspectorRatings !== null) {
+        const map = (contract as any).inspectorRatings as Record<string, InspectorRatingValue>
+        for (const [inspectorId, rating] of Object.entries(map)) {
+          ratingMap[inspectorId] = rating
+        }
       }
 
       setContractInspectors(Array.from(inspectorMap.values()))

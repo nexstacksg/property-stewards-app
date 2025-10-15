@@ -35,11 +35,6 @@ async function getInspector(id: string) {
         },
         orderBy: { scheduledStartDateTime: 'desc' },
         take: 10
-      },
-      ratings: {
-        select: {
-          rating: true
-        }
       }
     }
   })
@@ -48,9 +43,20 @@ async function getInspector(id: string) {
     notFound()
   }
 
-  const ratingSummary = summarizeRatings(inspector.ratings)
+  // Compute rating summary from Contract.inspectorRatings JSON
+  const contracts = await prisma.contract.findMany({
+    where: { workOrders: { some: { inspectors: { some: { id } } } } },
+    select: { inspectorRatings: true },
+  })
+  const ratingsArray = [] as { rating: any }[]
+  for (const c of contracts) {
+    const map = (c as any).inspectorRatings as Record<string, string> | null | undefined
+    const value = map && typeof map === 'object' ? map[id] : null
+    if (value) ratingsArray.push({ rating: value })
+  }
+  const ratingSummary = summarizeRatings(ratingsArray)
 
-  const { ratings, ...rest } = inspector as any
+  const { /*ratings,*/ ...rest } = inspector as any
 
   return {
     ...rest,

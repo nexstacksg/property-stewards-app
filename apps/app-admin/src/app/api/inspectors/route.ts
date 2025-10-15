@@ -41,11 +41,6 @@ export async function GET(request: NextRequest) {
               workOrders: true
             }
           },
-          ratings: {
-            select: {
-              rating: true,
-            },
-          },
         },
         orderBy: { createdOn: 'desc' },
         take,
@@ -54,15 +49,28 @@ export async function GET(request: NextRequest) {
       prisma.inspector.count({ where })
     ])
 
-    const enrichedInspectors = inspectors.map((inspector) => {
-      const ratingSummary = summarizeRatings(inspector.ratings)
-      const { ratings, ...rest } = inspector as any
-      return {
-        ...rest,
+    // Compute rating summary from Contract.inspectorRatings JSON for the current page of inspectors
+    const enrichedInspectors = [] as any[]
+    for (const inspector of inspectors as any[]) {
+      const contracts = await prisma.contract.findMany({
+        where: {
+          workOrders: { some: { inspectors: { some: { id: inspector.id } } } },
+        },
+        select: { inspectorRatings: true },
+      })
+      const ratingsArray = [] as { rating: any }[]
+      for (const c of contracts) {
+        const map = (c as any).inspectorRatings as Record<string, string> | null | undefined
+        const value = map && typeof map === 'object' ? map[inspector.id] : null
+        if (value) ratingsArray.push({ rating: value })
+      }
+      const ratingSummary = summarizeRatings(ratingsArray)
+      enrichedInspectors.push({
+        ...(inspector as any),
         ratingAverage: ratingSummary.average,
         ratingCount: ratingSummary.count,
-      }
-    })
+      })
+    }
 
     return NextResponse.json({ 
       inspectors: enrichedInspectors,
