@@ -68,6 +68,9 @@ export type ChatSessionState = {
   lastMenu?: 'jobs' | 'confirm' | 'locations' | 'sublocations' | 'tasks'
   lastMenuAt?: string
 
+  // cached choices for quick number mapping (avoids re-fetch)
+  lastJobsSnapshot?: Array<{ id: string; number: number }>
+
   // audit
   createdAt?: string
   lastUpdatedAt?: string

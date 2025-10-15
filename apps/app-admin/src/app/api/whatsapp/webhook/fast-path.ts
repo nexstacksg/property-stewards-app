@@ -492,7 +492,7 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const finalize = await executeTool('completeTask', { phase: 'finalize', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, completed: selectedNumber === 1 }, undefined, phone)
         const f = safeParseJSON(finalize)
         if (!f?.success && typeof f?.error === 'string') {
-          return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
+          return `${f.error}\n\nNext: send the required media or add a remark.`
         }
         const tasksRes = await executeTool('getTasksForLocation', { workOrderId: ctx.workOrderId, location: ctx.locationName, contractChecklistItemId: ctx.itemId, subLocationId: ctx.subLocationId }, undefined, phone)
         const header = (f?.message as string | undefined) || undefined
@@ -513,7 +513,12 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         if (s?.taskFlowStage === 'cause' || s?.message?.toLowerCase().includes('cause')) {
           return 'Please describe the cause for this issue.'
         }
-        return `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption. Or type 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
+        // Only mention 'skip' when condition is Not Applicable
+        const cond = String(s?.condition || (latest as any)?.currentTaskCondition || '').toUpperCase()
+        const allowSkip = cond === 'NOT_APPLICABLE'
+        return allowSkip
+          ? `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption. Or type 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
+          : `Condition saved. Please send any photos/videos now — you can add remarks in the same message as a caption.\n\nNext: send media with a caption (remarks).`
       }
 
       // c) Media step: skip
@@ -537,7 +542,12 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
         const res = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: ctx.workOrderId, taskId: ctx.currentTaskId, resolution: msg }, undefined, phone)
         const r = safeParseJSON(res)
         if (!r?.success && typeof r?.error === 'string') return r.error
-        return r?.message || `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption), or type 'skip' to continue.`
+        {
+          const allowSkip = String((latest as any)?.currentTaskCondition || '').toUpperCase() === 'NOT_APPLICABLE'
+          return r?.message || (allowSkip
+            ? `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption), or type 'skip' to continue.`
+            : `Resolution saved. Please send any photos/videos now (you can add extra notes as a caption).`)
+        }
       }
 
       if ((ctx.stage === 'remarks' || ctx.stage === 'media') && msg && !selectedNumber) {
@@ -550,7 +560,10 @@ export async function tryHandleWithoutAI(phone: string, rawMessage: string, sess
 
       // d.5) Guard: In media/remarks but user sent an unrelated token (e.g., punctuation only)
       if ((ctx.stage === 'remarks' || ctx.stage === 'media') && !selectedNumber) {
-        return `Please send photos/videos now (you can add a caption for remarks), or reply 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
+        const allowSkip = String((latest as any)?.currentTaskCondition || '').toUpperCase() === 'NOT_APPLICABLE'
+        return allowSkip
+          ? `Please send photos/videos now (you can add a caption for remarks), or reply 'skip' to continue.\n\nNext: send media with a caption (remarks) or reply 'skip'.`
+          : `Please send photos/videos now (you can add a caption for remarks).\n\nNext: send media with a caption (remarks).`
       }
 
       // e) Task selection by number (last option = Go back one step)

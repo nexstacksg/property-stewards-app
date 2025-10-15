@@ -532,7 +532,19 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           if (sessionId) {
             await updateSessionState(sessionId, { pendingTaskRemarks: remarksRaw, taskFlowStage: 'media' })
           }
-          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Thanks. Please send any photos/videos now — you can include remarks in the same message as a caption. Or type "skip" if Not Applicable.' })
+          // Only mention 'skip' when condition is Not Applicable
+          let condUpper = ''
+          try {
+            if (sessionId) {
+              const latest = await getSessionState(sessionId)
+              condUpper = String(latest.currentTaskCondition || '').toUpperCase()
+            }
+          } catch {}
+          const allowSkip = condUpper === 'NOT_APPLICABLE'
+          const message = allowSkip
+            ? 'Thanks. Please send any photos/videos now — you can include remarks in the same message as a caption. Or type "skip" to continue.'
+            : 'Thanks. Please send any photos/videos now — you can include remarks in the same message as a caption.'
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message })
         }
 
         if (phase === 'finalize') {
