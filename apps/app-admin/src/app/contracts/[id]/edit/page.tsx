@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, GripVertical, Loader2, Pencil, Plus, Trash2, X } from "lucide-react"
+import { ArrowLeft, GripVertical, Loader2, Pencil, Plus, Trash2, X, Star } from "lucide-react"
 import {
   Card,
   CardContent,
@@ -55,7 +55,8 @@ const CATEGORIES = [
 
 const DEFAULT_CATEGORY = "GENERAL"
 
-type InspectorRatingValue = 'GOOD' | 'FAIR' | 'BAD'
+// Use 1–5 star ratings
+type InspectorRatingValue = 1 | 2 | 3 | 4 | 5
 
 type ContractInspectorSummary = {
   id: string
@@ -65,24 +66,23 @@ type ContractInspectorSummary = {
 
 type RatingSelectValue = InspectorRatingValue | 'NONE'
 
-const RATING_LABELS: Record<InspectorRatingValue, string> = {
-  GOOD: 'Good',
-  FAIR: 'Fair',
-  BAD: 'Bad',
+// Map 1–5 stars to the existing three-tier rating for storage
+function ratingFromStars(stars: number): RatingSelectValue {
+  if (stars <= 0) return 'NONE'
+  const n = Math.max(1, Math.min(5, Math.round(stars))) as InspectorRatingValue
+  return n
 }
 
-const RATING_BADGE_VARIANT: Record<InspectorRatingValue, 'success' | 'warning' | 'destructive'> = {
-  GOOD: 'success',
-  FAIR: 'warning',
-  BAD: 'destructive',
+function starsFromRating(r: InspectorRatingValue | string | null | undefined): number {
+  if (!r) return 0
+  if (typeof r === 'number') return r
+  const v = r.trim().toUpperCase()
+  if (v === 'GOOD') return 5
+  if (v === 'FAIR') return 3
+  if (v === 'BAD') return 1
+  const n = Number(v)
+  return Number.isNaN(n) ? 0 : Math.max(1, Math.min(5, Math.round(n)))
 }
-
-const RATING_SELECT_OPTIONS: Array<{ value: RatingSelectValue; label: string }> = [
-  { value: 'GOOD', label: RATING_LABELS.GOOD },
-  { value: 'FAIR', label: RATING_LABELS.FAIR },
-  { value: 'BAD', label: RATING_LABELS.BAD },
-  { value: 'NONE', label: 'Clear rating' },
-]
 
 const createEmptyTask = () => ({ name: "", details: "" })
 
@@ -393,13 +393,15 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
             })
           }
           if (entry.rating) {
-            ratingMap[entry.inspectorId] = entry.rating as any
+            const stars = starsFromRating(entry.rating as any)
+            if (stars > 0) ratingMap[entry.inspectorId] = stars as InspectorRatingValue
           }
         })
       } else if (contract && typeof (contract as any).inspectorRatings === 'object' && (contract as any).inspectorRatings !== null) {
-        const map = (contract as any).inspectorRatings as Record<string, InspectorRatingValue>
+        const map = (contract as any).inspectorRatings as Record<string, any>
         for (const [inspectorId, rating] of Object.entries(map)) {
-          ratingMap[inspectorId] = rating
+          const stars = starsFromRating(rating as any)
+          if (stars > 0) ratingMap[inspectorId] = stars as InspectorRatingValue
         }
       }
 
@@ -1661,38 +1663,49 @@ export default function EditContractPage({ params }: { params: Promise<{ id: str
                               <p className="text-xs text-muted-foreground">{inspector.mobilePhone}</p>
                             ) : null}
                             {currentRating ? (
-                              <Badge
-                                variant={RATING_BADGE_VARIANT[currentRating]}
-                                className="mt-2"
-                              >
-                                {RATING_LABELS[currentRating]}
-                              </Badge>
+                              <div className="flex items-center gap-1 mt-2 text-yellow-400">
+                                {Array.from({ length: 5 }).map((_, idx) => (
+                                  <Star key={idx} className={`h-4 w-4 ${idx < starsFromRating(currentRating) ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`} />
+                                ))}
+                              </div>
                             ) : (
                               <p className="text-xs text-muted-foreground mt-2">Not rated</p>
                             )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Select
-                              value={currentRating ?? 'NONE'}
-                              onValueChange={(nextValue) =>
-                                handleInspectorRatingChange(
-                                  inspector.id,
-                                  nextValue as RatingSelectValue,
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center">
+                              {Array.from({ length: 5 }).map((_, idx) => {
+                                const starIndex = idx + 1
+                                const selected = starIndex <= starsFromRating(currentRating)
+                                const disabled = Boolean(ratingSavingState[inspector.id] || saving)
+                                return (
+                                  <button
+                                    key={starIndex}
+                                    type="button"
+                                    aria-label={`Rate ${starIndex} star${starIndex > 1 ? 's' : ''}`}
+                                    className={`p-1 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                                    onClick={() => {
+                                      if (disabled) return
+                                      const mapped = ratingFromStars(starIndex)
+                                      handleInspectorRatingChange(inspector.id, mapped)
+                                    }}
+                                  >
+                                    <Star
+                                      className={`h-5 w-5 ${selected ? 'fill-yellow-400 text-yellow-400' : 'text-muted-foreground'}`}
+                                    />
+                                  </button>
                                 )
-                              }
+                              })}
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              type="button"
+                              onClick={() => handleInspectorRatingChange(inspector.id, 'NONE')}
                               disabled={Boolean(ratingSavingState[inspector.id] || saving)}
                             >
-                              <SelectTrigger className="w-[160px]">
-                                <SelectValue placeholder="Set rating" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {RATING_SELECT_OPTIONS.map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              Clear
+                            </Button>
                             {ratingSavingState[inspector.id] ? (
                               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                             ) : null}

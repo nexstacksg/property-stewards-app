@@ -1,6 +1,6 @@
 import Link from "next/link"
 
-import { ContractRemarkStatus } from "@prisma/client"
+import { ContractRemarkStatus, ContractRemarkType } from "@prisma/client"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -72,6 +72,10 @@ async function getDashboardStats() {
       }
     })
 
+    const totalFollowUpCount = await prisma.contractRemark.count({
+      where: { type: ContractRemarkType.FOLLOW_UP }
+    })
+
     return {
       customerCount,
       inspectorCount,
@@ -82,6 +86,7 @@ async function getDashboardStats() {
       scheduledWorkOrders,
       totalRevenue: totalRevenue._sum.value || 0,
       recentWorkOrders,
+      totalFollowUpCount,
       openFollowUpCount,
       openFollowUps: openFollowUpItems.map((remark) => ({
         id: remark.id,
@@ -109,6 +114,7 @@ async function getDashboardStats() {
       scheduledWorkOrders: 0,
       totalRevenue: 0,
       recentWorkOrders: [],
+      totalFollowUpCount: 0,
       openFollowUpCount: 0,
       openFollowUps: [],
       fetchedAt: new Date().toISOString()
@@ -149,6 +155,7 @@ export default async function DashboardPage() {
       scheduledWorkOrders: 0,
       totalRevenue: 0,
       recentWorkOrders: [],
+      totalFollowUpCount: 0,
       openFollowUpCount: 0,
       openFollowUps: [],
       fetchedAt: new Date().toISOString()
@@ -217,7 +224,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Work Order Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Scheduled</CardTitle>
@@ -247,6 +254,17 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.workOrderCount}</div>
+            <p className="text-xs text-muted-foreground">All time</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Follow-Ups</CardTitle>
+            <FileText className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.totalFollowUpCount}</div>
             <p className="text-xs text-muted-foreground">All time</p>
           </CardContent>
         </Card>

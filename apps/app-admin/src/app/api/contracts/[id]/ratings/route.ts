@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { InspectorContractRatingValue } from '@prisma/client'
 
-const ALLOWED_RATINGS: InspectorContractRatingValue[] = ['GOOD', 'FAIR', 'BAD']
+type StarRating = 1 | 2 | 3 | 4 | 5
 
-function normalizeRating(value: unknown): InspectorContractRatingValue | null {
+function normalizeRating(value: unknown): StarRating | null {
   if (value === null || typeof value === 'undefined') return null
-  if (typeof value !== 'string') return null
-  const normalized = value.trim().toUpperCase()
-  return (ALLOWED_RATINGS as string[]).includes(normalized)
-    ? (normalized as InspectorContractRatingValue)
-    : null
+  const n = typeof value === 'string' ? Number(value) : value
+  if (typeof n !== 'number' || Number.isNaN(n)) return null
+  const rating = Math.round(n)
+  return rating >= 1 && rating <= 5 ? (rating as StarRating) : null
 }
 
 export async function PATCH(

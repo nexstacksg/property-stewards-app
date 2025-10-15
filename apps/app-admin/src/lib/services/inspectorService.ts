@@ -629,18 +629,56 @@ export async function getTodayJobsForInspector(inspectorId: string) {
 
 export async function getWorkOrderById(workOrderId: string) {
   try {
+    // Prefer caches if available (fast path)
     const [workOrders, items, inspectors] = await Promise.all([
       getCachedWorkOrders(), getCachedChecklistItems(), getCachedInspectors()
     ])
-    if (!workOrders) {
-      debugLog('getWorkOrderById: workOrders cache missing')
-      return null
+
+    let wo: any = null
+    if (workOrders && Array.isArray(workOrders)) {
+      wo = workOrders.find((w: any) => w.id === workOrderId) || null
     }
-    const wo = workOrders.find((w: any) => w.id === workOrderId)
+
+    // Fallback to DB if cache is cold or ID not found, to avoid slow/scanning global cache
     if (!wo) {
-      debugLog('getWorkOrderById: workOrder not found in cache', workOrderId)
-      return null
+      debugLog('getWorkOrderById: cache miss; querying DB', workOrderId)
+      const dbWo = await prisma.workOrder.findUnique({
+        where: { id: workOrderId },
+        select: {
+          id: true,
+          status: true,
+          scheduledStartDateTime: true,
+          scheduledEndDateTime: true,
+          remarks: true,
+          inspectors: { select: { id: true } },
+          contract: {
+            select: {
+              customer: { select: { id: true, name: true } },
+              address: { select: { id: true, address: true, postalCode: true, propertyType: true } }
+            }
+          }
+        }
+      }) as any
+      if (!dbWo) return null
+      wo = {
+        id: dbWo.id,
+        inspectorId: Array.isArray(dbWo.inspectors) && dbWo.inspectors.length > 0 ? dbWo.inspectors[0].id : null,
+        inspectorIds: Array.isArray(dbWo.inspectors) ? dbWo.inspectors.map((ins: any) => ins.id) : [],
+        contractId: dbWo.contractId,
+        status: dbWo.status,
+        scheduledStartDateTime: dbWo.scheduledStartDateTime,
+        scheduledEndDateTime: dbWo.scheduledEndDateTime,
+        remarks: dbWo.remarks,
+        customer: dbWo.contract?.customer ? { id: dbWo.contract.customer.id, name: dbWo.contract.customer.name } : null,
+        address: dbWo.contract?.address ? {
+          id: dbWo.contract.address.id,
+          address: dbWo.contract.address.address,
+          postalCode: dbWo.contract.address.postalCode,
+          propertyType: dbWo.contract.address.propertyType
+        } : null
+      }
     }
+
     const inspector = inspectors?.find((i: any) => i.id === wo.inspectorId)
     const relatedItems = (items || [])
       .filter((it: any) => Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId))
