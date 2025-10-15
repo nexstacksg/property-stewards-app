@@ -5,6 +5,7 @@ import {
   getLogoBuffer,
   getPDFDocumentCtor,
   TABLE_MARGIN,
+  FOOTER_RESERVED,
   formatEnum,
   formatScheduleRange,
   LOGO_ASPECT_RATIO,
@@ -33,50 +34,33 @@ function applyWatermark(doc: any, logoBuffer?: Buffer) {
     const pageW = doc.page.width
     const pageH = doc.page.height
 
-    // Target smaller logos; aim for 2–3 per page stacked vertically
+    // 3x3 grid watermark (rotated, subtle)
+    const rows = 3
+    const cols = 3
     const angleDeg = -45
-    const theta = (angleDeg * Math.PI) / 180
 
-    // Pick a base unrotated width as a fraction of page width (slightly larger)
-    let baseWidth = pageW * 0.42
-    baseWidth = Math.max(120, Math.min(baseWidth, pageW * 0.6))
-    let wmWidth = baseWidth
-    let wmHeight = wmWidth * LOGO_ASPECT_RATIO
-
-    // Compute rotated bounding box
-    const rotBounds = (w: number, h: number) => {
-      const rotW = Math.abs(w * Math.cos(theta)) + Math.abs(h * Math.sin(theta))
-      const rotH = Math.abs(w * Math.sin(theta)) + Math.abs(h * Math.cos(theta))
-      return { rotW, rotH }
-    }
-
-    const { rotW, rotH } = rotBounds(wmWidth, wmHeight)
-    const maxW = pageW * 0.9
-    const maxH = pageH * 0.9
-    const scale = Math.min(maxW / rotW, maxH / rotH, 1)
-    wmWidth *= scale
-    wmHeight *= scale
-    const { rotH: slotH } = rotBounds(wmWidth, wmHeight)
-
-    // Decide how many logos fit vertically (2 or 3)
-    const gapY = slotH * 0.25
-    const usableH = pageH * 0.9
-    let count = Math.floor((usableH + gapY) / (slotH + gapY))
-    count = Math.max(2, Math.min(3, count))
-
-    const totalH = count * slotH + (count - 1) * gapY
-    const startY = (pageH - totalH) / 2 + slotH / 2
-    const cx = pageW / 2
+    // Compute cell size and pick a logo width that comfortably fits within each cell
+    const cellW = pageW / cols
+    const cellH = pageH / rows
+    // Leave a bit of padding inside each cell
+    const maxLogoW = cellW * 0.7
+    const maxLogoH = cellH * 0.7
+    const logoWByH = maxLogoH / LOGO_ASPECT_RATIO
+    const wmWidth = Math.min(maxLogoW, logoWByH)
+    const wmHeight = wmWidth * LOGO_ASPECT_RATIO
 
     doc.save()
     doc.opacity(WATERMARK_OPACITY)
-    for (let i = 0; i < count; i += 1) {
-      const cy = startY + i * (slotH + gapY)
-      doc.save()
-      doc.translate(cx, cy)
-      doc.rotate(angleDeg)
-      doc.image(logoBuffer, -wmWidth / 2, -wmHeight / 2, { width: wmWidth })
-      doc.restore()
+    for (let r = 0; r < rows; r += 1) {
+      for (let c = 0; c < cols; c += 1) {
+        const cx = (c + 0.5) * cellW
+        const cy = (r + 0.5) * cellH
+        doc.save()
+        doc.translate(cx, cy)
+        doc.rotate(angleDeg)
+        doc.image(logoBuffer, -wmWidth / 2, -wmHeight / 2, { width: wmWidth })
+        doc.restore()
+      }
     }
     doc.opacity(1)
     doc.restore()
@@ -87,63 +71,94 @@ function applyWatermark(doc: any, logoBuffer?: Buffer) {
 }
 
 function applyFooter(doc: any) {
-  // Use the centralized footer renderer so we keep layout consistent
+  // Keep default footer (center message) if needed elsewhere
   let drawing = false
   const draw = () => {
     if (drawing) return
     drawing = true
-    try {
-      drawFooter(doc)
-    } catch {
-      // no-op; footer drawing should never block report generation
-    } finally {
-      drawing = false
-    }
+    try { drawFooter(doc) } catch {} finally { drawing = false }
   }
-
-  // Draw on current and all subsequently added pages
   doc.on("pageAdded", draw)
   draw()
 }
 
+// New: write version (left) and page X of Y (right) on each page footer
+function stampFooterVersionAndPaging(doc: any, versionLabel: string) {
+  const range = typeof doc.bufferedPageRange === 'function' ? doc.bufferedPageRange() : undefined
+  const count = range?.count ?? (doc._pageBuffer?.length ?? 1)
+  for (let i = 0; i < count; i += 1) {
+    if (typeof doc.switchToPage === 'function') doc.switchToPage(i)
+    try { drawFooter(doc) } catch {}
+    const leftX = TABLE_MARGIN
+    const rightX = doc.page.width - TABLE_MARGIN
+    const y = doc.page.height - TABLE_MARGIN - 10
+    const pageLabel = `Page ${i + 1}${count ? ` of ${count}` : ''}`
+    doc.save()
+    doc.font('Helvetica').fontSize(8).fillColor('#6b7280')
+    try { doc.text(`Version: ${versionLabel}`, leftX, y, { width: 200, align: 'left', lineBreak: false }) } catch {}
+    try { doc.text(pageLabel, rightX - 200, y, { width: 200, align: 'right', lineBreak: false }) } catch {}
+    doc.restore()
+  }
+}
+
 function appendSignOffSection(doc: any, contract: any) {
-  const customerName = contract?.customer?.name || "Customer"
   const companyName = "Property Stewards PTE. LTD"
 
-  const availableSpace = doc.page.height - TABLE_MARGIN - doc.y
+  const rows = 2
+  const cols = 2
+  const gapX = 16
+  const gapY = 16
   const boxHeight = 110
-  if (availableSpace < boxHeight + 40) {
+
+  const required = rows * boxHeight + (rows - 1) * gapY
+  const availableSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - doc.y
+  if (availableSpace < required + 40) {
     doc.addPage()
   }
 
   doc.moveDown(3)
-  // doc.font("Helvetica-Bold").fontSize(12).text(heading)
-  doc.moveDown(0.5)
 
-  const gap = 16
-  const boxWidth = (doc.page.width - TABLE_MARGIN * 2 - gap) / 2
+  const boxWidth = (doc.page.width - TABLE_MARGIN * 2 - gapX) / cols
   const topY = doc.y
-  const leftX = TABLE_MARGIN
-  const rightX = TABLE_MARGIN + boxWidth + gap
+  const startX = TABLE_MARGIN
 
-  const drawBox = (x: number, label: string) => {
-    const lineY1 = topY + 42
-    const lineY2 = topY + 78
+  const drawBox = (x: number, y: number, label?: string) => {
+    // Give more breathing room between the label and the Name field
+    const nameLabelY = y + 26
+    const nameLineY = y + 40
+    const sigLabelY = y + 58
+    const sigLineY = y + 74
+    const dateLabelY = y + 90
+    const dateLineY = y + 106
     doc.save()
-    doc.roundedRect(x, topY, boxWidth, boxHeight, 6).stroke()
-    doc.font("Helvetica-Bold").fontSize(10).text(label, x + 10, topY + 10, { width: boxWidth - 20 })
+    doc.roundedRect(x, y, boxWidth, boxHeight, 6).stroke()
+    if (label && label.trim()) {
+      doc.font("Helvetica-Bold").fontSize(10).text(label, x + 10, y + 8, { width: boxWidth - 20 })
+    }
     doc.font("Helvetica").fontSize(10)
-    doc.text("Signature:", x + 10, topY + 28)
-    doc.moveTo(x + 80, lineY1).lineTo(x + boxWidth - 10, lineY1).stroke()
-    doc.text("Date:", x + 10, topY + 64)
-    doc.moveTo(x + 80, lineY2).lineTo(x + boxWidth - 10, lineY2).stroke()
+    doc.text("Name:", x + 10, nameLabelY)
+    doc.moveTo(x + 60, nameLineY).lineTo(x + boxWidth - 10, nameLineY).stroke()
+    doc.text("Signature:", x + 10, sigLabelY)
+    doc.moveTo(x + 60, sigLineY).lineTo(x + boxWidth - 10, sigLineY).stroke()
+    doc.text("Date:", x + 10, dateLabelY)
+    doc.moveTo(x + 60, dateLineY).lineTo(x + boxWidth - 10, dateLineY).stroke()
     doc.restore()
   }
 
-  drawBox(leftX, `Customer: ${customerName}`)
-  drawBox(rightX, companyName)
+  // 2 x 2 grid: three free boxes (no label) and one labeled for company
+  const positions: Array<{ r: number; c: number; label?: string }> = [
+    { r: 0, c: 0, label: companyName },
+    { r: 0, c: 1 },
+    { r: 1, c: 0 },
+    { r: 1, c: 1 },
+  ]
+  positions.forEach(({ r, c, label }) => {
+    const x = startX + c * (boxWidth + gapX)
+    const y = topY + r * (boxHeight + gapY)
+    drawBox(x, y, label)
+  })
 
-  doc.y = topY + boxHeight
+  doc.y = topY + required
   doc.moveDown(0.5)
 }
 
@@ -153,8 +168,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   const logoBuffer = getLogoBuffer()
 
   applyWatermark(doc, logoBuffer ?? undefined)
-  // Ensure footer appears on every page
-  applyFooter(doc)
+  // Footer center text will be applied later along with version/paging
   if (logoBuffer) {
     const logoWidth = 220
     const logoHeight = logoWidth * LOGO_ASPECT_RATIO
@@ -176,10 +190,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     dateStyle: "medium",
     timeStyle: "short"
   })
-  doc.text(`Version: ${options.versionLabel}`)
-  doc.text(`Generated: ${generatedStamp}`)
-  doc.text(`Contract ID: ${contract.id}`)
-  doc.text(`Status: ${formatEnum(contract.status) || contract.status}`)
+  // Suppress meta in header per spec
+  // Version and page numbers will be shown in footer; other meta removed
   const contractSchedule = formatScheduleRange(contract.scheduledStartDate, contract.scheduledEndDate)
   if (contractSchedule) {
     doc.text(`Schedule: ${contractSchedule}`)
@@ -190,8 +202,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   }
 
   if (contract.address) {
-    doc.text(`Property: ${contract.address.address}`)
-    doc.text(`Postal Code: ${contract.address.postalCode}`)
+    const combined = [contract.address.address, contract.address.postalCode].filter(Boolean).join(', ')
+    doc.text(`Property: ${combined}`)
   }
 
   doc.moveDown()
@@ -230,14 +242,21 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   })
   const combinedInspectors = Array.from(inspectorsMap.values())
 
-  doc.font("Helvetica-Bold").fontSize(12).text(combinedHeading)
+  // Remove explicit Work Orders heading line per spec
   const combinedSchedule = formatScheduleRange(minScheduledStart, maxScheduledEnd)
   if (combinedSchedule) {
     doc.font("Helvetica").fontSize(11).text(`Schedule: ${combinedSchedule}`)
   }
   const actualRange = formatScheduleRange(minActualStart, maxActualEnd)
-  if (actualRange) {
-    doc.text(`Actual: ${actualRange}`)
+  // if (actualRange) {
+  //   doc.text(`Actual: ${actualRange}`)
+  // }
+  // Add explicit inspection start date (earliest actualStart among work orders)
+  if (minActualStart) {
+    const inspectionStart = formatDateTime(minActualStart)
+    if (inspectionStart) {
+      doc.text(`Inspection Start: ${inspectionStart}`)
+    }
   }
   const workOrderStatusSummary = workOrders
     .map((wo: any) => `${wo.id}: ${formatEnum(wo.status) || wo.status}`)
@@ -285,8 +304,8 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
 
 export async function createContractReportBuffer(contract: any, options: ReportBuildOptions) {
   const PDFDocument = await getPDFDocumentCtor()
-  // Switch report orientation to landscape for wider tables/media layouts
-  const doc: any = new PDFDocument({ size: "A4", layout: 'landscape', margin: TABLE_MARGIN })
+  // Buffer pages so we can stamp version + paging after layout
+  const doc: any = new PDFDocument({ size: "A4", layout: 'landscape', margin: TABLE_MARGIN, bufferPages: true })
   const stream = new PassThrough()
   const chunks: Buffer[] = []
 
@@ -299,6 +318,8 @@ export async function createContractReportBuffer(contract: any, options: ReportB
   })
 
   await writeContractReport(doc, contract, options)
+  // Stamp version + paging footer on all pages
+  try { stampFooterVersionAndPaging(doc, options.versionLabel) } catch {}
   doc.end()
 
   return completionPromise

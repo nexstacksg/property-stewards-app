@@ -1,3 +1,8 @@
+/**
+ * DEPRECATED: Fast-path routing is no longer used.
+ * This module is kept for reference only and should not be imported.
+ * All text handling flows through assistant.ts (processWithAssistant).
+ */
 import { executeTool } from './tools'
 import { getSessionState, updateSessionState, type ChatSessionState } from '@/lib/chat-session'
 
