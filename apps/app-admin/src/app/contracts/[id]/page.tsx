@@ -33,7 +33,6 @@ async function getContract(id: string) {
     include: {
       customer: true,
       address: true,
-      contactPersons: true,
       contractChecklist: {
         include: {
           items: true

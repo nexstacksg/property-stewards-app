@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 import prisma from '@/lib/prisma'
 
 // GET /api/contracts/[id] - Get a single contract
@@ -8,7 +9,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-    const contract = await prisma.contract.findUnique({
+    let contract = await prisma.contract.findUnique({
       where: { id },
       include: {
         customer: true,
@@ -41,24 +42,12 @@ export async function GET(
             }
           }
         },
-        contactPersons: true,
         marketingSource: true,
         workOrders: {
           include: {
             inspectors: true
           },
           orderBy: { scheduledStartDateTime: 'desc' }
-        },
-        inspectorRatings: {
-          include: {
-            inspector: {
-              select: {
-                id: true,
-                name: true,
-                mobilePhone: true,
-              },
-            },
-          },
         },
         followUpRemarks: {
           include: {
@@ -80,6 +69,27 @@ export async function GET(
         { error: 'Contract not found' },
         { status: 404 }
       )
+    }
+
+    // Transform inspectorRatings (JSON map) into array with inspector details to keep API shape stable
+    try {
+      const ratingsJson = (contract as any).inspectorRatings as Record<string, string> | null | undefined
+      if (ratingsJson && typeof ratingsJson === 'object') {
+        const inspectorIds = Object.keys(ratingsJson).filter(Boolean)
+        const inspectors = inspectorIds.length > 0 ? await prisma.inspector.findMany({
+          where: { id: { in: inspectorIds } },
+          select: { id: true, name: true, mobilePhone: true }
+        }) : []
+        const inspectorMap = new Map(inspectors.map(i => [i.id, i]))
+        const normalized = inspectorIds.map((inspectorId) => ({
+          inspectorId,
+          rating: ratingsJson[inspectorId] || null,
+          inspector: inspectorMap.get(inspectorId) || null,
+        }))
+        ;(contract as any).inspectorRatings = normalized
+      }
+    } catch (e) {
+      console.error('Failed to normalize inspectorRatings JSON', e)
     }
 
     return NextResponse.json(contract)
@@ -139,6 +149,7 @@ export async function PATCH(
     const sanitizedContactPersons = Array.isArray(contactPersons)
       ? contactPersons.filter((person: any) => person && typeof person.name === 'string' && person.name.trim().length > 0)
         .map((person: any) => ({
+          id: typeof person.id === 'string' && person.id.trim().length > 0 ? person.id.trim() : crypto.randomUUID(),
           name: person.name.trim(),
           phone: typeof person.phone === 'string' && person.phone.trim().length > 0 ? person.phone.trim() : undefined,
           email: typeof person.email === 'string' && person.email.trim().length > 0 ? person.email.trim() : undefined,
@@ -164,30 +175,20 @@ export async function PATCH(
         status,
         marketingSourceId: normalizedMarketingSourceId,
         referenceIds: sanitizedReferenceIds,
+        contactPersons: Array.isArray(sanitizedContactPersons) ? (sanitizedContactPersons as any) : undefined,
       },
       include: {
         customer: true,
         address: true,
-        contactPersons: true,
         workOrders: true
       }
     })
-
-    if (sanitizedContactPersons) {
-      await prisma.contractContactPerson.deleteMany({ where: { contractId: id } })
-      if (sanitizedContactPersons.length > 0) {
-        await prisma.contractContactPerson.createMany({
-          data: sanitizedContactPersons.map(person => ({ ...person, contractId: id }))
-        })
-      }
-    }
 
     const refreshedContract = await prisma.contract.findUnique({
       where: { id },
       include: {
         customer: true,
         address: true,
-        contactPersons: true,
         basedOnChecklist: {
           include: { items: true }
         },
@@ -209,17 +210,6 @@ export async function PATCH(
           orderBy: { scheduledStartDateTime: 'desc' }
         },
         marketingSource: true,
-        inspectorRatings: {
-          include: {
-            inspector: {
-              select: {
-                id: true,
-                name: true,
-                mobilePhone: true,
-              },
-            },
-          },
-        },
         followUpRemarks: {
           include: {
             createdBy: {

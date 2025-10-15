@@ -73,10 +73,26 @@ export default function WorkOrderItemMedia({
           </DialogHeader>
           {mode === 'photos' ? (
             hasPhotos ? (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div
+                className="grid grid-cols-2 md:grid-cols-3 gap-3"
+                onMouseDown={() => {
+                  // Blur any previously focused element (e.g., the dialog close button)
+                  const el = document.activeElement as HTMLElement | null
+                  if (el && typeof el.blur === 'function') el.blur()
+                }}
+              >
                 {normalizedPhotos.map((photo, index) => (
                   <div key={photo.url} className="space-y-2">
-                    <a href={photo.url} target="_blank" rel="noopener noreferrer" className="block">
+                    <a
+                      href={photo.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block"
+                      onMouseDown={(e) => {
+                        const el = document.activeElement as HTMLElement | null
+                        if (el && typeof el.blur === 'function') el.blur()
+                      }}
+                    >
                       <img
                         src={photo.url}
                         alt={photo.caption ? `${photo.caption} (Photo ${index + 1})` : `Photo ${index + 1}`}

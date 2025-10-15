@@ -78,7 +78,7 @@ model Inspector {
   workOrders     WorkOrder[]
   itemEntries    ItemEntry[]
   checklistTasks ChecklistTask[]
-  ratings        InspectorContractRating[]
+  // Ratings moved to Contract.inspectorRatings (JSON)
 
   @@index([mobilePhone])
   @@index([status])
@@ -153,9 +153,10 @@ model Contract {
   contractChecklist  ContractChecklist?
   workOrders         WorkOrder[]
   reports            ContractReport[]
-  contactPersons     ContractContactPerson[]
+  // Embedded JSON fields to simplify schema
+  contactPersons     Json?
   followUpRemarks    ContractRemark[]
-  inspectorRatings   InspectorContractRating[]
+  inspectorRatings   Json?
 
   @@index([customerId])
   @@index([addressId])
@@ -230,18 +231,7 @@ model ContractChecklistLocation {
   @@index([status])
 }
 
-model ContractContactPerson {
-  id          String   @id @default(cuid())
-  contractId  String
-  name        String
-  phone       String?
-  email       String?
-  relation    String?
-
-  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-
-  @@index([contractId])
-}
+// Contract contact persons are now stored inline as JSON on Contract.contactPersons
 
 // Per-inspector contribution to a checklist item (remarks/media/selection)
 model ItemEntry {
@@ -273,21 +263,7 @@ model ItemEntry {
 }
 
 // Inspector rating per contract
-model InspectorContractRating {
-  id          String   @id @default(cuid())
-  inspectorId String
-  contractId  String
-  rating      InspectorContractRatingValue
-  createdOn   DateTime @default(now())
-  updatedOn   DateTime @updatedAt
-
-  inspector   Inspector @relation(fields: [inspectorId], references: [id], onDelete: Cascade)
-  contract    Contract  @relation(fields: [contractId], references: [id], onDelete: Cascade)
-
-  @@unique([inspectorId, contractId])
-  @@index([inspectorId])
-  @@index([contractId])
-}
+// Inspector ratings are now stored inline as JSON on Contract.inspectorRatings
 
 enum InspectorContractRatingValue {
   GOOD
