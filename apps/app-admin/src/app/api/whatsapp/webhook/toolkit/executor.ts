@@ -258,7 +258,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         }
         const { jobId } = args
         const locationsWithStatus = (await getLocationsWithCompletionStatus(jobId)) as any[]
-        const locationsFormatted = locationsWithStatus.map((loc, index) => `[${index + 1}] ${loc.isCompleted ? `${loc.name} (Done)` : loc.name}`)
+        const locationsFormatted = locationsWithStatus.map((loc, index) => {
+          const name = loc.name
+          const done = loc.isCompleted
+          const total = Number(loc.totalTasks ?? 0)
+          const completed = Number(loc.completedTasks ?? 0)
+          return `[${index + 1}] ${done ? `${name} (Done)` : name} — ${completed}/${total}`
+        })
         if (sessionId) {
           const subLocationMap: Record<string, Array<{ id: string; name: string; status: string }>> = {}
           for (const loc of locationsWithStatus) {
@@ -327,7 +333,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           return JSON.stringify({ success: true, subLocations: [], subLocationsFormatted: [], nextPrompt: 'No sub-locations found. Proceed to task selection.' })
         }
         const formatted = subLocations.map((loc: any, index: number) => ({ id: loc.id, number: index + 1, name: loc.name, status: loc.status, totalTasks: loc.totalTasks, completedTasks: loc.completedTasks }))
-        const formattedStrings = formatted.map((loc) => `[${loc.number}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''}`)
+        const formattedStrings = formatted.map((loc) => `[${loc.number}] ${loc.name}${loc.status === 'completed' ? ' (Done)' : ''} — ${Number(loc.completedTasks ?? 0)}/${Number(loc.totalTasks ?? 0)}`)
         return JSON.stringify({ success: true, subLocations: formatted, subLocationsFormatted: formattedStrings, nextPrompt: 'Reply with the sub-location number you want to inspect.' })
       }
       case 'getTasksForLocation': {
@@ -552,6 +558,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           const latest = sessionId ? await getSessionState(sessionId) : ({} as ChatSessionState)
           const taskId = (args.taskId as string | undefined) || latest.currentTaskId
           if (!taskId) return JSON.stringify({ success: false, error: 'Task context missing for finalize.' })
+          let itemIdForCounts: string | null = null
+          let messageHeader: string | undefined
           if (completed) {
             try {
               // Mark task (or item) complete
@@ -562,14 +570,17 @@ export async function executeTool(toolName: string, args: any, threadId?: string
                 await prisma.contractChecklistItem.update({ where: { id: existingTask.itemId }, data: { status: remaining === 0 ? 'COMPLETED' : 'PENDING', enteredOn: remaining === 0 ? new Date() : null } })
                 await refreshChecklistItemCache(existingTask.itemId)
                 await refreshChecklistItemsForWorkOrder(workOrderId)
+                itemIdForCounts = existingTask.itemId
               } else {
                 await prisma.contractChecklistItem.update({ where: { id: taskId }, data: { status: 'COMPLETED', enteredOn: new Date() } })
                 await refreshChecklistItemCache(taskId)
                 await refreshChecklistItemsForWorkOrder(workOrderId)
+                itemIdForCounts = taskId
               }
             } catch (e) {
               console.error('finalize: failed to update completion', e)
             }
+            messageHeader = '✅ Task marked complete.'
           }
           if (sessionId) {
             await updateSessionState(sessionId, { taskFlowStage: undefined, currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskCondition: undefined, pendingTaskRemarks: undefined })
@@ -577,9 +588,26 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           try {
             const locs3 = workOrderId ? ((await getLocationsWithCompletionStatus(workOrderId)) as any[]) : []
             const locationsFormatted = locs3.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
-            return JSON.stringify({ success: true, locationsFormatted })
+            // Compute per-(sub)location task counts for informative message
+            let completionLine: string | undefined
+            try {
+              const tasksNow = await getTasksByLocation(
+                workOrderId,
+                latest.currentLocation || '',
+                latest.currentLocationId,
+                latest.currentSubLocationId
+              ) as any[]
+              const totalNow = Array.isArray(tasksNow) ? tasksNow.length : 0
+              const doneNow = Array.isArray(tasksNow) ? tasksNow.filter(t => t.status === 'completed').length : 0
+              if (totalNow > 0) {
+                const where = latest.currentSubLocationName || latest.currentLocation || 'this location'
+                completionLine = `${doneNow}/${totalNow} tasks complete in ${where}.`
+              }
+            } catch {}
+            const message = messageHeader && completionLine ? `${messageHeader} ${completionLine}` : messageHeader
+            return JSON.stringify({ success: true, locationsFormatted, message })
           } catch {}
-          return JSON.stringify({ success: true })
+          return JSON.stringify({ success: true, message: messageHeader })
         }
         return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })
       }
@@ -707,7 +735,11 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           try {
             const refreshed = (await getLocationsWithCompletionStatus(workOrderId)) as any[]
             const locationsFormatted = refreshed.map((l: any, i: number) => `[${i + 1}] ${l.isCompleted ? `${l.name} (Done)` : l.name}`)
-            return JSON.stringify({ success: true, message: '✅ Location marked complete.', locationsFormatted })
+            // Find the just-completed location to show counts
+            const current = refreshed.find((l: any) => l.contractChecklistItemId === contractChecklistItemId)
+            const line = current ? `${Number(current.completedTasks ?? 0)}/${Number(current.totalTasks ?? 0)} tasks complete in ${current.name}.` : ''
+            const msg = line ? `✅ Location marked complete. ${line}` : '✅ Location marked complete.'
+            return JSON.stringify({ success: true, message: msg, locationsFormatted })
           } catch {
             return JSON.stringify({ success: true, message: '✅ Location marked complete.' })
           }
