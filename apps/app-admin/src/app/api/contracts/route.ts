@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { generateContractId } from '@/lib/id-generator'
@@ -50,7 +51,6 @@ export async function GET(request: NextRequest) {
           customer: true,
           address: true,
           basedOnChecklist: true,
-          contactPersons: true,
           marketingSource: true,
           workOrders: {
             include: {
@@ -150,6 +150,7 @@ export async function POST(request: NextRequest) {
       ? contactPersons
           .filter((person: any) => person && typeof person.name === 'string' && person.name.trim().length > 0)
           .map((person: any) => ({
+            id: typeof person.id === 'string' && person.id.trim().length > 0 ? person.id.trim() : crypto.randomUUID(),
             name: person.name.trim(),
             phone: typeof person.phone === 'string' && person.phone.trim().length > 0 ? person.phone.trim() : undefined,
             email: typeof person.email === 'string' && person.email.trim().length > 0 ? person.email.trim() : undefined,
@@ -172,18 +173,14 @@ export async function POST(request: NextRequest) {
       marketingSourceId: normalizedMarketingSourceId ?? undefined,
       referenceIds: sanitizedReferenceIds,
       status: 'DRAFT' as const,
-      contactPersons: sanitizedContactPersons.length > 0
-        ? {
-            create: sanitizedContactPersons
-          }
-        : undefined
+      contactPersons: sanitizedContactPersons.length > 0 ? (sanitizedContactPersons as any) : undefined
     }
 
     const contractInclude = {
       customer: true,
       address: true,
       basedOnChecklist: true,
-      contactPersons: true
+      // contactPersons is scalar JSON; no include needed
     }
 
     let contract: Awaited<ReturnType<typeof prisma.contract.create>> | null = null
