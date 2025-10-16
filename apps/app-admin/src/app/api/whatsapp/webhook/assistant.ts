@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 // chat-session not required for responses flow here; session state used elsewhere
 import { cacheGetJSON, cacheSetJSON } from '@/lib/memcache'
 import { assistantTools, executeTool } from './tools'
+import type { ChatSessionState } from '@/lib/chat-session'
 import { INSTRUCTIONS } from '@/app/api/assistant-instructions'
 import { getSessionState, updateSessionState } from '@/lib/chat-session'
 import { getInspectorByPhone } from '@/lib/services/inspectorService'
@@ -22,9 +23,59 @@ async function loadHistory(phone: string): Promise<ChatMessage[]> {
   try { return (await cacheGetJSON<ChatMessage[]>(HISTORY_KEY(phone))) || [] } catch { return [] }
 }
 async function saveHistory(phone: string, messages: ChatMessage[]) {
-  const cap = Number(process.env.WHATSAPP_HISTORY_MAX ?? 20)
+  // Trim history to a small, WhatsApp-friendly maximum to reduce token usage
+  const cap = Number(process.env.WHATSAPP_HISTORY_MAX ?? 8)
   const trimmed = messages.slice(-cap)
   try { await cacheSetJSON(HISTORY_KEY(phone), trimmed, { ttlSeconds: HISTORY_TTL }) } catch {}
+}
+
+function selectToolNames(meta: ChatSessionState | null | undefined): string[] {
+  const base = new Set<string>([
+    'collectInspectorInfo',
+    'getTodayJobs',
+    'confirmJobSelection',
+    'startJob',
+    'updateJobDetails'
+  ])
+
+  if (!meta) return Array.from(base)
+
+  const last = meta.lastMenu
+  const started = meta.jobStatus === 'started'
+
+  if (last === 'jobs' || meta.jobStatus === 'none') {
+    base.add('getTodayJobs')
+    base.add('confirmJobSelection')
+    base.add('updateJobDetails')
+    base.add('startJob')
+  }
+
+  if (started || last === 'locations' || last === 'sublocations' || last === 'tasks') {
+    base.add('getJobLocations')
+    base.add('getSubLocations')
+    base.add('getTasksForLocation')
+    base.add('getLocationMedia')
+    base.add('getTaskMedia')
+    base.add('markLocationComplete')
+  }
+
+  // Sub-location (Level 2) flow
+  if (meta.currentSubLocationId) {
+    base.add('setSubLocationConditions')
+    base.add('setSubLocationCauseResolution')
+    base.add('setSubLocationRemarks')
+    base.add('markSubLocationComplete')
+  } else {
+    // Per-task flow for locations without sub-locations
+    base.add('completeTask')
+  }
+
+  return Array.from(base)
+}
+
+function filterToolsByNames(names: string[]) {
+  const set = new Set(names)
+  return (assistantTools as any[]).filter((t: any) => t?.function?.name && set.has(t.function.name))
 }
 
 // Legacy compatibility no-ops
@@ -37,6 +88,12 @@ export async function postAssistantMessageIfThread(phone: string, content: strin
 
 export async function processWithAssistant(phoneNumber: string, message: string): Promise<string> {
   try {
+    const perfOn = (process.env.WHATSAPP_PERF_LOG || '').toLowerCase() === 'true'
+    const perfEvents: Array<{ name: string; ms: number }> = []
+    const timeIt = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      const t0 = Date.now()
+      try { return await fn() } finally { if (perfOn) perfEvents.push({ name, ms: Date.now() - t0 }) }
+    }
     debugLog('start', { phoneNumber, len: message?.length })
     const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-5-nano').trim()
 
@@ -813,7 +870,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       debugLog('pre-route guard failed', e)
     }
 
-    const history = await loadHistory(phoneNumber)
+    const history = await timeIt('history_load', () => loadHistory(phoneNumber))
 
     // Compose messages: system instructions + session hint + prior history + user
     const messages: any[] = []
@@ -833,7 +890,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     messages.push({ role: 'user', content: message })
 
     // Map tools for Chat Completions
-    const tools = assistantTools as any
+    // Choose only the tools relevant to the current session stage to reduce tokens
+    let tools = assistantTools as any
+    try {
+      const meta = await getSessionState(phoneNumber)
+      const names = selectToolNames(meta)
+      tools = filterToolsByNames(names)
+    } catch {}
 
     // Loop for tool calls
     let rounds = 0
@@ -842,13 +905,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     while (rounds < maxRounds) {
       let completion: any
       try {
-        completion = await openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) })
+        completion = await timeIt('openai_completion', () => openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
       } catch (e: any) {
         // Fallback if model unsupported for chat
         if (String(e?.code || '').includes('unsupported') || String(e?.message || '').includes('model')) {
           if (model !== 'gpt-4o-mini') {
             debugLog('model unsupported for chat; falling back to gpt-4o-mini')
-            completion = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) })
+            completion = await timeIt('openai_completion_fallback', () => openai.chat.completions.create({ model: 'gpt-4o-mini', messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
           } else {
             throw e
           }
@@ -869,7 +932,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           try { args = JSON.parse(argsStr) } catch { args = {} }
           if (fn === 'getTodayJobs' && !args.inspectorPhone) args.inspectorPhone = phoneNumber
           if (fn === 'collectInspectorInfo' && !args.phone) args.phone = phoneNumber
-          const output = await executeTool(fn, args, undefined, phoneNumber)
+          const output = await timeIt(`tool:${fn}`, () => executeTool(fn, args, undefined, phoneNumber))
           // Append tool result message per tool call
           messages.push({ role: 'tool', tool_call_id: tc.id, name: fn, content: output })
         }
@@ -884,13 +947,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     // If we hit the round limit or no text yet, try a final pass forcing text
     if (!finalText) {
       try {
-        const finalPass = await openai.chat.completions.create({
+        const finalPass = await timeIt('openai_completion_final', () => openai.chat.completions.create({
           model,
           messages,
           tools,
           tool_choice: 'none' as any,
           temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2)
-        })
+        }))
         finalText = (finalPass.choices?.[0]?.message?.content || '').toString().trim()
       } catch (e) {
         debugLog('final text pass failed', e)
@@ -903,7 +966,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     // For simplicity add just the final assistant message
     if (finalText) toAppend.push({ role: 'assistant', content: finalText })
     const next = [...history, ...toAppend]
-    await saveHistory(phoneNumber, next)
+    await timeIt('history_save', () => saveHistory(phoneNumber, next))
+    if (perfOn) {
+      const total = perfEvents.reduce((s, e) => s + e.ms, 0)
+      console.log('[perf][assistant]', { phone: phoneNumber, totalMs: total, events: perfEvents })
+    }
     return finalText || 'I processed your information but couldn\'t generate a response. Please try again.'
   } catch (error) {
     console.error('Error processing with assistant (chat):', error)

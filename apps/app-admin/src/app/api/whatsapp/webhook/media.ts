@@ -11,6 +11,8 @@ const debugLog = (...args: unknown[]) => {
 
 export async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
+    const perfOn = (process.env.WHATSAPP_PERF_LOG || '').toLowerCase() === 'true'
+    const t0 = Date.now()
     debugLog('🔄 Processing WhatsApp media message for phone:', phoneNumber)
 
     // Get session state for context
@@ -72,6 +74,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     }
 
     let response: Response
+    const tFetch0 = Date.now()
     if (mediaUrl) {
       response = await fetch(mediaUrl, { method: 'GET', headers: { 'User-Agent': 'Property-Stewards-Bot/1.0', 'Accept': 'image/*,video/*,*/*' } })
     } else if (mediaDownloadPath) {
@@ -83,6 +86,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       debugLog('❌ No media URL or download link found in WhatsApp message')
       return 'Media upload failed - could not find media URL.'
     }
+    if (perfOn) console.log('[perf][media] downloadMs=', Date.now() - tFetch0)
 
     debugLog('📡 Media download response:', {
       status: response.status,
@@ -109,7 +113,9 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
 
     // Upload to DO Spaces
     const uploadParams = { Bucket: BUCKET_NAME, Key: key, Body: uint8Array, ContentType: mediaType === 'video' ? 'video/mp4' : 'image/jpeg', ACL: 'public-read' as const, Metadata: { workOrderId, location: roomName, mediaType, originalName: filename, uploadedAt: new Date().toISOString(), source: 'whatsapp' } }
+    const tUp0 = Date.now()
     await s3Client.send(new PutObjectCommand(uploadParams))
+    if (perfOn) console.log('[perf][media] uploadMs=', Date.now() - tUp0)
     const publicUrl = `${PUBLIC_URL}/${key}`
     debugLog('✅ Uploaded to DigitalOcean Spaces:', publicUrl)
 
@@ -162,7 +168,8 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       return 'Please add a quick remark describing this photo so I can log it properly—I’ll save it once I have your note.'
     }
 
-    return persistMediaForContext({
+    const tPersist0 = Date.now()
+    const result = await persistMediaForContext({
       metadata,
       phoneNumber,
       workOrderId,
@@ -180,6 +187,8 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
       mediaRemark,
       publicUrl
     })
+    if (perfOn) console.log('[perf][media] persistMs=', Date.now() - tPersist0, 'totalMs=', Date.now() - t0)
+    return result
   } catch (error) {
     console.error('❌ Error handling WhatsApp media:', error)
     return 'Failed to upload media. Please try again.'
