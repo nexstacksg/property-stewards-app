@@ -86,7 +86,8 @@ export async function getSessionState(sessionId: string): Promise<ChatSessionSta
   const out = state || {}
   // Verbose session logging for observability in Vercel logs
   try {
-    const logSessions = (process.env.WHATSAPP_LOG_SESSIONS ?? 'true').toLowerCase() !== 'false'
+    // Default to disabled to avoid adding latency in production
+    const logSessions = (process.env.WHATSAPP_LOG_SESSIONS ?? 'false').toLowerCase() !== 'false'
     if (logSessions) {
       console.log('[sess:get:state]', { sessionId, state: out })
     }
