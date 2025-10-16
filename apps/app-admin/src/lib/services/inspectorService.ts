@@ -802,19 +802,25 @@ export async function getDistinctLocationsForWorkOrder(workOrderId: string) {
 
 export async function getLocationsWithCompletionStatus(workOrderId: string) {
   try {
+    // 1) In‑process cache (fastest)
+    const cachedLocal = locationCache.get(`locations-status:${workOrderId}`)
+    if (cachedLocal) return cachedLocal
+
     let items: any[] | null = null
     try {
-      const cached = await getCachedChecklistItems()
-      if (cached) {
-        items = cached.filter((item: any) => Array.isArray(item.workOrderIds) && item.workOrderIds.includes(workOrderId))
+      // 2) Per‑workorder cache (smallest memcache footprint)
+      try {
+        const woItems = await cacheGetLargeArray<any>(`mc:contract-checklist-items:workorder:${workOrderId}`)
+        if (woItems && Array.isArray(woItems) && woItems.length > 0) items = woItems
+      } catch (e) {
+        console.error('getLocationsWithCompletionStatus: failed to load per-workorder cache', e)
       }
-      // If global cache is missing/empty, try per-workorder cache
+
+      // 3) Global cache (fallback)
       if (!items || items.length === 0) {
-        try {
-          const woItems = await cacheGetLargeArray<any>(`mc:contract-checklist-items:workorder:${workOrderId}`)
-          if (woItems && Array.isArray(woItems) && woItems.length > 0) items = woItems
-        } catch (e) {
-          console.error('getLocationsWithCompletionStatus: failed to load per-workorder cache', e)
+        const cached = await getCachedChecklistItems()
+        if (cached) {
+          items = cached.filter((item: any) => Array.isArray(item.workOrderIds) && item.workOrderIds.includes(workOrderId))
         }
       }
     } catch (error) {
@@ -917,29 +923,33 @@ export async function getLocationsWithCompletionStatus(workOrderId: string) {
 export async function getChecklistLocationsForItem(itemId: string) {
   try {
     try {
-      const cached = await getCachedChecklistItems()
-      if (cached) {
-        const cachedItem = cached.find((it: any) => it.id === itemId)
-        if (cachedItem && Array.isArray(cachedItem.locations)) {
-          const summary = cachedItem.locations
-            .map((loc: any, index: number) => {
-              const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
-              const totalTasks = tasks.length
-              const completedTasks = tasks.filter((task: any) => task.status === 'COMPLETED').length
-              if (totalTasks === 0) return null
-              const isCompleted = loc.status === 'COMPLETED' || completedTasks === totalTasks
-              return {
-                id: loc.id,
-                number: index + 1,
-                name: loc.name,
-                status: isCompleted ? 'completed' : 'pending',
-                totalTasks,
-                completedTasks
-              }
-            })
-            .filter(Boolean) as Array<{ id: string; number: number; name: string; status: string; totalTasks: number; completedTasks: number }>
-          if (summary.length > 0) return summary
-        }
+      // 1) Per‑item cache (fast path)
+      const perItem = await cacheGetLargeArray<any>(`mc:contract-checklist-items:item:${itemId}`)
+      let cachedItem: any | null = Array.isArray(perItem) && perItem.length > 0 ? perItem[0] : null
+      if (!cachedItem) {
+        // 2) Global cache fallback
+        const cached = await getCachedChecklistItems()
+        if (cached) cachedItem = cached.find((it: any) => it.id === itemId) || null
+      }
+      if (cachedItem && Array.isArray(cachedItem.locations)) {
+        const summary = cachedItem.locations
+          .map((loc: any, index: number) => {
+            const tasks = Array.isArray(loc.tasks) ? loc.tasks : []
+            const totalTasks = tasks.length
+            const completedTasks = tasks.filter((task: any) => task.status === 'COMPLETED').length
+            if (totalTasks === 0) return null
+            const isCompleted = loc.status === 'COMPLETED' || completedTasks === totalTasks
+            return {
+              id: loc.id,
+              number: index + 1,
+              name: loc.name,
+              status: isCompleted ? 'completed' : 'pending',
+              totalTasks,
+              completedTasks
+            }
+          })
+          .filter(Boolean) as Array<{ id: string; number: number; name: string; status: string; totalTasks: number; completedTasks: number }>
+        if (summary.length > 0) return summary
       }
     } catch (error) {
       console.error('Error reading checklist locations from cache:', error)
@@ -1022,14 +1032,30 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
     let item: any = null
 
     try {
-      const cached = await getCachedChecklistItems()
-      if (cached) {
-        item = cached.find((it: any) => {
-          if (contractChecklistItemId && it.id === contractChecklistItemId) return true
-          const matchesName = typeof it.name === 'string' && it.name === location
-          const matchesWorkOrder = Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId)
-          return !contractChecklistItemId && matchesName && matchesWorkOrder
-        })
+      // 1) If we have an explicit item id, use per‑item cache first
+      if (contractChecklistItemId) {
+        const perItem = await cacheGetLargeArray<any>(`mc:contract-checklist-items:item:${contractChecklistItemId}`)
+        if (perItem && perItem.length > 0) item = perItem[0]
+      }
+      // 2) If still not found, try per‑workorder cache and match by name
+      if (!item) {
+        const woItems = await cacheGetLargeArray<any>(`mc:contract-checklist-items:workorder:${workOrderId}`)
+        if (woItems && Array.isArray(woItems) && woItems.length > 0) {
+          if (contractChecklistItemId) item = woItems.find((it: any) => it.id === contractChecklistItemId) || null
+          if (!item) item = woItems.find((it: any) => typeof it.name === 'string' && it.name === location) || null
+        }
+      }
+      // 3) Global cache fallback (largest payload)
+      if (!item) {
+        const cached = await getCachedChecklistItems()
+        if (cached) {
+          item = cached.find((it: any) => {
+            if (contractChecklistItemId && it.id === contractChecklistItemId) return true
+            const matchesName = typeof it.name === 'string' && it.name === location
+            const matchesWorkOrder = Array.isArray(it.workOrderIds) && it.workOrderIds.includes(workOrderId)
+            return !contractChecklistItemId && matchesName && matchesWorkOrder
+          })
+        }
       }
     } catch (error) {
       console.error('Error loading checklist item from cache:', error)
