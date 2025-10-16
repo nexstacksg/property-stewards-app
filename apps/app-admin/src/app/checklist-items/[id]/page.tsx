@@ -84,7 +84,8 @@ async function getChecklistItem(id: string) {
             select: {
               id: true
             }
-          }
+          },
+          location: true
         }as any
       }
     }

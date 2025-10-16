@@ -324,46 +324,75 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
       // Guard these steps as long as we have a workOrder context; location is not mandatory
       if (meta?.workOrderId) {
-        // Condition selection (only when in condition stage)
-        if (num1to5 && meta.taskFlowStage === 'condition') {
-          const conditionNumber = Number(num1to5[1])
-          const out = await executeTool('completeTask', { phase: 'set_condition', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, conditionNumber }, undefined, phoneNumber)
+        // New sub-location bulk condition entry: when awaiting conditions, accept a single message with multiple values
+        if (meta.taskFlowStage === 'condition' && meta.currentSubLocationId && raw) {
+          const out = await executeTool('setSubLocationConditions', {
+            workOrderId: meta.workOrderId,
+            contractChecklistItemId: meta.currentLocationId,
+            subLocationId: meta.currentSubLocationId,
+            conditionsText: raw
+          }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) {
-            const nextStage = String(data?.taskFlowStage || '').toLowerCase()
-            if (nextStage === 'cause') {
-              return 'Please describe the cause for this issue.'
-            }
-            const c = String(data?.condition || meta.currentTaskCondition || '').toUpperCase()
-            const allowSkip = c === 'NOT_APPLICABLE'
-            return allowSkip
-              ? 'Condition saved. Please add remarks for this task (or type "skip").'
-              : 'Condition saved. Please add remarks for this task.'
+            return data.message || 'Conditions updated. Please enter the remarks for this sub-location.'
           }
+          // If parsing failed, show helpful hint
+          return 'I could not detect valid conditions. Please reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair".'
         }
-        // Cause text
+
+        // Sub-location remarks capture: any non-numeric input while in remarks stage becomes remarks for the sub-location
+        if (meta.taskFlowStage === 'remarks' && meta.currentSubLocationId && raw && !numAny) {
+          const out = await executeTool('setSubLocationRemarks', {
+            workOrderId: meta.workOrderId,
+            contractChecklistItemId: meta.currentLocationId,
+            subLocationId: meta.currentSubLocationId,
+            subLocationName: meta.currentSubLocationName,
+            remarks: raw
+          }, undefined, phoneNumber)
+          let data: any = null
+          try { data = JSON.parse(out) } catch {}
+          if (data?.success) {
+            return data.message || 'Remarks saved. Please provide photos/videos for this sub-location.'
+          }
+          return 'I could not save those remarks. Please try again.'
+        }
+        // Cause text (sub-location or per-task)
         if (meta.taskFlowStage === 'cause' && raw && !numAny) {
-          const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
-          let data: any = null
-          try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
-        }
-        // Resolution text
-        if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
-          const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
-          let data: any = null
-          try { data = JSON.parse(out) } catch {}
-          if (data?.success) {
-            const c = String(meta.currentTaskCondition || '').toUpperCase()
-            const allowSkip = c === 'NOT_APPLICABLE'
-            return data?.message || (allowSkip
-              ? 'Resolution saved. Please add remarks for this task (or type "skip").'
-              : 'Resolution saved. Please add remarks for this task.')
+          if (meta.currentSubLocationId && !meta.currentTaskId) {
+            const out = await executeTool('setSubLocationCause', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, cause: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
+          } else {
+            const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
           }
         }
-        // Media stage skip
-        if (meta.taskFlowStage === 'media' && (lower === 'skip' || lower === 'no')) {
+        // Resolution text (sub-location or per-task)
+        if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
+          if (meta.currentSubLocationId && !meta.currentTaskId) {
+            const out = await executeTool('setSubLocationResolution', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, resolution: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) return data?.message || 'Resolution saved. Please enter the remarks for this sub-location.'
+          } else {
+            const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) {
+              const c = String(meta.currentTaskCondition || '').toUpperCase()
+              const allowSkip = c === 'NOT_APPLICABLE'
+              return data?.message || (allowSkip
+                ? 'Resolution saved. Please add remarks for this task (or type "skip").'
+                : 'Resolution saved. Please add remarks for this task.')
+            }
+          }
+        }
+        // Media stage skip (task flow only)
+        if (meta.taskFlowStage === 'media' && meta.currentTaskId && (lower === 'skip' || lower === 'no')) {
           const cond = String(meta.currentTaskCondition || '').toUpperCase()
           if (cond !== 'NOT_APPLICABLE') {
             return 'Media is required for this condition. Please send at least one photo (you can add remarks as a caption).'
@@ -373,6 +402,21 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
         }
+        // Sub-location media confirmation: [1] complete sub-location, [2] keep adding
+        if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && numAny) {
+          const pick = Number(numAny[1])
+          if (pick === 1) {
+            const r = await executeTool('markSubLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+            let rr: any = null; try { rr = JSON.parse(r) } catch {}
+            const formatted: string[] = Array.isArray(rr?.subLocationsFormatted) ? rr.subLocationsFormatted : []
+            const header = `Here are the available sub-locations${meta.currentLocation ? ` in ${meta.currentLocation}` : ''}:`
+            try { await updateSessionState(phoneNumber, { lastMenu: 'sublocations', lastMenuAt: new Date().toISOString(), currentSubLocationId: undefined, currentSubLocationName: undefined }) } catch {}
+            return [header, '', ...formatted, '', `Next: reply with your sub-location choice, or [${formatted.length + 1}] to go back.`].join('\n')
+          }
+          if (pick === 2) {
+            return 'Okay — you can send more photos/videos for this area when you are ready.'
+          }
+        }
         // Remarks step (new): free text remarks before media
         if (meta.taskFlowStage === 'remarks' && raw && !numAny) {
           const out = await executeTool('completeTask', { phase: 'set_remarks', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, remarks: raw }, undefined, phoneNumber)
@@ -381,8 +425,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           if (data?.success) return data?.message || 'Thanks. Please send any photos/videos now (captions will be saved per media), or type "skip" to continue.'
         }
 
-        // Finalize confirmation step: [1] complete, [2] not yet
-        if (numAny && meta.taskFlowStage === 'confirm') {
+        // Finalize confirmation step: [1] complete, [2] not yet (task flow only)
+        if (numAny && meta.taskFlowStage === 'confirm' && meta.currentTaskId) {
           const pick = Number(numAny[1])
           if (pick === 1 || pick === 2) {
             dbg('finalize → completeTask', { completed: pick === 1 })
@@ -564,22 +608,39 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const tasks = Array.isArray(data?.tasks) ? data.tasks : []
           if (tasks.length === 0) return 'No tasks found for this sub-location.'
           const lines: string[] = []
-          lines.push(`In ${latest.currentLocation}, here are the tasks available for inspection:`)
+          lines.push(`Here are the checks for ${chosenSub.name}:`)
           lines.push('')
           for (const t of tasks) {
             const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
             lines.push(`[${t.number}] ${t.description}${status}`)
           }
-          lines.push(`[${tasks.length + 1}] Go back`)
           lines.push('')
-          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
-          try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString() }) } catch {}
+          lines.push('Please reply in ONE message with the condition for each item in order. For example:')
+          lines.push('• 1 Good, 2 Good, 3 Fair')
+          lines.push('• or: Good Good Fair')
+          lines.push('')
+          lines.push('Allowed values: Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable.')
+          lines.push('You can send any natural phrasing; I will interpret each condition in order and update them one by one. You may omit any items you want to leave unset.')
+          lines.push('')
+          lines.push('Next: reply with your conditions now in one message.')
+          try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString(), taskFlowStage: 'condition' }) } catch {}
           return lines.join('\n')
         }
 
         // Numeric tasks selection mapping (lastMenu = tasks)
         const taskPick = /^\s*(\d{1,2})\s*$/.exec(raw)
         if (meta.lastMenu === 'tasks' && taskPick) {
+          // In sub-location bulk condition mode, steer away from per-task selection
+          if (meta.currentSubLocationId && meta.taskFlowStage === 'condition') {
+            return [
+              'Please reply in ONE message with the condition for each item in order, for example:',
+              '1 Good, 2 Good, 3 Fair',
+              'or: Good Good Fair',
+              '',
+              'Allowed values: Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable.',
+              'You can send any natural phrasing; I will interpret and update each condition in order. You may omit any items to leave them unset.'
+            ].join('\\n')
+          }
           const pick = Number(taskPick[1])
           dbg('tasks-select', { pick })
           const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
@@ -652,6 +713,16 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       if (!numAny && !isJobsIntent) {
         // If in condition stage
         if (meta?.taskFlowStage === 'condition') {
+          if (meta?.currentSubLocationId) {
+            return [
+              "I didn't catch that. Please reply in ONE message with the condition for each item in order, e.g.",
+              '1 Good, 2 Good, 3 Fair',
+              'or',
+              'Good Good Fair',
+              '',
+              'You can omit any numbers you wish to leave unset.'
+            ].join('\n')
+          }
           return [
             "I didn't understand that. Please set the condition:",
             '[1] Good',
@@ -706,7 +777,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           const withBack = [...formatted, `[${formatted.length + 1}] Go back`]
           return [`I didn't understand that. You've selected ${meta.currentLocation}. Here are the available sub-locations:`, '', ...withBack, '', `Next: reply with your sub-location choice, or [${withBack.length}] to go back.`].join('\n')
         }
-        // If at tasks
+        // If at tasks (new flow): remind about bulk condition input rather than per-task selection
         if (meta?.lastMenu === 'tasks' && meta?.currentLocationId) {
           const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
           let data: any = null; try { data = JSON.parse(tasksRes) } catch {}
@@ -718,9 +789,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             const status = String(t?.displayStatus || '').toLowerCase() === 'done' ? ' (Done)' : ''
             lines.push(`[${t.number}] ${t.description}${status}`)
           }
-          lines.push(`[${tasks.length + 1}] Go back`)
           lines.push('')
-          lines.push(`Next: reply with the task number to continue, or [${tasks.length + 1}] to go back.`)
+          lines.push('Next: reply in ONE message with the conditions for each item in order, e.g., "1 Good, 2 Good, 3 Fair" or "Good Good Fair".')
           return lines.join('\n')
         }
       }
