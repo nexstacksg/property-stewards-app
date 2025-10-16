@@ -357,24 +357,38 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
           return 'I could not save those remarks. Please try again.'
         }
-        // Cause text
+        // Cause text (sub-location or per-task)
         if (meta.taskFlowStage === 'cause' && raw && !numAny) {
-          const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
-          let data: any = null
-          try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
+          if (meta.currentSubLocationId && !meta.currentTaskId) {
+            const out = await executeTool('setSubLocationCause', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, cause: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
+          } else {
+            const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
+          }
         }
-        // Resolution text
+        // Resolution text (sub-location or per-task)
         if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
-          const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
-          let data: any = null
-          try { data = JSON.parse(out) } catch {}
-          if (data?.success) {
-            const c = String(meta.currentTaskCondition || '').toUpperCase()
-            const allowSkip = c === 'NOT_APPLICABLE'
-            return data?.message || (allowSkip
-              ? 'Resolution saved. Please add remarks for this task (or type "skip").'
-              : 'Resolution saved. Please add remarks for this task.')
+          if (meta.currentSubLocationId && !meta.currentTaskId) {
+            const out = await executeTool('setSubLocationResolution', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, resolution: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) return data?.message || 'Resolution saved. Please enter the remarks for this sub-location.'
+          } else {
+            const out = await executeTool('completeTask', { phase: 'set_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, resolution: raw }, undefined, phoneNumber)
+            let data: any = null
+            try { data = JSON.parse(out) } catch {}
+            if (data?.success) {
+              const c = String(meta.currentTaskCondition || '').toUpperCase()
+              const allowSkip = c === 'NOT_APPLICABLE'
+              return data?.message || (allowSkip
+                ? 'Resolution saved. Please add remarks for this task (or type "skip").'
+                : 'Resolution saved. Please add remarks for this task.')
+            }
           }
         }
         // Media stage skip (task flow only)
@@ -387,6 +401,21 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
+        }
+        // Sub-location media confirmation: [1] complete sub-location, [2] keep adding
+        if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && numAny) {
+          const pick = Number(numAny[1])
+          if (pick === 1) {
+            const r = await executeTool('markSubLocationComplete', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
+            let rr: any = null; try { rr = JSON.parse(r) } catch {}
+            const formatted: string[] = Array.isArray(rr?.subLocationsFormatted) ? rr.subLocationsFormatted : []
+            const header = `Here are the available sub-locations${meta.currentLocation ? ` in ${meta.currentLocation}` : ''}:`
+            try { await updateSessionState(phoneNumber, { lastMenu: 'sublocations', lastMenuAt: new Date().toISOString(), currentSubLocationId: undefined, currentSubLocationName: undefined }) } catch {}
+            return [header, '', ...formatted, '', `Next: reply with your sub-location choice, or [${formatted.length + 1}] to go back.`].join('\n')
+          }
+          if (pick === 2) {
+            return 'Okay — you can send more photos/videos for this area when you are ready.'
+          }
         }
         // Remarks step (new): free text remarks before media
         if (meta.taskFlowStage === 'remarks' && raw && !numAny) {
@@ -590,8 +619,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           lines.push('• 1 Good, 2 Good, 3 Fair')
           lines.push('• or: Good Good Fair')
           lines.push('')
-          lines.push('Allowed values: GOOD, FAIR, UNSATISFACTORY, UN_OBSERVABLE, NOT_APPLICABLE (or numbers 1–5).')
-          lines.push('You can omit any numbers you want to leave unset.')
+          lines.push('Allowed values: Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable.')
+          lines.push('You can send any natural phrasing; I will interpret each condition in order and update them one by one. You may omit any items you want to leave unset.')
           lines.push('')
           lines.push('Next: reply with your conditions now in one message.')
           try { await updateSessionState(phoneNumber, { lastMenu: 'tasks', lastMenuAt: new Date().toISOString(), taskFlowStage: 'condition' }) } catch {}
@@ -608,8 +637,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
               '1 Good, 2 Good, 3 Fair',
               'or: Good Good Fair',
               '',
-              'Allowed values: GOOD, FAIR, UNSATISFACTORY, UN_OBSERVABLE, NOT_APPLICABLE (or numbers 1–5).',
-              'You can omit any numbers you want to leave unset.'
+              'Allowed values: Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable.',
+              'You can send any natural phrasing; I will interpret and update each condition in order. You may omit any items to leave them unset.'
             ].join('\\n')
           }
           const pick = Number(taskPick[1])

@@ -47,6 +47,8 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'getSubLocations', description: 'Get sub-locations for a checklist item', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, locationName: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId'] } } },
   { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
   { type: 'function' as const, function: { name: 'setSubLocationConditions', description: 'Set conditions for all tasks under a specific sub-location in one message. Does not complete tasks.', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, conditionsText: { type: 'string', description: 'User input like "1 Good, 2 Good, 3 Fair" or "Good Good Fair"' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'conditionsText'] } } },
+  { type: 'function' as const, function: { name: 'setSubLocationCause', description: 'Capture cause text for the current sub-location flow', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, cause: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'cause'] } } },
+  { type: 'function' as const, function: { name: 'setSubLocationResolution', description: 'Capture resolution text for the current sub-location flow', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, resolution: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'resolution'] } } },
   { type: 'function' as const, function: { name: 'setSubLocationRemarks', description: 'Create/update a remark entry at the sub-location level (stored in ItemEntry at item level, tagged in text). Returns entryId for attaching media.', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, subLocationName: { type: 'string' }, remarks: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'remarks'] } } },
   {
     type: 'function' as const,
@@ -73,6 +75,7 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'getTaskMedia', description: 'Get photos and videos for a specific task', parameters: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } } },
   { type: 'function' as const, function: { name: 'getLocationMedia', description: 'Get photos and videos for a specific location by selection number or name', parameters: { type: 'object', properties: { locationNumber: { type: 'number' }, locationName: { type: 'string' }, workOrderId: { type: 'string' } }, required: ['workOrderId'] } } },
   { type: 'function' as const, function: { name: 'markLocationComplete', description: 'Mark a location (ContractChecklistItem) complete when all tasks are done', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId'] } } }
+  ,{ type: 'function' as const, function: { name: 'markSubLocationComplete', description: 'Mark a sub-location (ContractChecklistLocation) complete', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId'] } } }
 ]
 
 export async function executeTool(toolName: string, args: any, threadId?: string, sessionId?: string): Promise<string> {
@@ -550,8 +553,8 @@ You can omit any numbers you want to leave unset.`
           }
         }
         if (pairs.length === 0) {
-          const allowed = 'GOOD, FAIR, UNSATISFACTORY, UN_OBSERVABLE, NOT_APPLICABLE (or numbers 1–5)'
-          return JSON.stringify({ success: false, error: `No valid conditions detected. Reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair". Allowed values: ${allowed}.` })
+          const allowed = 'Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable'
+          return JSON.stringify({ success: false, error: `No valid conditions detected. Reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair". Allowed values: ${allowed}. You can send any natural phrasing; I will interpret each in order.` })
         }
         // Deduplicate by last occurrence per index
         const byIndex = new Map<number, string>()
@@ -567,8 +570,9 @@ You can omit any numbers you want to leave unset.`
           i++
         }
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
+        const hasIssues = updates.some(u => u.condition === 'FAIR' || u.condition === 'UNSATISFACTORY')
         if (sessionId) {
-          await updateSessionState(sessionId, { taskFlowStage: 'remarks', currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskItemId: contractChecklistItemId })
+          await updateSessionState(sessionId, { taskFlowStage: hasIssues ? 'cause' : 'remarks', currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskItemId: contractChecklistItemId })
         }
         // Resolve sub-location name for a nicer message
         let subName = ''
@@ -582,8 +586,28 @@ You can omit any numbers you want to leave unset.`
           for (const u of updates) lines.push(`- [${u.number}] ${u.name}: ${u.condition}`)
         }
         lines.push('')
-        lines.push('Next: please enter your remarks for this sub-location (a short sentence is fine).')
-        return JSON.stringify({ success: true, updatedCount: updates.length, message: lines.join('\n') })
+        if (hasIssues) {
+          lines.push('Please describe the cause for the issues you observed (a short sentence is fine).')
+        } else {
+          lines.push('Next: please enter your remarks for this sub-location (a short sentence is fine).')
+        }
+        return JSON.stringify({ success: true, updatedCount: updates.length, requiresCause: hasIssues, message: lines.join('\\n') })
+      }
+      case 'setSubLocationCause': {
+        const { workOrderId, contractChecklistItemId, subLocationId, cause } = args
+        if (!workOrderId || !contractChecklistItemId || !subLocationId || !cause) return JSON.stringify({ success: false, error: 'Missing required parameters' })
+        if (sessionId) {
+          await updateSessionState(sessionId, { pendingTaskCause: String(cause).trim(), taskFlowStage: 'resolution' })
+        }
+        return JSON.stringify({ success: true, message: 'Thanks. Please provide the resolution.' })
+      }
+      case 'setSubLocationResolution': {
+        const { workOrderId, contractChecklistItemId, subLocationId, resolution } = args
+        if (!workOrderId || !contractChecklistItemId || !subLocationId || !resolution) return JSON.stringify({ success: false, error: 'Missing required parameters' })
+        if (sessionId) {
+          await updateSessionState(sessionId, { pendingTaskResolution: String(resolution).trim(), taskFlowStage: 'remarks' })
+        }
+        return JSON.stringify({ success: true, message: 'Resolution saved. Please enter the remarks for this sub-location.' })
       }
       case 'setSubLocationRemarks': {
         const { workOrderId, contractChecklistItemId, subLocationId, subLocationName, remarks } = args
@@ -598,10 +622,20 @@ You can omit any numbers you want to leave unset.`
         }
         // Create a new ItemEntry at item level, tagged in the remarks header with the sub-location name
         const prefix = subLocationName ? `[${subLocationName}] ` : ''
-        const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
+        // If cause/resolution were captured earlier in the sub-location flow, persist them on creation
+        let cause: string | undefined
+        let resolution: string | undefined
+        try {
+          if (sessionId) {
+            const s = await getSessionState(sessionId)
+            cause = s.pendingTaskCause || undefined
+            resolution = s.pendingTaskResolution || undefined
+          }
+        } catch {}
+        const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}`, cause, resolution } as any })
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         if (sessionId) {
-          await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media' })
+          await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
         }
         const whereName = subLocationName || 'this sub-location'
         return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media).` })
@@ -660,6 +694,40 @@ You can omit any numbers you want to leave unset.`
         } catch (error) {
           console.error('markLocationComplete: failed to update item', error)
           return JSON.stringify({ success: false, error: 'Failed to mark location complete.' })
+        }
+      }
+      case 'markSubLocationComplete': {
+        const { workOrderId, contractChecklistItemId, subLocationId } = args
+        if (!workOrderId || !contractChecklistItemId || !subLocationId) {
+          return JSON.stringify({ success: false, error: 'Missing sub-location context' })
+        }
+        try {
+          const loc = await prisma.contractChecklistLocation.findUnique({ where: { id: subLocationId }, select: { id: true, itemId: true } })
+          if (!loc || loc.itemId !== contractChecklistItemId) {
+            return JSON.stringify({ success: false, error: 'Sub-location not found for this location.' })
+          }
+          await prisma.contractChecklistLocation.update({ where: { id: subLocationId }, data: { status: 'COMPLETED' } })
+          // If all sub-locations for the item are completed, mark the item completed as well
+          try {
+            const remainingForItem = await prisma.contractChecklistLocation.count({ where: { itemId: contractChecklistItemId, status: { not: 'COMPLETED' } } })
+            if (remainingForItem === 0) {
+              await prisma.contractChecklistItem.update({ where: { id: contractChecklistItemId }, data: { status: 'COMPLETED', enteredOn: new Date() } })
+            }
+          } catch (e) { console.error('markSubLocationComplete: failed to update parent item status', e) }
+          try {
+            await refreshChecklistItemCache(contractChecklistItemId)
+            await refreshChecklistItemsForWorkOrder(workOrderId)
+          } catch (e) { console.error('markSubLocationComplete: cache refresh failed', e) }
+          // Return refreshed sub-locations for UI
+          try {
+            const subRes = await executeTool('getSubLocations', { workOrderId, contractChecklistItemId, locationName: '' }, undefined, sessionId)
+            return subRes
+          } catch {
+            return JSON.stringify({ success: true, message: '✅ Sub-location marked complete.' })
+          }
+        } catch (error) {
+          console.error('markSubLocationComplete: failed', error)
+          return JSON.stringify({ success: false, error: 'Failed to mark sub-location complete.' })
         }
       }
       case 'completeTask': {

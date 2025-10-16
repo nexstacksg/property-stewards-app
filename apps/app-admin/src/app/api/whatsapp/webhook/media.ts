@@ -255,7 +255,11 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
         if (isSubLocationMode) {
           await updateSessionState(phoneNumber, { taskFlowStage: 'media', currentTaskEntryId })
           const whereName = currentSubLocationName || currentLocation || 'this location'
-          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved for ${whereName}.\n\nYou can send more photos/videos, or say "go back" to pick another area.`
+          return [
+            `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved for ${whereName}.`,
+            '',
+            'Next: reply [1] to mark this area complete, or [2] to add more photos/videos.'
+          ].join('\\n')
         }
 
         // Prepare confirmation line for cause/resolution when applicable (task mode)

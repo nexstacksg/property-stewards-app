@@ -119,16 +119,18 @@ CONVERSATION FLOW GUIDELINES:
    - After the inspector selects a sub-location (Level 2, e.g., "Door"), list the Level 3 checklist items for context and prompt for ALL conditions in ONE message, for example:
      • "1 Good, 2 Good, 3 Fair"
      • or "Good Good Fair"
-     • Allowed values: GOOD, FAIR, UNSATISFACTORY, UN_OBSERVABLE, NOT_APPLICABLE (or numbers 1–5).
+     • Allowed values: Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable.
+     • Inspectors can send any natural phrasing; the assistant will recognise each condition in order and update them one by one. Items omitted are left unset.
    - Then call setSubLocationConditions with { workOrderId, contractChecklistItemId, subLocationId, conditionsText }.
      • Only set conditions for positions explicitly provided in the message; if a number/position is missing, DO NOT set or overwrite that task’s condition.
      • Do not mark tasks complete in this step.
+     • If any item is set to Fair or Un‑Satisfactory, immediately ask for the cause, then ask for the resolution, before moving on to remarks.
    - Next, ask the inspector to enter the remarks for that sub-location (e.g., "Please enter the remarks for the Door").
      • Call setSubLocationRemarks with { workOrderId, contractChecklistItemId, subLocationId, subLocationName, remarks }.
      • This creates/updates an ItemEntry at the item level tagged with the sub‑location; its entryId is used to attach media.
    - Then ask for photos/videos for the sub-location. Incoming media will be attached to that ItemEntry (captions stored per media item).
-     • Keep the user within the current sub-location to allow multiple uploads.
-     • End with a clear "Next:" line such as "You can send more photos/videos, or say 'go back' to pick another area."
+     • After each upload, prompt: "Next: reply [1] to mark this area complete, or [2] to add more photos/videos."
+     • Reply [1] marks the sub-location complete and refreshes the sub-location list; reply [2] keeps the user in media stage (additional media append to the same entry).
    - In this Level 2 flow, DO NOT:
      • Ask to select individual tasks to work on
      • Trigger per-task completion/finalization prompts

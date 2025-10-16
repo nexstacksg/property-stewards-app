@@ -129,6 +129,8 @@ export default function ItemEntriesDialog({
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [editingRemarkText, setEditingRemarkText] = useState<string>("")
   const [editingCondition, setEditingCondition] = useState<string>("")
+  const [editingConditionsByTask, setEditingConditionsByTask] = useState<Record<string, string>>({})
+  const [editingTasksForLocation, setEditingTasksForLocation] = useState<Task[]>([])
   const [editingCauseText, setEditingCauseText] = useState<string>("")
   const [editingResolutionText, setEditingResolutionText] = useState<string>("")
   const [editingError, setEditingError] = useState<string | null>(null)
@@ -223,7 +225,7 @@ export default function ItemEntriesDialog({
 
     // Initialize all subtasks under the selected location to GOOD by default
     const next: Record<string, string> = {}
-    availableTasks.forEach((t) => { if (t?.id) next[t.id] = 'GOOD' })
+    availableTasks.forEach((t) => { if (t?.id) next[t.id] = '' })
     setConditionsByTask(next)
   }, [addingRemark, selectedLocationId, availableTasks])
 
@@ -265,6 +267,21 @@ export default function ItemEntriesDialog({
       mediaCaptions[mediaItem.id] = mediaItem.caption?.trim() || ""
     })
     setEditingMediaCaptions(mediaCaptions)
+
+    // Initialize editingConditionsByTask when remark is location-level (no specific task)
+    if (!entry.task) {
+      // Resolve location id
+      const locationId = (entry as any)?.location?.id || entry.task?.location?.id || (entry as any)?.locationId
+      const tasksAtLocation = locationOptions.find((l) => l.id === locationId)?.tasks
+        ?? (locationId === 'unassigned' ? localTasks.filter((t) => !t.location?.id) : [])
+      const init: Record<string, string> = {}
+      ;(tasksAtLocation || []).forEach((t: any) => { if (t?.id) init[t.id] = t.condition || '' })
+      setEditingConditionsByTask(init)
+      setEditingTasksForLocation((tasksAtLocation || []) as Task[])
+    } else {
+      setEditingConditionsByTask({})
+      setEditingTasksForLocation([])
+    }
   }
 
   const handleUpdateRemark: React.FormEventHandler<HTMLFormElement> = async (event) => {
@@ -316,6 +333,10 @@ export default function ItemEntriesDialog({
           resolution: trimmedResolution,
           condition: normalizedCondition,
           mediaUpdates,
+          // Bulk conditions for location-level remarks when provided
+          conditionsByTask: Object.entries(editingConditionsByTask)
+            .filter(([, c]) => (c || '').trim().length > 0)
+            .map(([taskId, condition]) => ({ taskId, condition })),
         }),
       })
 
@@ -343,6 +364,11 @@ export default function ItemEntriesDialog({
           }
         })
       )
+
+      // Update in-memory subtask conditions after bulk edit
+      if (Object.keys(editingConditionsByTask).length > 0) {
+        setLocalTasks((prev) => prev.map((task) => ({ ...task, condition: editingConditionsByTask[task.id] ?? task.condition })))
+      }
 
       if (updated.task) {
         const updatedTask = updated.task
@@ -939,7 +965,7 @@ export default function ItemEntriesDialog({
                           <p className="text-sm text-destructive">{editingError}</p>
                         )}
                         <div className="grid gap-3 sm:grid-cols-2">
-                          {/* Hide single-condition editor for location-level entries */}
+                          {/* For subtask-level remarks: single condition editor; for location-level: per-subtask row */}
                           {entry.task ? (
                             <div className="space-y-2">
                               <Label htmlFor={`edit-condition-${entry.id}`}>Condition</Label>
@@ -957,7 +983,38 @@ export default function ItemEntriesDialog({
                                 ))}
                               </select>
                             </div>
-                          ) : null}
+                          ) : (
+                            <div className="space-y-2 sm:col-span-2">
+                              <Label>Conditions for subtasks</Label>
+                              {editingTasksForLocation.length === 0 ? (
+                                <p className="text-sm text-muted-foreground">No subtasks for this location.</p>
+                              ) : (
+                                <div className="overflow-x-auto">
+                                  <div className="flex flex-col  gap-4 min-w-max">
+                                    {editingTasksForLocation.map((task) => (
+                                      <div key={task.id} className="flex justify-between  gap-2">
+                                        <span className="text-xs text-muted-foreground truncate" title={task.name || 'Untitled subtask'}>
+                                          {task.name || 'Untitled subtask'}
+                                        </span>
+                                        <select
+                                          className="h-8 w-55 rounded-md border px-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                                          value={editingConditionsByTask[task.id] ?? ''}
+                                          onChange={(e) => setEditingConditionsByTask((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                                          disabled={editingSubmitting}
+                                        >
+                                          {CONDITION_OPTIONS.map((option) => (
+                                            <option key={option.value || 'empty'} value={option.value}>
+                                              {option.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                           <div className="space-y-2 sm:col-span-2">
                             <Label htmlFor={`edit-remark-${entry.id}`}>Remarks</Label>
                             <textarea
