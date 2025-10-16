@@ -524,11 +524,19 @@ You can omit any numbers you want to leave unset.`
         const normalize = (s: string) => s.trim().toLowerCase()
         const mapWord = (w: string): string | null => {
           const t = normalize(w)
-          if (t === '1' || t === 'good' || t === 'g' || t === 'ok' || t === 'okay') return 'GOOD'
-          if (t === '2' || t === 'fair' || t === 'f') return 'FAIR'
-          if (t === '3' || t.startsWith('unsat') || t === 'unsatisfactory' || t === 'bad' || t === 'poor') return 'UNSATISFACTORY'
-          if (t === '4' || t.replace(/[^a-z]/g, '') === 'unobservable') return 'UN_OBSERVABLE'
-          if (t === '5' || t === 'na' || t === 'n/a' || t.includes('not applicable')) return 'NOT_APPLICABLE'
+          const canon = t.replace(/[^a-z]/g, '')
+          // Numeric shortcuts
+          if (t === '1') return 'GOOD'
+          if (t === '2') return 'FAIR'
+          if (t === '3') return 'UNSATISFACTORY'
+          if (t === '4') return 'UN_OBSERVABLE'
+          if (t === '5') return 'NOT_APPLICABLE'
+          // Textual variants (accept hyphens/spaces/punctuation)
+          if (canon === 'good' || t === 'g' || t === 'ok' || t === 'okay') return 'GOOD'
+          if (canon === 'fair' || t === 'f') return 'FAIR'
+          if (canon.startsWith('unsatisfactory') || canon.startsWith('unsat') || canon === 'poor' || canon === 'bad') return 'UNSATISFACTORY'
+          if (canon === 'unobservable' || canon === 'unobserved') return 'UN_OBSERVABLE'
+          if (canon === 'notapplicable' || t.includes('not applicable') || t === 'na' || t === 'n/a') return 'NOT_APPLICABLE'
           return null
         }
         const text = String(conditionsText || '')
