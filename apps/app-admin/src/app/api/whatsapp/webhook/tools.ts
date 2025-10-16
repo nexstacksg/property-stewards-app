@@ -746,7 +746,7 @@ You can omit any numbers you want to leave unset.`
           return JSON.stringify({ success: false, error: 'Missing sub-location context' })
         }
         try {
-          const loc = await prisma.contractChecklistLocation.findUnique({ where: { id: subLocationId }, select: { id: true, itemId: true } })
+          const loc = await prisma.contractChecklistLocation.findUnique({ where: { id: subLocationId }, select: { id: true, itemId: true, name: true } })
           if (!loc || loc.itemId !== contractChecklistItemId) {
             return JSON.stringify({ success: false, error: 'Sub-location not found for this location.' })
           }
@@ -761,13 +761,18 @@ You can omit any numbers you want to leave unset.`
           try {
             await refreshChecklistItemCache(contractChecklistItemId)
             await refreshChecklistItemsForWorkOrder(workOrderId)
+            // Invalidate per-item cache so subsequent reads reflect latest status
+            try { await cacheDel(`mc:contract-checklist-items:item:${contractChecklistItemId}`) } catch {}
           } catch (e) { console.error('markSubLocationComplete: cache refresh failed', e) }
-          // Return refreshed sub-locations for UI
+          // Return refreshed sub-locations for UI, prefixed with completion message
           try {
-            const subRes = await executeTool('getSubLocations', { workOrderId, contractChecklistItemId, locationName: '' }, undefined, sessionId)
-            return subRes
+            const subLocations = await getChecklistLocationsForItem(contractChecklistItemId) as any[]
+            const formattedStrings = (subLocations || []).map((l: any, i: number) => `[${i + 1}] ${l.name}${l.status === 'completed' ? ' (Done)' : ''}`)
+            const name = loc?.name || 'This area'
+            return JSON.stringify({ success: true, message: `✅ ${name} marked complete.`, subLocations, subLocationsFormatted: formattedStrings, nextPrompt: 'Reply with your sub-location choice, or pick another area.' })
           } catch {
-            return JSON.stringify({ success: true, message: '✅ Sub-location marked complete.' })
+            const name = loc?.name || 'This area'
+            return JSON.stringify({ success: true, message: `✅ ${name} marked complete.` })
           }
         } catch (error) {
           console.error('markSubLocationComplete: failed', error)

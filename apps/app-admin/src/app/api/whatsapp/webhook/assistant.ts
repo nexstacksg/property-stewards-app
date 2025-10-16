@@ -483,7 +483,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             const formatted: string[] = Array.isArray(rr?.subLocationsFormatted) ? rr.subLocationsFormatted : []
             const header = `Here are the available sub-locations${meta.currentLocation ? ` in ${meta.currentLocation}` : ''}:`
             try { await updateSessionState(phoneNumber, { lastMenu: 'sublocations', lastMenuAt: new Date().toISOString(), currentSubLocationId: undefined, currentSubLocationName: undefined }) } catch {}
-            return [header, '', ...formatted, '', `Next: reply with your sub-location choice, or [${formatted.length + 1}] to go back.`].join('\n')
+            const parts: string[] = []
+            if (rr?.message) parts.push(rr.message, '')
+            parts.push(header, '', ...formatted)
+            if (formatted.length > 0) parts.push('', `Next: reply with your sub-location choice, or [${formatted.length + 1}] to go back.`)
+            return parts.join('\\n')
           }
           if (pick === 2) {
             return 'Okay — you can send more photos/videos for this area when you are ready.'
