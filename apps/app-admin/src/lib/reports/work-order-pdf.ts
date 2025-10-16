@@ -140,6 +140,9 @@ type EntryLike = {
   createdOn?: Date | string | null
   photos?: string[] | null
   videos?: string[] | null
+  cause?:string
+  resolution?:string
+  caption?:any
   media?: {
     url?: string | null
     caption?: string | null
@@ -176,6 +179,8 @@ type TableRowInfo = {
   summaryMedia?: CellSegment | CellSegment[]
   // Marks primary task rows (for alternating background)
   isTaskRow?: boolean
+  // When true, do not render a bordered table row, only the media block
+  mediaOnly?: boolean
 }
 
 function normalizeConditionValue(value: unknown): string | null {
@@ -188,7 +193,8 @@ function normalizeConditionValue(value: unknown): string | null {
 function isConditionAllowed(value: unknown, allowed?: Set<string>): boolean {
   if (!allowed || allowed.size === 0) return true
   const normalized = normalizeConditionValue(value)
-  if (!normalized) return true
+  // When a filter set is provided, omit tasks without a condition
+  if (!normalized) return false
   return allowed.has(normalized)
 }
 
@@ -599,6 +605,12 @@ async function buildTableRows(
           .filter((entry: EntryLike) => (entry as any)?.includeInReport === true)
           .filter((entry: EntryLike) => isConditionAllowed((entry as any)?.condition, allowedConditions))
 
+        // When generating "entry-only" reports with selected conditions,
+        // omit tasks whose condition is not included at all.
+        if (entryOnly && !taskConditionAllowed) {
+          continue
+        }
+
         const rowSegments: CellSegment[] = []
 
         if (locationSegments.length && taskIdx === 0) {
@@ -677,7 +689,8 @@ async function buildTableRows(
                 { text: '' },
                 { text: '' }
               ],
-              summaryMedia: mediaSegment
+              summaryMedia: mediaSegment,
+              mediaOnly: true
             })
           }
 
@@ -797,11 +810,11 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
         doc.save()
         try {
           doc.fillColor(options.background)
-          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.15)
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
           doc.rect(x, y, width, rowHeight).fill()
         } finally {
           if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-          doc.restore()
+          doc.restore
         }
       }
       doc.rect(x, y, width, rowHeight).stroke()
@@ -1286,7 +1299,7 @@ export async function appendWorkOrderSection(
     { text: "Location", bold: true },
     { text: "Item", bold: true },
     { text: "Subtasks", bold: true },
-    { text: "Status", bold: true }
+    { text: "Condition", bold: true }
   ]
 
   const headerHeight = drawTableRow(doc, y, headerRow, { header: true })
@@ -1295,8 +1308,9 @@ export async function appendWorkOrderSection(
   let taskShadeToggle = false
   tableRows.forEach((rowInfo) => {
     const remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
-    const requiredHeight = calculateRowHeight(doc, rowInfo.cells)
-      + calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
+    const rowH = rowInfo.mediaOnly ? 0 : calculateRowHeight(doc, rowInfo.cells)
+    const mediaH = calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
+    const requiredHeight = rowH + mediaH
 
     if (requiredHeight > remainingSpace) {
       // Draw footer on current page before moving to the next
@@ -1307,10 +1321,12 @@ export async function appendWorkOrderSection(
       y += headerAgainHeight
     }
 
-    const background = rowInfo.isTaskRow ? (taskShadeToggle ? '#f8fafc' : undefined) : undefined
-    const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
-    y += consumedHeight
-    if (rowInfo.isTaskRow) taskShadeToggle = !taskShadeToggle
+    if (!rowInfo.mediaOnly) {
+      const background = rowInfo.isTaskRow ? (taskShadeToggle ? '#f1f5f9' : undefined) : undefined
+      const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
+      y += consumedHeight
+      if (rowInfo.isTaskRow) taskShadeToggle = !taskShadeToggle
+    }
 
     if (rowInfo.summaryMedia) {
       const mediaHeight = drawMediaBlocks(doc, y, rowInfo.summaryMedia)
