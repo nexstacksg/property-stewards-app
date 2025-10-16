@@ -10,66 +10,11 @@ import {
   DialogTitle,
   DialogTrigger
 } from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import WorkOrderItemMedia, { MediaAttachment as WorkOrderMediaAttachment } from "@/components/work-order-item-media"
+import AddRemarkForm from "@/components/item-entries-dialog/add-remark-form"
+import EntryCard from "@/components/item-entries-dialog/entry-card"
+import { DisplayEntry, Entry, PendingMediaFile, Task } from "@/components/item-entries-dialog/types"
 import { extractEntryMedia, mergeMediaLists, stringsToAttachments } from "@/lib/media-utils"
 import { useRouter } from "next/navigation"
-import { Pencil, Trash2, Upload, X } from "lucide-react"
-
-const CONDITION_OPTIONS = [
-  { value: "", label: "Select condition" },
-  { value: "GOOD", label: "Good" },
-  { value: "FAIR", label: "Fair" },
-  { value: "UNSATISFACTORY", label: "Un-Satisfactory" },
-  { value: "UN_OBSERVABLE", label: "Un-Observable" },
-  { value: "NOT_APPLICABLE", label: "Not Applicable" }
-]
-
-type Task = {
-  id: string
-  name?: string | null
-  status?: string | null
-  condition?: string | null
-  photos?: string[] | null
-  videos?: string[] | null
-  entries?: { id: string }[] | null
-  location?: { id: string; name?: string | null } | null
-}
-
-type Entry = {
-  id: string
-  remarks?: string | null
-  cause?: string | null
-  resolution?: string | null
-  includeInReport?: boolean | null
-  inspector?: { id: string; name: string } | null
-  user?: { id: string; username?: string | null; email?: string | null } | null
-  condition?: string | null
-  task?: Task | null
-  photos?: string[] | null
-  videos?: string[] | null
-  media?: EntryMedia[] | null
-  location?:any
-}
-
-type EntryMedia = {
-  id: string
-  url: string
-  caption?: string | null
-  type: 'PHOTO' | 'VIDEO'
-  order?: number | null
-}
-
-type DisplayEntry = Entry & {
-  task: Task | undefined
-  photos: WorkOrderMediaAttachment[]
-  videos: WorkOrderMediaAttachment[]
-}
-
-type PendingMediaFile = {
-  file: File
-  caption: string
-}
 
 type Props = {
   itemId: string
@@ -83,21 +28,6 @@ type Props = {
   }>
   itemName?: string
   triggerLabel?: string | ((count: number) => string)
-}
-
-function formatCondition(value?: string | null) {
-  if (!value) return null
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
-}
-
-function buildMediaLabel(itemName?: string, context?: string | null) {
-  if (!itemName) return context || "Checklist item remark"
-  if (!context) return itemName
-  return `${itemName} — ${context}`
 }
 
 export default function ItemEntriesDialog({
@@ -137,13 +67,8 @@ export default function ItemEntriesDialog({
   const [editingSubmitting, setEditingSubmitting] = useState(false)
   const [editingMediaCaptions, setEditingMediaCaptions] = useState<Record<string, string>>({})
 
-  // Keep localEntries stable during refreshes that stream empty arrays.
-  // Only adopt server entries when it has data (or when we previously had none).
   useEffect(() => {
-    if (!Array.isArray(entries)) return
-    if (entries.length === 0 && localEntries.length > 0) return
-    setLocalEntries(entries)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        setLocalEntries(entries)
   }, [entries])
 
   useEffect(() => {
@@ -583,7 +508,8 @@ export default function ItemEntriesDialog({
         ]),
       } as any
     })
-  }, [])
+  }, [localEntries, localTasks])
+
 
   const remarkCount = displayEntries.length
   const hasEntries = remarkCount > 0
@@ -647,485 +573,73 @@ export default function ItemEntriesDialog({
           </div>
 
           {addingRemark ? (
-            <form onSubmit={handleSaveRemark} className="space-y-4 rounded-md border bg-background p-4 shadow-sm">
-              {formError && <p className="text-sm text-destructive">{formError}</p>}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={`select-location-${itemId}`}>Location</Label>
-                  <select
-                    id={`select-location-${itemId}`}
-                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                    value={selectedLocationId}
-                    onChange={(event) => setSelectedLocationId(event.target.value)}
-                    disabled={submitting || locationOptions.length === 0}
-                  >
-                    <option value="">Select location</option>
-                    {locationOptions.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>Conditions for subtasks</Label>
-                  {availableTasks.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No subtasks for this location.</p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <div className="flex flex-col gap-4 min-w-max">
-                        {availableTasks.map((task) => (
-                          <div key={task.id} className="flex justify-between items-center gap-2">
-                            <span className="text-xs text-muted-foreground  truncate" title={task.name || 'Untitled subtask'}>
-                              {task.name || 'Untitled subtask'}
-                            </span>
-                            <select
-                              className="h-8 w-55 rounded-md border  text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={conditionsByTask[task.id] ?? ''}
-                              onChange={(e) => setConditionsByTask((prev) => ({ ...prev, [task.id]: e.target.value }))}
-                              disabled={submitting}
-                            >
-                              {CONDITION_OPTIONS.map((option) => (
-                                <option key={option.value || 'empty'} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor={`remark-text-${itemId}`}>Remarks (location)</Label>
-                <textarea
-                  id={`remark-text-${itemId}`}
-                  className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                  value={remarkText}
-                  onChange={(event) => setRemarkText(event.target.value)}
-                  placeholder="Add context for this location"
-                  disabled={submitting}
-                />
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={`cause-text-${itemId}`}>Cause</Label>
-                  <textarea
-                    id={`cause-text-${itemId}`}
-                    className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                    value={causeText}
-                    onChange={(event) => setCauseText(event.target.value)}
-                    placeholder="Describe the suspected cause (optional)"
-                    disabled={submitting}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`resolution-text-${itemId}`}>Resolution</Label>
-                  <textarea
-                    id={`resolution-text-${itemId}`}
-                    className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                    value={resolutionText}
-                    onChange={(event) => setResolutionText(event.target.value)}
-                    placeholder="Outline the recommended resolution (optional)"
-                    disabled={submitting}
-                  />
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label>Attachments</Label>
-                  <div className="rounded-md border border-dashed border-muted-foreground/30 bg-muted/10 px-3 py-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm text-muted-foreground">
-                        {photoFiles.length} photo(s) • {videoFiles.length} video(s)
-                      </p>
-                      <div className="flex items-center gap-2">
-                        {(photoFiles.length > 0 || videoFiles.length > 0) && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleClearMedia}
-                            disabled={submitting}
-                            className="h-8 px-2 text-xs"
-                          >
-                            <X className="mr-1 h-3 w-3" />Clear all
-                          </Button>
-                        )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => mediaInputRef.current?.click()}
-                          disabled={submitting}
-                          title="Add photos or videos"
-                        >
-                          <Upload className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    {(photoFiles.length > 0 || videoFiles.length > 0) && (
-                      <div className="mt-3 space-y-3 text-sm">
-                        {photoFiles.map((entry, index) => (
-                          <div
-                            key={`photo-${index}-${entry.file.name}`}
-                            className="rounded border border-transparent bg-background px-2 py-2 text-muted-foreground"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="truncate">Photo: {entry.file.name || `photo-${index + 1}`}</span>
-                              <button
-                                type="button"
-                                onClick={() => removePhotoAt(index)}
-                                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                disabled={submitting}
-                                aria-label={`Remove ${entry.file.name || 'photo'}`}
-                              >
-                                <X className="h-3.5 w-3.5" aria-hidden="true" />
-                                <span className="sr-only">Remove file</span>
-                              </button>
-                            </div>
-                            <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`photo-caption-${itemId}-${index}`}>
-                              Caption (optional)
-                            </label>
-                            <input
-                              id={`photo-caption-${itemId}-${index}`}
-                              type="text"
-                              className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={entry.caption}
-                              onChange={(event) => updatePhotoCaption(index, event.target.value)}
-                              placeholder="Describe this photo"
-                              disabled={submitting}
-                            />
-                          </div>
-                        ))}
-                        {videoFiles.map((entry, index) => (
-                          <div
-                            key={`video-${index}-${entry.file.name}`}
-                            className="rounded border border-transparent bg-background px-2 py-2 text-muted-foreground"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="truncate">Video: {entry.file.name || `video-${index + 1}`}</span>
-                              <button
-                                type="button"
-                                onClick={() => removeVideoAt(index)}
-                                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                disabled={submitting}
-                                aria-label={`Remove ${entry.file.name || 'video'}`}
-                              >
-                                <X className="h-3.5 w-3.5" aria-hidden="true" />
-                                <span className="sr-only">Remove file</span>
-                              </button>
-                            </div>
-                            <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`video-caption-${itemId}-${index}`}>
-                              Caption (optional)
-                            </label>
-                            <input
-                              id={`video-caption-${itemId}-${index}`}
-                              type="text"
-                              className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={entry.caption}
-                              onChange={(event) => updateVideoCaption(index, event.target.value)}
-                              placeholder="Describe this video"
-                              disabled={submitting}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Files upload to storage after you save this remark.
-                  </p>
-                </div>
-                <input
-                  ref={mediaInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*,video/*"
-                  className="hidden"
-                  onChange={handleMediaSelection}
-                  disabled={submitting}
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={resetForm} disabled={submitting}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={submitting || !selectedLocationId}>
-                  {submitting ? "Saving..." : "Save Remark"}
-                </Button>
-              </div>
-            </form>
+            <AddRemarkForm
+              itemId={itemId}
+              workOrderId={workOrderId}
+              locationOptions={locationOptions}
+              selectedLocationId={selectedLocationId}
+              setSelectedLocationId={(id) => setSelectedLocationId(id)}
+              availableTasks={availableTasks}
+              conditionsByTask={conditionsByTask}
+              setConditionsByTask={(next) => setConditionsByTask(next)}
+              remarkText={remarkText}
+              setRemarkText={(v) => setRemarkText(v)}
+              causeText={causeText}
+              setCauseText={(v) => setCauseText(v)}
+              resolutionText={resolutionText}
+              setResolutionText={(v) => setResolutionText(v)}
+              submitting={submitting}
+              formError={formError}
+              onSubmit={handleSaveRemark}
+              onCancel={resetForm}
+              photoFiles={photoFiles}
+              videoFiles={videoFiles}
+              updatePhotoCaption={updatePhotoCaption}
+              updateVideoCaption={updateVideoCaption}
+              removePhotoAt={removePhotoAt}
+              removeVideoAt={removeVideoAt}
+              onMediaSelection={handleMediaSelection}
+              onClearMedia={handleClearMedia}
+              mediaInputRef={mediaInputRef}
+            />
           ) : null}
 
           {hasEntries ? (
             <div className="space-y-3">
               {displayEntries.map((entry) => {
-                const task = entry.task
-                const locationFromEntry = (entry as any)?.location
-                const locationIdFromEntry = (entry as any)?.locationId as string | undefined
-                const locationFromTask = task?.location as any
-                let locationId = (locationFromEntry?.id || locationFromTask?.id || locationIdFromEntry) as string | undefined
-                let locationName: string | null = locationFromEntry?.name || locationFromTask?.name || null
-                if (!locationName && locationId) {
-                  const locOpt = locationOptions.find((l) => l.id === locationId)
-                  if (locOpt) locationName = locOpt.name
-                }
-                const fallbackLocationName = !locationName && (task || locationFromEntry) ? (itemName ? `${itemName} — General` : 'General') : null
-                locationName = locationName || fallbackLocationName
-                // Build a per-location conditions summary (name: condition)
-                let conditionSummary: string | null = null
-                // If we only have a fallback location, try to resolve to the "unassigned" bucket
-                if (!locationId && fallbackLocationName) {
-                  const unassigned = locationOptions.find((l) => l.id === 'unassigned')
-                  if (unassigned) locationId = 'unassigned'
-                }
-
-                if (locationId) {
-                  const loc = locationOptions.find((l) => l.id === locationId)
-                  if (loc) {
-                    conditionSummary = (loc.tasks || []).map((t: any) => `${t.name || 'Subtask'}: ${formatCondition(t.condition) || '—'}`)
-                  }
-                }
-                const conditionLabel = null // no single condition on the remark card
-                const createdBy = entry.inspector?.name || entry.user?.username || entry.user?.email || null
-                const headlineBase = task?.name || createdBy || 'Remark'
-                const headline = locationName ? `${locationName} — ${headlineBase}` : headlineBase
-                const mediaContext = task?.name || locationName || createdBy || null
-                const mediaLabel = buildMediaLabel(itemName, mediaContext)
-                const showByline = Boolean(createdBy) && headline !== createdBy
                 const isEditing = editingEntryId === entry.id
-                const cardClasses = `rounded-md border p-3 ${isEditing ? 'border-primary/60 bg-primary/5' : ''}`
-
                 return (
-                  <div key={entry.id} className={cardClasses}>
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="text-sm font-medium">{headline}</p>
-                       
-                        {locationName ? (
-                          <p className="text-xs text-muted-foreground mt-0.5">Location: {locationName}</p>
-                        ) : null}
-                        {Array.isArray(conditionSummary) && conditionSummary.length > 0 ? (
-                          <div className="mt-0.5 space-y-0.5">
-                            {conditionSummary.map((line: string, idx: number) => (
-                              <p key={idx} className="text-xs text-muted-foreground">{line}</p>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="flex flex-col items-end gap-2 sm:self-start">
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => {
-                              if (isEditing) {
-                                cancelEditing()
-                              } else {
-                                beginEditingEntry(entry)
-                              }
-                            }}
-                            disabled={submitting || editingSubmitting || deletingEntryId === entry.id}
-                            title={isEditing ? 'Cancel edit' : 'Edit remark'}
-                          >
-                            <Pencil className={`h-4 w-4 ${isEditing ? 'text-primary' : ''}`} />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => handleDeleteEntry(entry.id)}
-                            disabled={deletingEntryId === entry.id || editingSubmitting}
-                            title="Delete remark"
-                          >
-                            <Trash2 className={`h-4 w-4 ${deletingEntryId === entry.id ? 'animate-pulse text-destructive' : ''}`} />
-                          </Button>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs text-muted-foreground select-none">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(entry.includeInReport)}
-                            onChange={(event) => toggleInclude(entry.id, event.target.checked)}
-                            disabled={editingSubmitting}
-                          />
-                          Use in final report
-                        </label>
-                      </div>
-                    </div>
-                    {isEditing ? (
-                      <form onSubmit={handleUpdateRemark} className="mt-3 space-y-3 rounded-md border bg-background p-3 shadow-sm">
-                        {editingError && (
-                          <p className="text-sm text-destructive">{editingError}</p>
-                        )}
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          {/* For subtask-level remarks: single condition editor; for location-level: per-subtask row */}
-                          {entry.task ? (
-                            <div className="space-y-2">
-                              <Label htmlFor={`edit-condition-${entry.id}`}>Condition</Label>
-                              <select
-                                id={`edit-condition-${entry.id}`}
-                                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                                value={editingCondition}
-                                onChange={(event) => setEditingCondition(event.target.value)}
-                                disabled={editingSubmitting}
-                              >
-                                {CONDITION_OPTIONS.map((option) => (
-                                  <option key={option.value || 'empty'} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : (
-                            <div className="space-y-2 sm:col-span-2">
-                              <Label>Conditions for subtasks</Label>
-                              {editingTasksForLocation.length === 0 ? (
-                                <p className="text-sm text-muted-foreground">No subtasks for this location.</p>
-                              ) : (
-                                <div className="overflow-x-auto">
-                                  <div className="flex flex-col  gap-4 min-w-max">
-                                    {editingTasksForLocation.map((task) => (
-                                      <div key={task.id} className="flex justify-between  gap-2">
-                                        <span className="text-xs text-muted-foreground truncate" title={task.name || 'Untitled subtask'}>
-                                          {task.name || 'Untitled subtask'}
-                                        </span>
-                                        <select
-                                          className="h-8 w-55 rounded-md border px-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                                          value={editingConditionsByTask[task.id] ?? ''}
-                                          onChange={(e) => setEditingConditionsByTask((prev) => ({ ...prev, [task.id]: e.target.value }))}
-                                          disabled={editingSubmitting}
-                                        >
-                                          {CONDITION_OPTIONS.map((option) => (
-                                            <option key={option.value || 'empty'} value={option.value}>
-                                              {option.label}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          <div className="space-y-2 sm:col-span-2">
-                            <Label htmlFor={`edit-remark-${entry.id}`}>Remarks</Label>
-                            <textarea
-                              id={`edit-remark-${entry.id}`}
-                              className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={editingRemarkText}
-                              onChange={(event) => setEditingRemarkText(event.target.value)}
-                              disabled={editingSubmitting}
-                              placeholder="Update the note for this subtask"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`edit-cause-${entry.id}`}>Cause</Label>
-                            <textarea
-                              id={`edit-cause-${entry.id}`}
-                              className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={editingCauseText}
-                              onChange={(event) => setEditingCauseText(event.target.value)}
-                              disabled={editingSubmitting}
-                              placeholder="Describe the suspected cause (optional)"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor={`edit-resolution-${entry.id}`}>Resolution</Label>
-                            <textarea
-                              id={`edit-resolution-${entry.id}`}
-                              className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={editingResolutionText}
-                              onChange={(event) => setEditingResolutionText(event.target.value)}
-                              disabled={editingSubmitting}
-                              placeholder="Outline the recommended resolution (optional)"
-                            />
-                          </div>
-                        </div>
-                        {(entry.media && entry.media.length > 0) ? (
-                          <div className="space-y-3">
-                            <Label>Edit Media Captions</Label>
-                            <div className="space-y-4">
-                              {(entry.media || []).map((mediaItem) => {
-                                const isPhoto = mediaItem.type === 'PHOTO'
-                                const captionValue = editingMediaCaptions[mediaItem.id] ?? mediaItem.caption ?? ''
-                                return (
-                                  <div key={mediaItem.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
-                                    <div className="flex items-start gap-3">
-                                      {isPhoto ? (
-                                        <img
-                                          src={mediaItem.url}
-                                          alt={captionValue ? `${captionValue} preview` : 'Photo preview'}
-                                          className="h-20 w-20 rounded object-cover border"
-                                        />
-                                      ) : (
-                                        <video src={mediaItem.url} className="h-20 w-32 rounded border" controls={false} muted />
-                                      )}
-                                      <div className="flex-1 space-y-2">
-                                        
-                                        <input
-                                          type="text"
-                                          className="mt-2 w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                                          value={captionValue}
-                                          onChange={(event) =>
-                                            setEditingMediaCaptions((prev) => ({
-                                              ...prev,
-                                              [mediaItem.id]: event.target.value,
-                                            }))
-                                          }
-                                          placeholder="Add a caption"
-                                          disabled={editingSubmitting}
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        ) : null}
-                        <div className="flex justify-end gap-2">
-                          <Button type="button" variant="outline" onClick={cancelEditing} disabled={editingSubmitting}>
-                            Cancel
-                          </Button>
-                          <Button type="submit" disabled={editingSubmitting}>
-                            {editingSubmitting ? 'Saving...' : 'Update Remark'}
-                          </Button>
-                        </div>
-                      </form>
-                    ) : entry.remarks ? (
-                      <p className="text-sm text-muted-foreground mt-2">
-                        <span className="font-medium text-foreground">Remarks:</span> {entry.remarks}
-                      </p>
-                    ) : null}
-                    {!isEditing && entry.cause ? (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        <span className="font-medium text-foreground">Cause:</span> {entry.cause}
-                      </p>
-                    ) : null}
-                    {!isEditing && entry.resolution ? (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        <span className="font-medium text-foreground">Resolution:</span> {entry.resolution}
-                      </p>
-                    ) : null}
-                    <div className="mt-2">
-                      <WorkOrderItemMedia
-                        itemId={itemId}
-                        workOrderId={workOrderId}
-                        photos={entry.photos}
-                        videos={entry.videos}
-                        itemName={mediaLabel}
-                        contributionId={entry.id}
-                      />
-                    </div>
-                  </div>
+                  <EntryCard
+                    key={entry.id}
+                    entry={entry}
+                    itemId={itemId}
+                    workOrderId={workOrderId}
+                    itemName={itemName}
+                    locationOptions={locationOptions}
+                    isEditing={isEditing}
+                    submitting={submitting}
+                    editingSubmitting={editingSubmitting}
+                    deletingEntryId={deletingEntryId}
+                    onBeginEdit={beginEditingEntry}
+                    onCancelEdit={cancelEditing}
+                    onDelete={handleDeleteEntry}
+                    onToggleInclude={toggleInclude}
+                    editingCondition={editingCondition}
+                    setEditingCondition={setEditingCondition}
+                    editingRemarkText={editingRemarkText}
+                    setEditingRemarkText={setEditingRemarkText}
+                    editingCauseText={editingCauseText}
+                    setEditingCauseText={setEditingCauseText}
+                    editingResolutionText={editingResolutionText}
+                    setEditingResolutionText={setEditingResolutionText}
+                    editingMediaCaptions={editingMediaCaptions}
+                    setEditingMediaCaptions={setEditingMediaCaptions}
+                    editingError={editingError}
+                    onSubmitEdit={handleUpdateRemark}
+                    editingTasksForLocation={editingTasksForLocation}
+                    editingConditionsByTask={editingConditionsByTask}
+                    setEditingConditionsByTask={setEditingConditionsByTask}
+                  />
                 )
               })}
             </div>
