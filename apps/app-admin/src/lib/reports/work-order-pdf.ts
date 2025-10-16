@@ -193,7 +193,8 @@ function normalizeConditionValue(value: unknown): string | null {
 function isConditionAllowed(value: unknown, allowed?: Set<string>): boolean {
   if (!allowed || allowed.size === 0) return true
   const normalized = normalizeConditionValue(value)
-  if (!normalized) return true
+  // When a filter set is provided, omit tasks without a condition
+  if (!normalized) return false
   return allowed.has(normalized)
 }
 
@@ -603,6 +604,12 @@ async function buildTableRows(
         const filteredEntries = entries
           .filter((entry: EntryLike) => (entry as any)?.includeInReport === true)
           .filter((entry: EntryLike) => isConditionAllowed((entry as any)?.condition, allowedConditions))
+
+        // When generating "entry-only" reports with selected conditions,
+        // omit tasks whose condition is not included at all.
+        if (entryOnly && !taskConditionAllowed) {
+          continue
+        }
 
         const rowSegments: CellSegment[] = []
 
@@ -1292,7 +1299,7 @@ export async function appendWorkOrderSection(
     { text: "Location", bold: true },
     { text: "Item", bold: true },
     { text: "Subtasks", bold: true },
-    { text: "Status", bold: true }
+    { text: "Condition", bold: true }
   ]
 
   const headerHeight = drawTableRow(doc, y, headerRow, { header: true })

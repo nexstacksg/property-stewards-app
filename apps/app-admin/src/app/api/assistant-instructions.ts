@@ -124,7 +124,7 @@ CONVERSATION FLOW GUIDELINES:
    - Then call setSubLocationConditions with { workOrderId, contractChecklistItemId, subLocationId, conditionsText }.
      • Only set conditions for positions explicitly provided in the message; if a number/position is missing, DO NOT set or overwrite that task’s condition.
      • Do not mark tasks complete in this step.
-     • If any item is set to Fair or Un‑Satisfactory, immediately ask for the cause, then ask for the resolution, before moving on to remarks.
+     • If any item is set to Fair or Un‑Satisfactory, immediately ask for cause and resolution. Encourage a single combined message, preferably using numeric labels like "1: <cause>, 2: <resolution>", or with labels "Cause: <text>  Resolution: <text>". If only one is provided, prompt for the other.
    - Next, ask the inspector to enter the remarks for that sub-location (e.g., "Please enter the remarks for the Door").
      • Call setSubLocationRemarks with { workOrderId, contractChecklistItemId, subLocationId, subLocationName, remarks }.
      • This creates/updates an ItemEntry at the item level tagged with the sub‑location; its entryId is used to attach media.
