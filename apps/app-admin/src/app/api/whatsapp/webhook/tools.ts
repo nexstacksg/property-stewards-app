@@ -46,6 +46,8 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'addLocationRemarks', description: 'Save remarks for current location and create/update an ItemEntry for the inspector', parameters: { type: 'object', properties: { remarks: { type: 'string' } }, required: ['remarks'] } } },
   { type: 'function' as const, function: { name: 'getSubLocations', description: 'Get sub-locations for a checklist item', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, locationName: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId'] } } },
   { type: 'function' as const, function: { name: 'getTasksForLocation', description: 'Get tasks for a location', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, location: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' } }, required: ['workOrderId', 'location'] } } },
+  { type: 'function' as const, function: { name: 'setSubLocationConditions', description: 'Set conditions for all tasks under a specific sub-location in one message. Does not complete tasks.', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, conditionsText: { type: 'string', description: 'User input like "1 Good, 2 Good, 3 Fair" or "Good Good Fair"' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'conditionsText'] } } },
+  { type: 'function' as const, function: { name: 'setSubLocationRemarks', description: 'Create/update a remark entry at the sub-location level (stored in ItemEntry at item level, tagged in text). Returns entryId for attaching media.', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, subLocationName: { type: 'string' }, remarks: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'remarks'] } } },
   {
     type: 'function' as const,
     function: {
@@ -427,7 +429,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentTaskName: undefined,
             currentTaskEntryId: undefined,
             currentTaskCondition: undefined,
-            taskFlowStage: undefined,
+            // enter sub-location condition collection by default
+            taskFlowStage: 'condition',
             lastMenu: 'tasks',
             lastMenuAt: new Date().toISOString()
           })
@@ -473,9 +476,13 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const tasksFormatted = formattedTasks.map((t: any) => `[${t.number}] ${t.description}${t.displayStatus === 'done' ? ' (Done)' : ''}`)
         const markCompleteNumber = allTasksCompleted ? (formattedTasks.length + 1) : null
         const goBackNumber = allTasksCompleted ? (formattedTasks.length + 2) : (formattedTasks.length + 1)
-        const nextPrompt = allTasksCompleted
-          ? `All tasks for ${location} are done. Reply with a task number to review, [${markCompleteNumber}] to mark this location complete, or [${goBackNumber}] to go back.`
-          : `Reply with a number to work on a task (or ${goBackNumber} to go back) when you're ready.`
+        // New flow: prompt for bulk conditions entry for sub-location instead of per-task selection
+        const nextPrompt = `Please go through the checklist for ${effectiveSubLocationId ? (formattedTasks[0]?.locationName || location) : location}.
+
+Reply in ONE message with the condition for each item in order, e.g.:
+"1 Good, 2 Good, 3 Fair" or "Good Good Fair".
+
+You can omit any numbers you want to leave unset.`
         const firstTask = tasks[0]
         if (sessionId && firstTask?.locationId) {
           await updateSessionState(sessionId, {
@@ -496,6 +503,108 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           locationStatus: tasks.length > 0 && firstTask?.locationStatus === 'completed' ? 'done' : 'pending',
           nextPrompt
         })
+      }
+      case 'setSubLocationConditions': {
+        const { workOrderId, contractChecklistItemId, subLocationId, conditionsText } = args
+        if (!workOrderId || !contractChecklistItemId || !subLocationId || !conditionsText) {
+          return JSON.stringify({ success: false, error: 'Missing required parameters' })
+        }
+        // Load tasks for that sub-location in stable order
+        const tasks = await prisma.checklistTask.findMany({
+          where: { locationId: subLocationId },
+          orderBy: { createdOn: 'asc' },
+          select: { id: true, name: true }
+        })
+        if (tasks.length === 0) return JSON.stringify({ success: false, error: 'No tasks found for this sub-location.' })
+
+        const normalize = (s: string) => s.trim().toLowerCase()
+        const mapWord = (w: string): string | null => {
+          const t = normalize(w)
+          if (t === '1' || t === 'good' || t === 'g' || t === 'ok' || t === 'okay') return 'GOOD'
+          if (t === '2' || t === 'fair' || t === 'f') return 'FAIR'
+          if (t === '3' || t.startsWith('unsat') || t === 'unsatisfactory' || t === 'bad' || t === 'poor') return 'UNSATISFACTORY'
+          if (t === '4' || t.replace(/[^a-z]/g, '') === 'unobservable') return 'UN_OBSERVABLE'
+          if (t === '5' || t === 'na' || t === 'n/a' || t.includes('not applicable')) return 'NOT_APPLICABLE'
+          return null
+        }
+        const text = String(conditionsText || '')
+        const pairs: Array<{ index: number; cond: string }> = []
+        // Enumerated pairs: "1 Good", "2: Fair", etc.
+        const re = /(\d{1,2})\s*[:.)-]?\s*([a-zA-Z/\- _]+|[1-5])/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(text)) !== null) {
+          const idx = Number(m[1])
+          const cond = mapWord(m[2])
+          if (idx >= 1 && idx <= tasks.length && cond) pairs.push({ index: idx, cond })
+        }
+        if (pairs.length === 0) {
+          // Try bare list: "Good, Good, Fair"
+          const words = text.split(/[\s,;\n]+/).filter(Boolean)
+          let pos = 1
+          for (const w of words) {
+            const cond = mapWord(w)
+            if (!cond) continue
+            if (pos > tasks.length) break
+            pairs.push({ index: pos, cond })
+            pos++
+          }
+        }
+        if (pairs.length === 0) {
+          const allowed = 'GOOD, FAIR, UNSATISFACTORY, UN_OBSERVABLE, NOT_APPLICABLE (or numbers 1–5)'
+          return JSON.stringify({ success: false, error: `No valid conditions detected. Reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair". Allowed values: ${allowed}.` })
+        }
+        // Deduplicate by last occurrence per index
+        const byIndex = new Map<number, string>()
+        for (const p of pairs) byIndex.set(p.index, p.cond)
+        const updates: Array<{ number: number; taskId: string; name: string; condition: string }> = []
+        let i = 1
+        for (const t of tasks) {
+          if (byIndex.has(i)) {
+            const cond = byIndex.get(i)!
+            try { await prisma.checklistTask.update({ where: { id: t.id }, data: { condition: cond as any } }) } catch (e) { console.error('setSubLocationConditions: update failed', e) }
+            updates.push({ number: i, taskId: t.id, name: t.name, condition: cond })
+          }
+          i++
+        }
+        try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
+        if (sessionId) {
+          await updateSessionState(sessionId, { taskFlowStage: 'remarks', currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskItemId: contractChecklistItemId })
+        }
+        // Resolve sub-location name for a nicer message
+        let subName = ''
+        try {
+          const loc = await prisma.contractChecklistLocation.findUnique({ where: { id: subLocationId }, select: { name: true } })
+          subName = loc?.name || ''
+        } catch {}
+        const lines: string[] = []
+        lines.push(`✅ Conditions updated${subName ? ` for ${subName}` : ''}.`)
+        if (updates.length > 0) {
+          for (const u of updates) lines.push(`- [${u.number}] ${u.name}: ${u.condition}`)
+        }
+        lines.push('')
+        lines.push('Next: please enter your remarks for this sub-location (a short sentence is fine).')
+        return JSON.stringify({ success: true, updatedCount: updates.length, message: lines.join('\n') })
+      }
+      case 'setSubLocationRemarks': {
+        const { workOrderId, contractChecklistItemId, subLocationId, subLocationName, remarks } = args
+        if (!workOrderId || !contractChecklistItemId || !subLocationId || !remarks) return JSON.stringify({ success: false, error: 'Missing required parameters' })
+        let inspectorId: string | null = null
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          inspectorId = s.inspectorId || null
+          if (!inspectorId) {
+            inspectorId = await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId)
+          }
+        }
+        // Create a new ItemEntry at item level, tagged in the remarks header with the sub-location name
+        const prefix = subLocationName ? `[${subLocationName}] ` : ''
+        const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
+        try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
+        if (sessionId) {
+          await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media' })
+        }
+        const whereName = subLocationName || 'this sub-location'
+        return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media).` })
       }
       case 'markLocationComplete': {
         const { workOrderId, contractChecklistItemId } = args
@@ -687,7 +796,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             let entryId = latest.currentTaskEntryId
             if (taskId && taskItemId) {
               if (!entryId) {
-                const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, condition: (latest.currentTaskCondition as any) || undefined, cause: causeRaw } })
+                const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
+                const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: locId, condition: (latest.currentTaskCondition as any) || undefined, cause: causeRaw } as any })
                 entryId = created.id
               } else {
                 await prisma.itemEntry.update({ where: { id: entryId }, data: { cause: causeRaw } })
@@ -716,16 +826,18 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
           // Create or update entry with explicit fields only; do not inject default 'Cause'/'Resolution' text into remarks.
           if (!entryId) {
+            const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
             const created = await prisma.itemEntry.create({
               data: {
                 taskId,
                 itemId: taskItemId,
                 inspectorId: inspectorId || undefined,
+                locationId: locId,
                 condition: (latest.currentTaskCondition as any) || undefined,
                 // Persist resolution and optional cause separately
                 cause: latest.pendingTaskCause || undefined,
                 resolution: resolutionRaw
-              }
+              } as any
             })
             entryId = created.id
           } else {
@@ -776,7 +888,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
           }
 
           if (!entryId) {
-            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } })
+            const locId = session.currentTaskLocationId || session.currentSubLocationId || undefined
+            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, locationId: locId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } as any })
             entryId = created.id
           } else if (!shouldSkipRemarks) {
             await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks } })
@@ -915,7 +1028,8 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             // Create an ItemEntry as a fallback if none exists yet
             if (!entryId) {
               try {
-                const created = await prisma.itemEntry.create({ data: { taskId, itemId: targetItemId, inspectorId: inspectorId || undefined, condition: condition as any, remarks: entryRecord?.remarks || undefined, cause: causeText || undefined, resolution: resolutionText || undefined } })
+                const locId = task?.locationId || session.currentTaskLocationId || session.currentSubLocationId || undefined
+                const created = await prisma.itemEntry.create({ data: { taskId, itemId: targetItemId, inspectorId: inspectorId || undefined, locationId: locId, condition: condition as any, remarks: entryRecord?.remarks || undefined, cause: causeText || undefined, resolution: resolutionText || undefined } as any })
                 entryId = created.id
               } catch (e) { console.error('completeTask:finalize failed to create fallback ItemEntry', e) }
             }

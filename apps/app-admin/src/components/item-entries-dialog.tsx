@@ -49,6 +49,7 @@ type Entry = {
   photos?: string[] | null
   videos?: string[] | null
   media?: EntryMedia[] | null
+  location?:any
 }
 
 type EntryMedia = {
@@ -114,8 +115,8 @@ export default function ItemEntriesDialog({
   const [localTasks, setLocalTasks] = useState<Task[]>(tasks)
   const [addingRemark, setAddingRemark] = useState(false)
   const [selectedLocationId, setSelectedLocationId] = useState<string>("")
-  const [selectedTaskId, setSelectedTaskId] = useState<string>("")
-  const [selectedCondition, setSelectedCondition] = useState<string>("")
+  // Per-location: map subtask -> condition for bulk update
+  const [conditionsByTask, setConditionsByTask] = useState<Record<string, string>>({})
   const [remarkText, setRemarkText] = useState<string>("")
   const [causeText, setCauseText] = useState<string>("")
   const [resolutionText, setResolutionText] = useState<string>("")
@@ -134,8 +135,13 @@ export default function ItemEntriesDialog({
   const [editingSubmitting, setEditingSubmitting] = useState(false)
   const [editingMediaCaptions, setEditingMediaCaptions] = useState<Record<string, string>>({})
 
+  // Keep localEntries stable during refreshes that stream empty arrays.
+  // Only adopt server entries when it has data (or when we previously had none).
   useEffect(() => {
+    if (!Array.isArray(entries)) return
+    if (entries.length === 0 && localEntries.length > 0) return
     setLocalEntries(entries)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries])
 
   useEffect(() => {
@@ -203,37 +209,28 @@ export default function ItemEntriesDialog({
 
     if (!locationOptions.some((location) => location.id === selectedLocationId)) {
       setSelectedLocationId("")
-      setSelectedTaskId("")
+      setConditionsByTask({})
     }
   }, [addingRemark, locationOptions, selectedLocationId])
 
   useEffect(() => {
     if (!addingRemark) return
 
-    if (!selectedLocationId) {
-      setSelectedTaskId("")
+    if (!selectedLocationId || availableTasks.length === 0) {
+      setConditionsByTask({})
       return
     }
 
-    if (availableTasks.length === 0) {
-      setSelectedTaskId("")
-      return
-    }
-
-    setSelectedTaskId((prev) =>
-      prev && availableTasks.some((task) => task.id === prev)
-        ? prev
-        : availableTasks[0]?.id || ""
-    )
-
-    setSelectedCondition('GOOD')
+    // Initialize all subtasks under the selected location to GOOD by default
+    const next: Record<string, string> = {}
+    availableTasks.forEach((t) => { if (t?.id) next[t.id] = 'GOOD' })
+    setConditionsByTask(next)
   }, [addingRemark, selectedLocationId, availableTasks])
 
   const resetForm = () => {
     setAddingRemark(false)
     setSelectedLocationId("")
-    setSelectedTaskId("")
-    setSelectedCondition("")
+    setConditionsByTask({})
     setRemarkText("")
     setCauseText("")
     setResolutionText("")
@@ -422,26 +419,21 @@ export default function ItemEntriesDialog({
   const handleSaveRemark: React.FormEventHandler<HTMLFormElement> = async (event) => {
     event.preventDefault()
     if (!selectedLocationId) {
-      setFormError("Please choose a location before selecting a subtask.")
-      return
-    }
-
-    if (!selectedTaskId) {
-      setFormError("Please choose a subtask to attach this remark to.")
+      setFormError("Please choose a location.")
       return
     }
 
     const trimmedRemark = remarkText.trim()
     const trimmedCause = causeText.trim()
     const trimmedResolution = resolutionText.trim()
-    const normalizedCondition = selectedCondition.trim().toUpperCase()
 
-    if (!normalizedCondition) {
-      setFormError('Please select a status for this remark.')
+    const selectedConditions = Object.values(conditionsByTask)
+    if (selectedConditions.length === 0) {
+      setFormError('No subtasks found for this location.')
       return
     }
-    const requiresRemark = normalizedCondition && normalizedCondition !== 'GOOD'
-    const requiresPhoto = normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE' && normalizedCondition !== 'UN_OBSERVABLE'
+    const requiresRemark = selectedConditions.some((c) => c && c !== 'GOOD' && c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
+    const requiresPhoto = selectedConditions.some((c) => c && c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
     const hasPhotos = photoFiles.length > 0
 
     if (!trimmedRemark && (requiresRemark || hasPhotos)) {
@@ -458,12 +450,10 @@ export default function ItemEntriesDialog({
     setFormError(null)
     try {
       const formData = new FormData()
-      formData.set("taskId", selectedTaskId)
       formData.set("locationId", selectedLocationId)
       formData.set("workOrderId", workOrderId)
-      if (selectedCondition) {
-        formData.set("condition", selectedCondition)
-      }
+      const condArray = Object.entries(conditionsByTask).map(([taskId, condition]) => ({ taskId, condition }))
+      formData.set('conditionsByTask', JSON.stringify(condArray))
       if (trimmedRemark.length > 0) {
         formData.set("remark", trimmedRemark)
       }
@@ -495,19 +485,8 @@ export default function ItemEntriesDialog({
       const created: Entry = await response.json()
 
       setLocalEntries((prev) => [...prev, created])
-      setLocalTasks((prev) =>
-        prev.map((task) =>
-          task.id === selectedTaskId
-            ? {
-                ...task,
-                condition: created.task?.condition ?? task.condition,
-                entries: Array.isArray(task.entries)
-                  ? [...task.entries, { id: created.id }]
-                  : [{ id: created.id }],
-              }
-            : task
-        )
-      )
+      // Update all tasks under this location with new conditions
+      setLocalTasks((prev) => prev.map((task) => ({ ...task, condition: conditionsByTask[task.id] ?? task.condition })))
       router.refresh()
       resetForm()
     } catch (error) {
@@ -576,9 +555,9 @@ export default function ItemEntriesDialog({
           extractEntryMedia(entry, 'VIDEO'),
           stringsToAttachments(task?.videos)
         ]),
-      }
+      } as any
     })
-  }, [localEntries, localTasks])
+  }, [])
 
   const remarkCount = displayEntries.length
   const hasEntries = remarkCount > 0
@@ -593,6 +572,8 @@ export default function ItemEntriesDialog({
       cancelEditing()
     }
   }
+
+  console.log(displayEntries)
 
   return (
     <Dialog open={open} onOpenChange={handleDialogToggle}>
@@ -622,8 +603,6 @@ export default function ItemEntriesDialog({
                 cancelEditing()
                 setFormError(null)
                 setSelectedLocationId("")
-                setSelectedTaskId("")
-                setSelectedCondition('GOOD')
                 setRemarkText("")
                 setPhotoFiles([])
                 setVideoFiles([])
@@ -662,48 +641,45 @@ export default function ItemEntriesDialog({
                     ))}
                   </select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`select-subtask-${itemId}`}>Subtask</Label>
-                  <select
-                    id={`select-subtask-${itemId}`}
-                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                    value={selectedTaskId}
-                    onChange={(event) => setSelectedTaskId(event.target.value)}
-                    disabled={submitting || !selectedLocationId || availableTasks.length === 0}
-                  >
-                    <option value="">Select subtask</option>
-                    {availableTasks.map((task) => (
-                      <option key={task.id} value={task.id}>
-                        {task.name || "Untitled subtask"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={`select-condition-${itemId}`}>Condition</Label>
-                  <select
-                    id={`select-condition-${itemId}`}
-                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                    value={selectedCondition}
-                    onChange={(event) => setSelectedCondition(event.target.value)}
-                    disabled={submitting}
-                  >
-                    {CONDITION_OPTIONS.map((option) => (
-                      <option key={option.value || "empty"} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Conditions for subtasks</Label>
+                  {availableTasks.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No subtasks for this location.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <div className="flex flex-col gap-4 min-w-max">
+                        {availableTasks.map((task) => (
+                          <div key={task.id} className="flex justify-between items-center gap-2">
+                            <span className="text-xs text-muted-foreground  truncate" title={task.name || 'Untitled subtask'}>
+                              {task.name || 'Untitled subtask'}
+                            </span>
+                            <select
+                              className="h-8 w-55 rounded-md border  text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                              value={conditionsByTask[task.id] ?? ''}
+                              onChange={(e) => setConditionsByTask((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                              disabled={submitting}
+                            >
+                              {CONDITION_OPTIONS.map((option) => (
+                                <option key={option.value || 'empty'} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor={`remark-text-${itemId}`}>Remarks</Label>
+                <Label htmlFor={`remark-text-${itemId}`}>Remarks (location)</Label>
                 <textarea
                   id={`remark-text-${itemId}`}
                   className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
                   value={remarkText}
                   onChange={(event) => setRemarkText(event.target.value)}
-                  placeholder="Add context for this subtask"
+                  placeholder="Add context for this location"
                   disabled={submitting}
                 />
               </div>
@@ -852,7 +828,7 @@ export default function ItemEntriesDialog({
                 <Button type="button" variant="outline" onClick={resetForm} disabled={submitting}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={submitting || !selectedLocationId || !selectedTaskId}>
+                <Button type="submit" disabled={submitting || !selectedLocationId}>
                   {submitting ? "Saving..." : "Save Remark"}
                 </Button>
               </div>
@@ -863,10 +839,32 @@ export default function ItemEntriesDialog({
             <div className="space-y-3">
               {displayEntries.map((entry) => {
                 const task = entry.task
-                const rawLocationName = task?.location?.name
-                const fallbackLocationName = !rawLocationName && task ? (itemName ? `${itemName} — General` : 'General') : null
-                const locationName = rawLocationName || fallbackLocationName
-                const conditionLabel = formatCondition(entry.condition ?? task?.condition)
+                const locationFromEntry = (entry as any)?.location
+                const locationIdFromEntry = (entry as any)?.locationId as string | undefined
+                const locationFromTask = task?.location as any
+                let locationId = (locationFromEntry?.id || locationFromTask?.id || locationIdFromEntry) as string | undefined
+                let locationName: string | null = locationFromEntry?.name || locationFromTask?.name || null
+                if (!locationName && locationId) {
+                  const locOpt = locationOptions.find((l) => l.id === locationId)
+                  if (locOpt) locationName = locOpt.name
+                }
+                const fallbackLocationName = !locationName && (task || locationFromEntry) ? (itemName ? `${itemName} — General` : 'General') : null
+                locationName = locationName || fallbackLocationName
+                // Build a per-location conditions summary (name: condition)
+                let conditionSummary: string | null = null
+                // If we only have a fallback location, try to resolve to the "unassigned" bucket
+                if (!locationId && fallbackLocationName) {
+                  const unassigned = locationOptions.find((l) => l.id === 'unassigned')
+                  if (unassigned) locationId = 'unassigned'
+                }
+
+                if (locationId) {
+                  const loc = locationOptions.find((l) => l.id === locationId)
+                  if (loc) {
+                    conditionSummary = (loc.tasks || []).map((t: any) => `${t.name || 'Subtask'}: ${formatCondition(t.condition) || '—'}`)
+                  }
+                }
+                const conditionLabel = null // no single condition on the remark card
                 const createdBy = entry.inspector?.name || entry.user?.username || entry.user?.email || null
                 const headlineBase = task?.name || createdBy || 'Remark'
                 const headline = locationName ? `${locationName} — ${headlineBase}` : headlineBase
@@ -881,14 +879,16 @@ export default function ItemEntriesDialog({
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <p className="text-sm font-medium">{headline}</p>
-                        {showByline ? (
-                          <p className="text-xs text-muted-foreground mt-0.5">By {createdBy}</p>
-                        ) : null}
+                       
                         {locationName ? (
                           <p className="text-xs text-muted-foreground mt-0.5">Location: {locationName}</p>
                         ) : null}
-                        {conditionLabel ? (
-                          <p className="text-xs text-muted-foreground mt-0.5">Condition: {conditionLabel}</p>
+                        {Array.isArray(conditionSummary) && conditionSummary.length > 0 ? (
+                          <div className="mt-0.5 space-y-0.5">
+                            {conditionSummary.map((line: string, idx: number) => (
+                              <p key={idx} className="text-xs text-muted-foreground">{line}</p>
+                            ))}
+                          </div>
                         ) : null}
                       </div>
                       <div className="flex flex-col items-end gap-2 sm:self-start">
@@ -939,22 +939,25 @@ export default function ItemEntriesDialog({
                           <p className="text-sm text-destructive">{editingError}</p>
                         )}
                         <div className="grid gap-3 sm:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label htmlFor={`edit-condition-${entry.id}`}>Condition</Label>
-                            <select
-                              id={`edit-condition-${entry.id}`}
-                              className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                              value={editingCondition}
-                              onChange={(event) => setEditingCondition(event.target.value)}
-                              disabled={editingSubmitting}
-                            >
-                              {CONDITION_OPTIONS.map((option) => (
-                                <option key={option.value || 'empty'} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
+                          {/* Hide single-condition editor for location-level entries */}
+                          {entry.task ? (
+                            <div className="space-y-2">
+                              <Label htmlFor={`edit-condition-${entry.id}`}>Condition</Label>
+                              <select
+                                id={`edit-condition-${entry.id}`}
+                                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                                value={editingCondition}
+                                onChange={(event) => setEditingCondition(event.target.value)}
+                                disabled={editingSubmitting}
+                              >
+                                {CONDITION_OPTIONS.map((option) => (
+                                  <option key={option.value || 'empty'} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
                           <div className="space-y-2 sm:col-span-2">
                             <Label htmlFor={`edit-remark-${entry.id}`}>Remarks</Label>
                             <textarea

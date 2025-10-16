@@ -235,12 +235,12 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
         if (resolvedInspectorId) {
           const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
           if (orphan) {
-            await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
+            await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, locationId: (currentSubLocationId || activeTaskLocationId || undefined) as any, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
             currentTaskEntryId = orphan.id
           }
         }
         if (!currentTaskEntryId) {
-          const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } })
+          const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, locationId: (currentSubLocationId || activeTaskLocationId || undefined) as any, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
           currentTaskEntryId = created.id
         }
         await updateSessionState(phoneNumber, { currentTaskEntryId })
@@ -250,7 +250,15 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
         const effectiveCaption = mediaRemark || ""
         await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType, effectiveCaption)
         handledByTaskFlow = true
-        // Prepare confirmation line for cause/resolution when applicable
+        // If we are in sub-location mode (no active task), keep media stage and tailor the message
+        const isSubLocationMode = !activeTaskId && !!(currentSubLocationName || currentLocation)
+        if (isSubLocationMode) {
+          await updateSessionState(phoneNumber, { taskFlowStage: 'media', currentTaskEntryId })
+          const whereName = currentSubLocationName || currentLocation || 'this location'
+          return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} saved for ${whereName}.\n\nYou can send more photos/videos, or say "go back" to pick another area.`
+        }
+
+        // Prepare confirmation line for cause/resolution when applicable (task mode)
         let crLine = ''
         try {
           const cond = (metadata.currentTaskCondition || '').toUpperCase()
