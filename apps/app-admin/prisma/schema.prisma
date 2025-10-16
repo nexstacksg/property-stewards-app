@@ -226,6 +226,7 @@ model ContractChecklistLocation {
   updatedOn  DateTime              @updatedAt
   item       ContractChecklistItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   tasks      ChecklistTask[]
+  entries    ItemEntry[]
 
   @@index([itemId])
   @@index([status])
@@ -254,12 +255,15 @@ model ItemEntry {
   inspector       Inspector?             @relation(fields: [inspectorId], references: [id])
   user            User?                  @relation(fields: [userId], references: [id])
   task            ChecklistTask?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  locationId      String?
+  location        ContractChecklistLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   media           ItemEntryMedia[]
 
   @@index([itemId])
   @@index([inspectorId])
   @@index([userId])
   @@index([taskId])
+  @@index([locationId])
 }
 
 // Inspector ratings are stored inline as JSON on Contract.inspectorRatings

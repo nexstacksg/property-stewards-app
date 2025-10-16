@@ -10,6 +10,7 @@ import {
   formatScheduleRange,
   LOGO_ASPECT_RATIO,
   formatDateTime,
+  formatDate,
   drawFooter
 } from "@/lib/reports/work-order-pdf"
 
@@ -186,12 +187,10 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   doc.moveDown()
 
   doc.font("Helvetica").fontSize(12)
-  const generatedStamp = formatDateTime(options.generatedOn) || new Date(options.generatedOn).toLocaleString("en-SG", {
-    dateStyle: "medium",
-    timeStyle: "short"
-  })
-  // Suppress meta in header per spec
-  // Version and page numbers will be shown in footer; other meta removed
+  const generatedDateOnly = formatDate(options.generatedOn) || new Date(options.generatedOn).toLocaleDateString("en-SG", { dateStyle: "medium" })
+  // Per updated spec: include Generated (date only) and Contract ID
+  doc.text(`Generated: ${generatedDateOnly}`)
+  doc.text(`Contract ID: ${contract.id}`)
   const contractSchedule = formatScheduleRange(contract.scheduledStartDate, contract.scheduledEndDate)
   if (contractSchedule) {
     doc.text(`Schedule: ${contractSchedule}`)

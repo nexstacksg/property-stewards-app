@@ -62,6 +62,8 @@ export async function POST(
     let cause: string | undefined
     let resolution: string | undefined
     let taskId: string | undefined
+    let locationId: string | undefined
+    let conditionsByTaskJson: string | undefined
     let condition: string | undefined
     let workOrderId = 'unknown'
     let photoFiles: File[] = []
@@ -75,6 +77,8 @@ export async function POST(
       cause = toStringValue(form.get('cause'))
       resolution = toStringValue(form.get('resolution'))
       taskId = toStringValue(form.get('taskId'))
+      locationId = toStringValue(form.get('locationId'))
+      conditionsByTaskJson = toStringValue(form.get('conditionsByTask'))
       condition = toStringValue(form.get('condition'))
       const rawWorkOrderId = toStringValue(form.get('workOrderId'))
       if (rawWorkOrderId) workOrderId = rawWorkOrderId
@@ -96,6 +100,12 @@ export async function POST(
       cause = typeof body.cause === 'string' ? body.cause.trim() : undefined
       resolution = typeof body.resolution === 'string' ? body.resolution.trim() : undefined
       taskId = typeof body.taskId === 'string' ? body.taskId : undefined
+      locationId = typeof body.locationId === 'string' ? body.locationId : undefined
+      if (Array.isArray(body.conditionsByTask)) {
+        conditionsByTaskJson = JSON.stringify(body.conditionsByTask)
+      } else if (typeof body.conditionsByTask === 'string') {
+        conditionsByTaskJson = body.conditionsByTask
+      }
       condition = typeof body.condition === 'string' ? body.condition : undefined
       if (typeof body.workOrderId === 'string' && body.workOrderId.trim().length > 0) {
         workOrderId = body.workOrderId.trim()
@@ -111,9 +121,27 @@ export async function POST(
     }
 
     const normalizedTaskId = taskId && taskId.trim().length > 0 ? taskId.trim() : null
+    const normalizedLocationId = locationId && locationId.trim().length > 0 ? locationId.trim() : null
 
-    if (!normalizedTaskId) {
-      return NextResponse.json({ error: 'Subtask is required' }, { status: 400 })
+    // Parse bulk conditions when provided (location-level update)
+    let conditionsByTask: Array<{ taskId: string; condition: string }> = []
+    if (conditionsByTaskJson) {
+      try {
+        const parsed = JSON.parse(conditionsByTaskJson)
+        if (Array.isArray(parsed)) {
+          conditionsByTask = parsed
+            .map((e: any) => ({
+              taskId: typeof e?.taskId === 'string' ? e.taskId : '',
+              condition: typeof e?.condition === 'string' ? e.condition.trim().toUpperCase().replace(/\s|-/g, '_') : ''
+            }))
+            .filter((e) => e.taskId && e.condition && ALLOWED_CONDITIONS.includes(e.condition))
+        }
+      } catch {}
+    }
+    const isBulkLocationMode = !normalizedTaskId && normalizedLocationId && conditionsByTask.length > 0
+
+    if (!normalizedTaskId && !isBulkLocationMode) {
+      return NextResponse.json({ error: 'Subtask is required (or provide locationId with conditionsByTask for bulk update).'}, { status: 400 })
     }
 
     const normalizedCondition = condition && condition.trim().length > 0
@@ -125,11 +153,14 @@ export async function POST(
     }
 
     const trimmedRemark = remark ? remark.trim() : ''
-    const requiresRemark = normalizedCondition && normalizedCondition !== 'GOOD'
-    const requiresPhoto = normalizedCondition
-      && normalizedCondition !== 'NOT_APPLICABLE'
-      && normalizedCondition !== 'UN_OBSERVABLE'
+    let requiresRemark = Boolean(normalizedCondition && normalizedCondition !== 'GOOD')
+    let requiresPhoto = Boolean(normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE' && normalizedCondition !== 'UN_OBSERVABLE')
     const hasPhotos = photoFiles.length > 0
+    if (isBulkLocationMode) {
+      const conds = conditionsByTask.map((e) => e.condition)
+      requiresRemark = conds.some((c) => c !== 'GOOD' && c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
+      requiresPhoto = conds.some((c) => c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
+    }
 
     if (requiresRemark && trimmedRemark.length === 0) {
       return NextResponse.json({ error: 'Remarks are required for this status.' }, { status: 400 })
@@ -153,18 +184,27 @@ export async function POST(
       return NextResponse.json({ error: 'Only video files can be attached as videos' }, { status: 400 })
     }
 
-    const targetTask = await prisma.checklistTask.findUnique({
-      where: { id: normalizedTaskId },
-      select: {
-        id: true,
-        itemId: true,
-        photos: true,
-        videos: true,
-      },
-    })
-
-    if (!targetTask || targetTask.itemId !== id) {
-      return NextResponse.json({ error: 'Selected subtask was not found for this checklist item' }, { status: 400 })
+    let targetTask: { id: string; itemId: string; photos: string[]; videos: string[] } | null = null
+    if (normalizedTaskId) {
+      targetTask = await prisma.checklistTask.findUnique({
+        where: { id: normalizedTaskId },
+        select: { id: true, itemId: true, photos: true, videos: true },
+      }) as any
+      if (!targetTask || targetTask.itemId !== id) {
+        return NextResponse.json({ error: 'Selected subtask was not found for this checklist item' }, { status: 400 })
+      }
+    } else if (isBulkLocationMode) {
+      // Validate location belongs to this item and tasks belong to this location or item
+      const location = await prisma.contractChecklistLocation.findUnique({ where: { id: normalizedLocationId }, select: { id: true, itemId: true } })
+      if (!location || location.itemId !== id) {
+        return NextResponse.json({ error: 'Location not found for this checklist item' }, { status: 400 })
+      }
+      const tasks = await prisma.checklistTask.findMany({ where: { id: { in: conditionsByTask.map((e) => e.taskId) } }, select: { id: true, itemId: true, locationId: true } })
+      const taskSet = new Set(tasks.filter((t) => t.itemId === id).map((t) => t.id))
+      const missing = conditionsByTask.map((e) => e.taskId).filter((tid) => !taskSet.has(tid))
+      if (missing.length > 0) {
+        return NextResponse.json({ error: 'One or more subtasks are invalid for this checklist item' }, { status: 400 })
+      }
     }
 
     const sessionToken = request.cookies.get('session')?.value
@@ -192,7 +232,8 @@ export async function POST(
 
     const entryData: any = {
       itemId: id,
-      taskId: targetTask.id,
+      taskId: isBulkLocationMode ? null : targetTask!.id,
+      locationId: isBulkLocationMode ? normalizedLocationId : (targetTask as any)?.locationId ?? null,
       remarks: trimmedRemark.length > 0 ? trimmedRemark : null,
     }
 
@@ -254,11 +295,16 @@ export async function POST(
       })
     }
 
-    if (typeof normalizedCondition !== 'undefined') {
-      await prisma.checklistTask.update({
-        where: { id: targetTask.id },
-        data: { condition: normalizedCondition ?? null },
-      })
+    if (!isBulkLocationMode) {
+      if (typeof normalizedCondition !== 'undefined') {
+        await prisma.checklistTask.update({ where: { id: targetTask!.id }, data: { condition: normalizedCondition ?? null } })
+      }
+    } else {
+      // Bulk update each subtask condition
+      const updates = conditionsByTask.map((e) =>
+        prisma.checklistTask.update({ where: { id: e.taskId }, data: { condition: e.condition } })
+      )
+      await Promise.all(updates)
     }
 
     const responseEntry = await prisma.itemEntry.findUnique({
@@ -277,8 +323,10 @@ export async function POST(
             photos: true,
             videos: true,
             condition: true,
+            location: true,
           },
         },
+        location: true,
       },
     })
 
