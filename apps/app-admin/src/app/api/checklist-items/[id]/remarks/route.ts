@@ -138,10 +138,11 @@ export async function POST(
         }
       } catch {}
     }
-    const isBulkLocationMode = !normalizedTaskId && normalizedLocationId && conditionsByTask.length > 0
+    const isLocationMode = !normalizedTaskId && normalizedLocationId
+    const isBulkLocationMode = isLocationMode && conditionsByTask.length > 0
 
-    if (!normalizedTaskId && !isBulkLocationMode) {
-      return NextResponse.json({ error: 'Subtask is required (or provide locationId with conditionsByTask for bulk update).'}, { status: 400 })
+    if (!normalizedTaskId && !isLocationMode) {
+      return NextResponse.json({ error: 'Subtask is required (or provide locationId for location-level remark).'}, { status: 400 })
     }
 
     const normalizedCondition = condition && condition.trim().length > 0
@@ -348,6 +349,13 @@ export async function PATCH(
     const causeValue = typeof body.cause === 'string' ? body.cause.trim() : undefined
     const resolutionValue = typeof body.resolution === 'string' ? body.resolution.trim() : undefined
     const conditionValue = normalizeCondition(body.condition)
+    const rawConditionsByTask = Array.isArray(body.conditionsByTask) ? body.conditionsByTask : []
+    const conditionsByTask = rawConditionsByTask
+      .map((e: any) => ({
+        taskId: typeof e?.taskId === 'string' ? e.taskId : '',
+        condition: typeof e?.condition === 'string' ? e.condition.trim().toUpperCase().replace(/\s|-/g, '_') : ''
+      }))
+      .filter((e) => e.taskId && e.condition && ALLOWED_CONDITIONS.includes(e.condition))
 
     const rawMediaUpdates = Array.isArray(body.mediaUpdates) ? body.mediaUpdates : []
     const mediaUpdates = rawMediaUpdates
@@ -366,7 +374,7 @@ export async function PATCH(
       })
       .filter((entry:any): entry is { id: string; caption: string | null } => Boolean(entry))
 
-    if (!remark && typeof conditionValue === 'undefined' && mediaUpdates.length === 0 && typeof causeValue === 'undefined' && typeof resolutionValue === 'undefined') {
+    if (!remark && typeof conditionValue === 'undefined' && mediaUpdates.length === 0 && typeof causeValue === 'undefined' && typeof resolutionValue === 'undefined' && conditionsByTask.length === 0) {
       return NextResponse.json({ error: 'No updates provided' }, { status: 400 })
     }
 
@@ -451,6 +459,11 @@ export async function PATCH(
           data: { condition: conditionValue ?? null }
         })
         entry.task.condition = conditionValue ?? null
+      }
+
+      if (conditionsByTask.length > 0) {
+        const updates = conditionsByTask.map((e: any) => tx.checklistTask.update({ where: { id: e.taskId }, data: { condition: e.condition } }))
+        await Promise.all(updates)
       }
 
       return entry

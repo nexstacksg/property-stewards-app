@@ -49,6 +49,7 @@ export const assistantTools = [
   { type: 'function' as const, function: { name: 'setSubLocationConditions', description: 'Set conditions for all tasks under a specific sub-location in one message. Does not complete tasks.', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, conditionsText: { type: 'string', description: 'User input like "1 Good, 2 Good, 3 Fair" or "Good Good Fair"' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'conditionsText'] } } },
   { type: 'function' as const, function: { name: 'setSubLocationCause', description: 'Capture cause text for the current sub-location flow', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, cause: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'cause'] } } },
   { type: 'function' as const, function: { name: 'setSubLocationResolution', description: 'Capture resolution text for the current sub-location flow', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, resolution: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'resolution'] } } },
+  { type: 'function' as const, function: { name: 'setSubLocationCauseResolution', description: 'Capture both cause and resolution in one message for the current sub-location flow', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, text: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'text'] } } },
   { type: 'function' as const, function: { name: 'setSubLocationRemarks', description: 'Create/update a remark entry at the sub-location level (stored in ItemEntry at item level, tagged in text). Returns entryId for attaching media.', parameters: { type: 'object', properties: { workOrderId: { type: 'string' }, contractChecklistItemId: { type: 'string' }, subLocationId: { type: 'string' }, subLocationName: { type: 'string' }, remarks: { type: 'string' } }, required: ['workOrderId', 'contractChecklistItemId', 'subLocationId', 'remarks'] } } },
   {
     type: 'function' as const,
@@ -587,11 +588,54 @@ You can omit any numbers you want to leave unset.`
         }
         lines.push('')
         if (hasIssues) {
-          lines.push('Please describe the cause for the issues you observed (a short sentence is fine).')
+          lines.push('Please provide the cause and resolution in ONE message. For example:')
+          lines.push('1: misaligned hinges, 2: re-adjusted and tightened hinges')
+          lines.push('or')
+          lines.push('Cause: misaligned hinges  Resolution: re-adjusted and tightened hinges')
         } else {
           lines.push('Next: please enter your remarks for this sub-location (a short sentence is fine).')
         }
         return JSON.stringify({ success: true, updatedCount: updates.length, requiresCause: hasIssues, message: lines.join('\\n') })
+      }
+      case 'setSubLocationCauseResolution': {
+        const { workOrderId, contractChecklistItemId, subLocationId, text } = args
+        if (!workOrderId || !contractChecklistItemId || !subLocationId || !text) return JSON.stringify({ success: false, error: 'Missing required parameters' })
+        const raw = String(text)
+        const extract = () => {
+          // Prefer explicit labels first
+          let causeMatch = /cause\s*[:\-]\s*([^]+?)(?=resolution\s*[:\-]|$)/i.exec(raw)
+          let resMatch = /resolution\s*[:\-]\s*([^]+)$/i.exec(raw)
+          let cause = causeMatch ? causeMatch[1].trim() : undefined
+          let resolution = resMatch ? resMatch[1].trim() : undefined
+          // Support numeric labels: 1: <cause>, 2: <resolution>
+          if (!cause || !resolution) {
+            const nCause = /(?:^|[\s,;])1\s*[:\-]\s*([^]+?)(?=(?:^|[\s,;])2\s*[:\-]|$)/i.exec(raw)
+            const nRes = /(?:^|[\s,;])2\s*[:\-]\s*([^]+)$/i.exec(raw)
+            if (nCause && !cause) cause = nCause[1].trim()
+            if (nRes && !resolution) resolution = nRes[1].trim()
+          }
+          // Fallback: split by comma/semicolon/newline into two parts
+          if ((!cause || !resolution)) {
+            const parts = raw.split(/[\n;]+|,(?=(?:\s*[^\)]*\)|[^\(]*$))/).map(s => s.trim()).filter(Boolean)
+            if (parts.length >= 2) {
+              if (!cause) cause = parts[0]
+              if (!resolution) resolution = parts[1]
+            }
+          }
+          return { cause, resolution }
+        }
+        const { cause, resolution } = extract()
+        if (!cause && !resolution) {
+          return JSON.stringify({ success: false, error: 'Please send both in one message. Try "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."' })
+        }
+        if (sessionId) {
+          await updateSessionState(sessionId, {
+            pendingTaskCause: cause || undefined,
+            pendingTaskResolution: resolution || undefined,
+            taskFlowStage: 'remarks'
+          })
+        }
+        return JSON.stringify({ success: true, message: 'Thanks. Cause and resolution saved. Please enter the remarks for this sub-location.' })
       }
       case 'setSubLocationCause': {
         const { workOrderId, contractChecklistItemId, subLocationId, cause } = args

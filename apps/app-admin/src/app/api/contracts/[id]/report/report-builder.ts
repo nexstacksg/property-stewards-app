@@ -191,10 +191,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   // Per updated spec: include Generated (date only) and Contract ID
   doc.text(`Generated: ${generatedDateOnly}`)
   doc.text(`Contract ID: ${contract.id}`)
-  const contractSchedule = formatScheduleRange(contract.scheduledStartDate, contract.scheduledEndDate)
-  if (contractSchedule) {
-    doc.text(`Schedule: ${contractSchedule}`)
-  }
+  // Remove contract-level schedule line per request
 
   if (contract.customer) {
     doc.text(`Customer: ${contract.customer.name}`)

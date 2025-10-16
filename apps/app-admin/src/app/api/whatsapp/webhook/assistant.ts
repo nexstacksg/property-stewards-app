@@ -335,7 +335,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
           if (data?.success) {
-            return data.message || 'Conditions updated. Please enter the remarks for this sub-location.'
+            return data.message || 'Conditions updated. If any item is Fair or Un-Satisfactory, please provide the cause and resolution in ONE message (e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."). Otherwise, please enter the remarks for this sub-location.'
           }
           // If parsing failed, show helpful hint
           return 'I could not detect valid conditions. Please reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair".'
@@ -360,10 +360,18 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         // Cause text (sub-location or per-task)
         if (meta.taskFlowStage === 'cause' && raw && !numAny) {
           if (meta.currentSubLocationId && !meta.currentTaskId) {
+            // Try combined cause+resolution first
+            // Try combined parsing first (supports "1: <cause>, 2: <resolution>" or labeled pairs)
+            {
+              const out = await executeTool('setSubLocationCauseResolution', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, text: raw }, undefined, phoneNumber)
+              let data: any = null
+              try { data = JSON.parse(out) } catch {}
+              if (data?.success) return data?.message || 'Thanks. Cause and resolution saved. Please enter the remarks for this sub-location.'
+            }
             const out = await executeTool('setSubLocationCause', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, cause: raw }, undefined, phoneNumber)
             let data: any = null
             try { data = JSON.parse(out) } catch {}
-            if (data?.success) return data?.message || 'Thanks. Please provide the resolution.'
+            if (data?.success) return data?.message || 'Thanks. Please provide the resolution (you can also send both in one message as "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ...").'
           } else {
             const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
             let data: any = null
@@ -374,6 +382,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         // Resolution text (sub-location or per-task)
         if (meta.taskFlowStage === 'resolution' && raw && !numAny) {
           if (meta.currentSubLocationId && !meta.currentTaskId) {
+            // Try combined first (supports numeric or labeled pairs)
+            {
+              const both = await executeTool('setSubLocationCauseResolution', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, text: raw }, undefined, phoneNumber)
+              let j: any = null
+              try { j = JSON.parse(both) } catch {}
+              if (j?.success) return j?.message || 'Thanks. Cause and resolution saved. Please enter the remarks for this sub-location.'
+            }
             const out = await executeTool('setSubLocationResolution', { workOrderId: meta.workOrderId, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId, resolution: raw }, undefined, phoneNumber)
             let data: any = null
             try { data = JSON.parse(out) } catch {}
