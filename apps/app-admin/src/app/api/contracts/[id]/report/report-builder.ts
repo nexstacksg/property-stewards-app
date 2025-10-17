@@ -240,9 +240,9 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
 
   // Remove explicit Work Orders heading line per spec
   const combinedSchedule = formatScheduleRange(minScheduledStart, maxScheduledEnd)
-  if (combinedSchedule) {
-    doc.font("Helvetica").fontSize(11).text(`Schedule: ${combinedSchedule}`)
-  }
+  // if (combinedSchedule) {
+  //   doc.font("Helvetica").fontSize(11).text(`Schedule: ${combinedSchedule}`)
+  // }
   const actualRange = formatScheduleRange(minActualStart, maxActualEnd)
   // if (actualRange) {
   //   doc.text(`Actual: ${actualRange}`)
