@@ -524,19 +524,19 @@ You can omit any numbers you want to leave unset.`
         const normalize = (s: string) => s.trim().toLowerCase()
         const mapWord = (w: string): string | null => {
           const t = normalize(w)
-          const canon = t.replace(/[^a-z]/g, '')
+          const canon = t.normalize('NFKD').replace(/[^a-z]/g, '')
           // Numeric shortcuts
           if (t === '1') return 'GOOD'
           if (t === '2') return 'FAIR'
           if (t === '3') return 'UNSATISFACTORY'
           if (t === '4') return 'UN_OBSERVABLE'
           if (t === '5') return 'NOT_APPLICABLE'
-          // Textual variants (accept hyphens/spaces/punctuation)
+          // Textual variants (accept hyphens/spaces/punctuation and loose phrasing)
           if (canon === 'good' || t === 'g' || t === 'ok' || t === 'okay') return 'GOOD'
-          if (canon === 'fair' || t === 'f') return 'FAIR'
-          if (canon.startsWith('unsatisfactory') || canon.startsWith('unsat') || canon === 'poor' || canon === 'bad') return 'UNSATISFACTORY'
-          if (canon === 'unobservable' || canon === 'unobserved') return 'UN_OBSERVABLE'
-          if (canon === 'notapplicable' || t.includes('not applicable') || t === 'na' || t === 'n/a') return 'NOT_APPLICABLE'
+          if (canon === 'fair' || t === 'f' || canon === 'average' || canon === 'soso') return 'FAIR'
+          if (/^(unsatisfactory|unsatisf|unsat|bad|poor|failed|defect|notgood)$/.test(canon)) return 'UNSATISFACTORY'
+          if (/^(unobservable|unobserved|notobservable|cannotobserve|cantobserve|unabletoinspect|unabletoobserve|blocked|notvisible)$/.test(canon)) return 'UN_OBSERVABLE'
+          if (canon === 'notapplicable' || t.includes('not applicable') || t === 'na' || t === 'n/a' || canon === 'na') return 'NOT_APPLICABLE'
           return null
         }
         const text = String(conditionsText || '')
