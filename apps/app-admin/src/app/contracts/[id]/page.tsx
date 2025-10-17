@@ -172,6 +172,12 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   const reports = Array.isArray(contract.reports)
     ? contract.reports.map((report: any) => ({
         ...report,
+        // Coerce Prisma Decimal to plain serializable values for client components
+        version: typeof report.version === 'object' && report.version !== null && typeof report.version.toString === 'function'
+          ? report.version.toString()
+          : (typeof report.version === 'number' || typeof report.version === 'string'
+            ? report.version
+            : String(report.version)),
         generatedOn: new Date(report.generatedOn).toISOString(),
       }))
     : []

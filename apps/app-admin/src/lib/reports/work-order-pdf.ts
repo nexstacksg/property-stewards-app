@@ -485,10 +485,11 @@ async function buildTableRows(
 
   for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
     const item = items[itemIndex]
+    // Location-level or item-level entries (not linked to a task)
     const standaloneEntries = (item.contributions || []).filter((entry: any) => !entry.taskId)
+    // Location-level entries: include when marked for report; do NOT filter by condition
     const reportEntries = standaloneEntries
       .filter((entry: any) => entry?.includeInReport === true)
-      .filter((entry: any) => isConditionAllowed(entry?.condition, allowedConditions))
 
     const seenItemPhotos = new Set<string>()
     const seenItemVideos = new Set<string>()
@@ -596,18 +597,28 @@ async function buildTableRows(
     }
 
       const locationTasks = group.tasks
+      // Prepare to combine itemEntry remarks across this location and task-linked entries
+      const groupLocationId = (group.location && (group.location.id || group.location?.id)) || null
+      const locationLevelEntries: EntryLike[] = Array.isArray(reportEntries)
+        ? (reportEntries as any[]).filter((e: any) => {
+            const locId = (e?.locationId ?? (e?.location?.id)) || null
+            return groupLocationId && locId === groupLocationId
+          })
+        : []
+      const collectedGroupEntries: EntryLike[] = []
 
       for (let taskIdx = 0; taskIdx < locationTasks.length; taskIdx += 1) {
         const task = locationTasks[taskIdx]
         const taskConditionAllowed = isConditionAllowed(task?.condition, allowedConditions)
         const entries = Array.isArray(task.entries) ? task.entries : []
+        // Task entries: include when marked for report; do NOT filter by condition for remarks/photos
         const filteredEntries = entries
           .filter((entry: EntryLike) => (entry as any)?.includeInReport === true)
-          .filter((entry: EntryLike) => isConditionAllowed((entry as any)?.condition, allowedConditions))
 
-        // When generating "entry-only" reports with selected conditions,
-        // omit tasks whose condition is not included at all.
-        if (entryOnly && !taskConditionAllowed) {
+        // Rows: always filter by task condition — if not allowed, skip the task row entirely
+        if (allowedConditions && allowedConditions.size > 0 && !taskConditionAllowed) {
+          // Still collect entries for the combined media block below (even if row skipped)
+          if (filteredEntries.length > 0) collectedGroupEntries.push(...(filteredEntries as EntryLike[]))
           continue
         }
 
@@ -616,7 +627,8 @@ async function buildTableRows(
         if (locationSegments.length && taskIdx === 0) {
           rowSegments.push(...locationSegments)
         }
-        if (!entryOnly && taskConditionAllowed) {
+        // Include task-level media when not entry-only (row exists only if task condition allowed)
+        if (!entryOnly) {
           const taskMediaSegment = await buildRemarkSegment({
             text: undefined,
             photoEntries: mergePhotoEntries(
@@ -663,70 +675,143 @@ async function buildTableRows(
         })
 
         if (filteredEntries.length > 0) {
-          // First show all entry media (photos/videos) in a full-width grid block
-          const combinedPhotos = mergePhotoEntries(
-            ...filteredEntries.map((e: any) => entryPhotoEntries(e))
-          )
-          const combinedVideos: string[] = ([] as string[]).concat(
-            ...filteredEntries.map((e: any) => Array.isArray(e.videos) ? e.videos : [])
-          )
+          collectedGroupEntries.push(...(filteredEntries as EntryLike[]))
+        }
+      }
+      // After tasks: render combined media + entries for this location group
+      const combinedGroupEntries: EntryLike[] = (() => {
+        const map = new Map<string, EntryLike>()
+        const add = (e: any) => {
+          const key = typeof e?.id === 'string' ? e.id : JSON.stringify(e)
+          if (!map.has(key)) map.set(key, e)
+        }
+        locationLevelEntries.forEach(add)
+        collectedGroupEntries.forEach(add)
+        return Array.from(map.values()) as EntryLike[]
+      })()
 
-          const mediaSegment = await buildRemarkSegment({
-            text: undefined,
-            photoEntries: combinedPhotos,
-            videoUrls: combinedVideos,
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
+      if (combinedGroupEntries.length > 0) {
+        const combinedPhotos = mergePhotoEntries(
+          ...combinedGroupEntries.map((e: any) => entryPhotoEntries(e))
+        )
+        const combinedVideos: string[] = ([] as string[]).concat(
+          ...combinedGroupEntries.map((e: any) => Array.isArray((e as any).videos) ? (e as any).videos : [])
+        )
 
-          if (mediaSegment && (mediaSegment.photos?.length || mediaSegment.videos?.length)) {
-            rows.push({
-              cells: [
-                { text: '' },
-                { text: '' },
-                { text: '' },
-                { text: '' },
-                { text: '' }
-              ],
-              summaryMedia: mediaSegment,
-              mediaOnly: true
-            })
-          }
-
-          // Then render up to 4 entry text blocks per row (no photos/videos inside cells)
-          const entrySegments: (CellSegment | null)[] = []
-          for (const entry of filteredEntries as EntryLike[]) {
-            const entrySegment = await buildRemarkSegment({
-              text: formatEntryLine(entry),
-              photoEntries: [],
-              videoUrls: [],
-              imageCache,
-              seenPhotos: seenItemPhotos,
-              seenVideos: seenItemVideos
-            })
-            entrySegments.push(entrySegment)
-          }
-
-          const chunkSize = 4
-          for (let offset = 0; offset < entrySegments.length; offset += chunkSize) {
-            const chunk = entrySegments.slice(offset, offset + chunkSize)
-            const chunkCells: TableRow = [
+        const mediaSegment = await buildRemarkSegment({
+          text: undefined,
+          photoEntries: combinedPhotos,
+          videoUrls: combinedVideos,
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        if (mediaSegment && (mediaSegment.photos?.length || mediaSegment.videos?.length)) {
+          rows.push({
+            cells: [
               { text: '' },
               { text: '' },
               { text: '' },
               { text: '' },
               { text: '' }
-            ]
-
-            chunk.forEach((segment, segmentIndex) => {
-              if (!segment) return
-              chunkCells[segmentIndex + 1] = { segments: [segment] }
-            })
-
-            rows.push({ cells: chunkCells })
-          }
+            ],
+            summaryMedia: mediaSegment,
+            mediaOnly: true
+          })
         }
+
+        const entrySegments: (CellSegment | null)[] = []
+        for (const entry of combinedGroupEntries as EntryLike[]) {
+          const entrySegment = await buildRemarkSegment({
+            text: formatEntryLine(entry),
+            photoEntries: [],
+            videoUrls: [],
+            imageCache,
+            seenPhotos: seenItemPhotos,
+            seenVideos: seenItemVideos
+          })
+          entrySegments.push(entrySegment)
+        }
+        const chunkSize = 4
+        for (let offset = 0; offset < entrySegments.length; offset += chunkSize) {
+          const chunk = entrySegments.slice(offset, offset + chunkSize)
+          const chunkCells: TableRow = [
+            { text: '' },
+            { text: '' },
+            { text: '' },
+            { text: '' },
+            { text: '' }
+          ]
+          chunk.forEach((segment, segmentIndex) => {
+            if (!segment) return
+            chunkCells[segmentIndex + 1] = { segments: [segment] }
+          })
+          rows.push({ cells: chunkCells })
+        }
+      }
+    }
+
+    // Render any remaining general (unassigned) item-level entries not tied to a location or task
+    const generalEntries: EntryLike[] = Array.isArray(reportEntries)
+      ? (reportEntries as any[]).filter((e: any) => !e?.locationId && !(e?.location && e.location?.id))
+      : []
+    if (generalEntries.length > 0) {
+      const combinedPhotos = mergePhotoEntries(
+        ...generalEntries.map((e: any) => entryPhotoEntries(e as EntryLike))
+      )
+      const combinedVideos: string[] = ([] as string[]).concat(
+        ...generalEntries.map((e: any) => Array.isArray((e as any).videos) ? (e as any).videos : [])
+      )
+
+      const mediaSegment = await buildRemarkSegment({
+        text: undefined,
+        photoEntries: combinedPhotos,
+        videoUrls: combinedVideos,
+        imageCache,
+        seenPhotos: seenItemPhotos,
+        seenVideos: seenItemVideos
+      })
+      if (mediaSegment && (mediaSegment.photos?.length || mediaSegment.videos?.length)) {
+        rows.push({
+          cells: [
+            { text: '' },
+            { text: '' },
+            { text: '' },
+            { text: '' },
+            { text: '' }
+          ],
+          summaryMedia: mediaSegment,
+          mediaOnly: true
+        })
+      }
+
+      const entrySegments: (CellSegment | null)[] = []
+      for (const entry of generalEntries as EntryLike[]) {
+        const entrySegment = await buildRemarkSegment({
+          text: formatEntryLine(entry),
+          photoEntries: [],
+          videoUrls: [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        entrySegments.push(entrySegment)
+      }
+      const chunkSize = 4
+      for (let offset = 0; offset < entrySegments.length; offset += chunkSize) {
+        const chunk = entrySegments.slice(offset, offset + chunkSize)
+        const chunkCells: TableRow = [
+          { text: '' },
+          { text: '' },
+          { text: '' },
+          { text: '' },
+          { text: '' }
+        ]
+        chunk.forEach((segment, segmentIndex) => {
+          if (!segment) return
+          chunkCells[segmentIndex + 1] = { segments: [segment] }
+        })
+        rows.push({ cells: chunkCells })
       }
     }
   }
