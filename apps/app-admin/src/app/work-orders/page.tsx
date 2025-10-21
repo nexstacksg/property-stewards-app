@@ -445,9 +445,7 @@ export default function WorkOrdersPage() {
                   <table className="w-full table-fixed">
                     <thead className="bg-muted/30 border-b">
                       <tr>
-                      <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
-                        Contract Id
-                      </th>
+                      
                         <th className="text-left px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-56">
                         Time
                       </th>
@@ -486,11 +484,7 @@ export default function WorkOrdersPage() {
                         {orders.map((workOrder) => (
                           <tr key={workOrder.id} className="border-b hover:bg-muted/10">
                             {/* Time */}
-                             <td className="px-6 py-3 align-top">
-                              <p  className="text-sm font-medium hover:text-primary truncate block">
-                                {workOrder.contract.id}
-                              </p>
-                            </td>
+                           
                             <td className="px-6 py-3 align-top">
                               <div className="text-sm leading-5">
                                 <div className="font-medium">
@@ -515,6 +509,10 @@ export default function WorkOrdersPage() {
                               <Link href={`/customers/${workOrder.contract.customer.id}`} className="text-sm font-medium hover:text-primary truncate block" title={workOrder.contract.customer.name}>
                                 {workOrder.contract.customer.name}
                               </Link>
+                                <Link href={`/contracts/${workOrder.contract.id}`} className="text-sm font-medium hover:text-primary truncate block" title={workOrder.contract.customer.name}>
+                               {workOrder.contract.id}
+                              </Link>
+                              
                             </td>
 
                             {/* Property */}
