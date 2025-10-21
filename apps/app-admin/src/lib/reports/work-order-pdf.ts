@@ -181,6 +181,8 @@ type TableRowInfo = {
   isTaskRow?: boolean
   // When true, do not render a bordered table row, only the media block
   mediaOnly?: boolean
+  // Second-level grouping key (e.g., sub-location) for color alternation
+  groupKey?: string | null
 }
 
 function normalizeConditionValue(value: unknown): string | null {
@@ -284,7 +286,7 @@ function formatEntryLine(entry: EntryLike) {
   lines.push(`Recorded by: ${resolveEntryAuthor(entry)}`)
 
   const condition = formatEnum(entry.condition) || "N/A"
-  lines.push(`Condition: ${condition}`)
+  // lines.push(`Condition: ${condition}`)
 
   const remarks = entry.remarks?.trim() ?? ""
   lines.push(`Remarks: ${remarks.length > 0 ? remarks : '—'}`)
@@ -593,7 +595,7 @@ async function buildTableRows(
       const locationRemarkText = typeof group.location?.remarks === 'string' ? group.location.remarks.trim() : ''
     const locationSegments: CellSegment[] = []
     if (!entryOnly && locationRemarkText.length > 0) {
-      locationSegments.push({ text: locationRemarkText })
+      locationSegments.push({ text: `Remarks: ${locationRemarkText}` })
     }
 
       const locationTasks = group.tasks
@@ -617,8 +619,7 @@ async function buildTableRows(
 
         // Rows: always filter by task condition — if not allowed, skip the task row entirely
         if (allowedConditions && allowedConditions.size > 0 && !taskConditionAllowed) {
-          // Still collect entries for the combined media block below (even if row skipped)
-          if (filteredEntries.length > 0) collectedGroupEntries.push(...(filteredEntries as EntryLike[]))
+          // Do not collect entries for disallowed tasks; remarks/media filtering must rely on the task condition
           continue
         }
 
@@ -672,6 +673,7 @@ async function buildTableRows(
           cells: baseRow,
           summaryMedia: entryOnly ? undefined : (rowSegments.length ? [...rowSegments] : undefined),
           isTaskRow: true,
+          groupKey: group.key,
         })
 
         if (filteredEntries.length > 0) {
@@ -685,7 +687,11 @@ async function buildTableRows(
           const key = typeof e?.id === 'string' ? e.id : JSON.stringify(e)
           if (!map.has(key)) map.set(key, e)
         }
-        locationLevelEntries.forEach(add)
+        // Only include location-level entries if this location has any task rows allowed by the filter
+        const hasAllowedTaskInGroup = (allowedConditions && allowedConditions.size > 0)
+          ? (group.tasks || []).some((t: any) => isConditionAllowed(t?.condition, allowedConditions))
+          : true
+        if (hasAllowedTaskInGroup) locationLevelEntries.forEach(add)
         collectedGroupEntries.forEach(add)
         return Array.from(map.values()) as EntryLike[]
       })()
@@ -698,8 +704,10 @@ async function buildTableRows(
           ...combinedGroupEntries.map((e: any) => Array.isArray((e as any).videos) ? (e as any).videos : [])
         )
 
+        // Add a clear title so the section is attributable to the sub-location
+        const title = `${group.label} — Remarks & Media`
         const mediaSegment = await buildRemarkSegment({
-          text: undefined,
+          text: title,
           photoEntries: combinedPhotos,
           videoUrls: combinedVideos,
           imageCache,
@@ -764,7 +772,7 @@ async function buildTableRows(
       )
 
       const mediaSegment = await buildRemarkSegment({
-        text: undefined,
+        text: 'General — Remarks & Media',
         photoEntries: combinedPhotos,
         videoUrls: combinedVideos,
         imageCache,
@@ -1390,7 +1398,9 @@ export async function appendWorkOrderSection(
   const headerHeight = drawTableRow(doc, y, headerRow, { header: true })
   y += headerHeight
 
-  let taskShadeToggle = false
+  // Alternate background by second-level group (sub-location)
+  let lastGroupKey: string | null = null
+  let groupToggle = false
   tableRows.forEach((rowInfo) => {
     const remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
     const rowH = rowInfo.mediaOnly ? 0 : calculateRowHeight(doc, rowInfo.cells)
@@ -1407,10 +1417,19 @@ export async function appendWorkOrderSection(
     }
 
     if (!rowInfo.mediaOnly) {
-      const background = rowInfo.isTaskRow ? (taskShadeToggle ? '#f1f5f9' : undefined) : undefined
+      // Flip toggle when the group changes and this is a task row
+      if (rowInfo.isTaskRow) {
+        const g = (rowInfo as any).groupKey || null
+        if (g !== lastGroupKey) {
+          groupToggle = !groupToggle
+          lastGroupKey = g
+        }
+      }
+      const background = rowInfo.isTaskRow
+        ? (groupToggle ? '#dcfce7' /* green-100 */ : '#ffe4e6' /* rose-100 */)
+        : undefined
       const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
       y += consumedHeight
-      if (rowInfo.isTaskRow) taskShadeToggle = !taskShadeToggle
     }
 
     if (rowInfo.summaryMedia) {
