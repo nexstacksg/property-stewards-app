@@ -619,8 +619,7 @@ async function buildTableRows(
 
         // Rows: always filter by task condition — if not allowed, skip the task row entirely
         if (allowedConditions && allowedConditions.size > 0 && !taskConditionAllowed) {
-          // Still collect entries for the combined media block below (even if row skipped)
-          if (filteredEntries.length > 0) collectedGroupEntries.push(...(filteredEntries as EntryLike[]))
+          // Do not collect entries for disallowed tasks; remarks/media filtering must rely on the task condition
           continue
         }
 
@@ -688,7 +687,11 @@ async function buildTableRows(
           const key = typeof e?.id === 'string' ? e.id : JSON.stringify(e)
           if (!map.has(key)) map.set(key, e)
         }
-        locationLevelEntries.forEach(add)
+        // Only include location-level entries if this location has any task rows allowed by the filter
+        const hasAllowedTaskInGroup = (allowedConditions && allowedConditions.size > 0)
+          ? (group.tasks || []).some((t: any) => isConditionAllowed(t?.condition, allowedConditions))
+          : true
+        if (hasAllowedTaskInGroup) locationLevelEntries.forEach(add)
         collectedGroupEntries.forEach(add)
         return Array.from(map.values()) as EntryLike[]
       })()
