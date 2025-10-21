@@ -1401,6 +1401,8 @@ export async function appendWorkOrderSection(
   // Alternate background by second-level group (sub-location)
   let lastGroupKey: string | null = null
   let groupToggle = false
+  // Carry the last task-row background color to media and remark rows
+  let currentTaskBackground: string | undefined = undefined
   tableRows.forEach((rowInfo) => {
     const remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
     const rowH = rowInfo.mediaOnly ? 0 : calculateRowHeight(doc, rowInfo.cells)
@@ -1425,14 +1427,30 @@ export async function appendWorkOrderSection(
           lastGroupKey = g
         }
       }
+      // Task rows alternate; non-task rows inherit the last task background
       const background = rowInfo.isTaskRow
         ? (groupToggle ? '#dcfce7' /* green-100 */ : '#ffe4e6' /* rose-100 */)
-        : undefined
+        : currentTaskBackground
       const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
       y += consumedHeight
+      if (rowInfo.isTaskRow) currentTaskBackground = background
     }
 
     if (rowInfo.summaryMedia) {
+      // Paint background matching the last task row for media blocks
+      const mediaHeightPrecalc = calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
+      if (mediaHeightPrecalc > 0 && currentTaskBackground) {
+        const tableWidth = getTableWidth(doc)
+        doc.save()
+        try {
+          doc.fillColor(currentTaskBackground)
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+          doc.rect(TABLE_MARGIN, y, tableWidth, mediaHeightPrecalc).fill()
+        } finally {
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+          doc.restore()
+        }
+      }
       const mediaHeight = drawMediaBlocks(doc, y, rowInfo.summaryMedia)
       y += mediaHeight
     }
