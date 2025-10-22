@@ -75,7 +75,7 @@ export function Navigation() {
   useEffect(() => {
     let active = true
 
-    async function loadSession() {
+    const loadSession = async () => {
       try {
         const res = await fetch('/api/auth/session', { credentials: 'include', cache: 'no-store' })
         if (!res.ok) {
@@ -91,8 +91,19 @@ export function Navigation() {
 
     loadSession()
 
+    const onRefresh = (event: any) => {
+      const detail = event?.detail
+      if (detail && typeof detail === 'object') {
+        setSessionUser((prev) => prev ? { ...prev, username: detail.username ?? prev.username, email: detail.email ?? prev.email } : prev)
+      }
+      loadSession()
+    }
+
+    window.addEventListener('ps:session-refresh', onRefresh)
+
     return () => {
       active = false
+      window.removeEventListener('ps:session-refresh', onRefresh)
     }
   }, [])
 

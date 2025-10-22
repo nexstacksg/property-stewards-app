@@ -4,9 +4,10 @@ import { join } from "node:path"
 export const TABLE_MARGIN = 36
 // Space reserved at the bottom of every page for footer/version/paging
 export const FOOTER_RESERVED = 36
-// Base weights derived from previous fixed widths [40, 120, 120, 120, 123]
+// Base weights for 4 columns [Location, Item, Subtasks, Condition]
+// Previously: [S/N, 120, 120, 120, 123] — S/N removed
 // We now scale these to fill the full printable width dynamically (portrait/landscape).
-const BASE_COLUMN_WEIGHTS = [40, 120, 120, 120, 123] as const
+const BASE_COLUMN_WEIGHTS = [120, 120, 120, 123] as const
 
 function getAvailableTableWidth(doc: any): number {
   return Math.max(0, (doc?.page?.width || 0) - TABLE_MARGIN * 2)
@@ -172,7 +173,7 @@ type TableCell = {
   segments?: CellSegment[]
 }
 
-type TableRow = [TableCell, TableCell, TableCell, TableCell, TableCell]
+type TableRow = [TableCell, TableCell, TableCell, TableCell]
 
 type TableRowInfo = {
   cells: TableRow
@@ -577,8 +578,7 @@ async function buildTableRows(
     if (groups.length === 0) {
       rows.push({
         cells: [
-          { text: String(itemNumber), bold: true },
-          { text: locationDisplayName, bold: true },
+          { text: `${itemNumber} ${locationDisplayName}`, bold: true },
           { text: `${itemNumber}. ${itemName}` },
           { text: 'No subtasks' },
           { text: itemStatusFallback }
@@ -662,8 +662,7 @@ async function buildTableRows(
         // }
 
         const baseRow: TableRow = [
-          { text: groupIndex === 0 && taskIdx === 0 ? String(itemNumber) : '' },
-          { text: locationDisplayName },
+          { text: `${itemNumber} ${locationDisplayName}` },
           { text: itemColumnText },
           { text: subtaskLabel },
           { text: conditionText }
@@ -720,7 +719,6 @@ async function buildTableRows(
               { text: '' },
               { text: '' },
               { text: '' },
-              { text: '' },
               { text: '' }
             ],
             summaryMedia: mediaSegment,
@@ -747,12 +745,11 @@ async function buildTableRows(
             { text: '' },
             { text: '' },
             { text: '' },
-            { text: '' },
             { text: '' }
           ]
           chunk.forEach((segment, segmentIndex) => {
             if (!segment) return
-            chunkCells[segmentIndex + 1] = { segments: [segment] }
+            chunkCells[segmentIndex] = { segments: [segment] }
           })
           rows.push({ cells: chunkCells })
         }
@@ -785,7 +782,6 @@ async function buildTableRows(
             { text: '' },
             { text: '' },
             { text: '' },
-            { text: '' },
             { text: '' }
           ],
           summaryMedia: mediaSegment,
@@ -812,12 +808,11 @@ async function buildTableRows(
           { text: '' },
           { text: '' },
           { text: '' },
-          { text: '' },
           { text: '' }
         ]
         chunk.forEach((segment, segmentIndex) => {
           if (!segment) return
-          chunkCells[segmentIndex + 1] = { segments: [segment] }
+          chunkCells[segmentIndex] = { segments: [segment] }
         })
         rows.push({ cells: chunkCells })
       }
@@ -1388,7 +1383,6 @@ export async function appendWorkOrderSection(
   let y = doc.y
 
   const headerRow: TableCell[] = [
-    { text: "S/N", bold: true },
     { text: "Location", bold: true },
     { text: "Item", bold: true },
     { text: "Subtasks", bold: true },
@@ -1401,6 +1395,8 @@ export async function appendWorkOrderSection(
   // Alternate background by second-level group (sub-location)
   let lastGroupKey: string | null = null
   let groupToggle = false
+  // Carry the last task-row background color to media and remark rows
+  let currentTaskBackground: string | undefined = undefined
   tableRows.forEach((rowInfo) => {
     const remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
     const rowH = rowInfo.mediaOnly ? 0 : calculateRowHeight(doc, rowInfo.cells)
@@ -1425,14 +1421,30 @@ export async function appendWorkOrderSection(
           lastGroupKey = g
         }
       }
+      // Task rows alternate; non-task rows inherit the last task background
       const background = rowInfo.isTaskRow
         ? (groupToggle ? '#dcfce7' /* green-100 */ : '#ffe4e6' /* rose-100 */)
-        : undefined
+        : currentTaskBackground
       const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
       y += consumedHeight
+      if (rowInfo.isTaskRow) currentTaskBackground = background
     }
 
     if (rowInfo.summaryMedia) {
+      // Paint background matching the last task row for media blocks
+      const mediaHeightPrecalc = calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
+      if (mediaHeightPrecalc > 0 && currentTaskBackground) {
+        const tableWidth = getTableWidth(doc)
+        doc.save()
+        try {
+          doc.fillColor(currentTaskBackground)
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+          doc.rect(TABLE_MARGIN, y, tableWidth, mediaHeightPrecalc).fill()
+        } finally {
+          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+          doc.restore()
+        }
+      }
       const mediaHeight = drawMediaBlocks(doc, y, rowInfo.summaryMedia)
       y += mediaHeight
     }
