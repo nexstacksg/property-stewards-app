@@ -4,9 +4,10 @@ import { join } from "node:path"
 export const TABLE_MARGIN = 36
 // Space reserved at the bottom of every page for footer/version/paging
 export const FOOTER_RESERVED = 36
-// Base weights derived from previous fixed widths [40, 120, 120, 120, 123]
+// Base weights for 4 columns [Location, Item, Subtasks, Condition]
+// Previously: [S/N, 120, 120, 120, 123] — S/N removed
 // We now scale these to fill the full printable width dynamically (portrait/landscape).
-const BASE_COLUMN_WEIGHTS = [40, 120, 120, 120, 123] as const
+const BASE_COLUMN_WEIGHTS = [120, 120, 120, 123] as const
 
 function getAvailableTableWidth(doc: any): number {
   return Math.max(0, (doc?.page?.width || 0) - TABLE_MARGIN * 2)
@@ -172,7 +173,7 @@ type TableCell = {
   segments?: CellSegment[]
 }
 
-type TableRow = [TableCell, TableCell, TableCell, TableCell, TableCell]
+type TableRow = [TableCell, TableCell, TableCell, TableCell]
 
 type TableRowInfo = {
   cells: TableRow
@@ -577,8 +578,7 @@ async function buildTableRows(
     if (groups.length === 0) {
       rows.push({
         cells: [
-          { text: String(itemNumber), bold: true },
-          { text: locationDisplayName, bold: true },
+          { text: `${itemNumber} ${locationDisplayName}`, bold: true },
           { text: `${itemNumber}. ${itemName}` },
           { text: 'No subtasks' },
           { text: itemStatusFallback }
@@ -662,8 +662,7 @@ async function buildTableRows(
         // }
 
         const baseRow: TableRow = [
-          { text: groupIndex === 0 && taskIdx === 0 ? String(itemNumber) : '' },
-          { text: locationDisplayName },
+          { text: `${itemNumber} ${locationDisplayName}` },
           { text: itemColumnText },
           { text: subtaskLabel },
           { text: conditionText }
@@ -720,7 +719,6 @@ async function buildTableRows(
               { text: '' },
               { text: '' },
               { text: '' },
-              { text: '' },
               { text: '' }
             ],
             summaryMedia: mediaSegment,
@@ -747,12 +745,11 @@ async function buildTableRows(
             { text: '' },
             { text: '' },
             { text: '' },
-            { text: '' },
             { text: '' }
           ]
           chunk.forEach((segment, segmentIndex) => {
             if (!segment) return
-            chunkCells[segmentIndex + 1] = { segments: [segment] }
+            chunkCells[segmentIndex] = { segments: [segment] }
           })
           rows.push({ cells: chunkCells })
         }
@@ -785,7 +782,6 @@ async function buildTableRows(
             { text: '' },
             { text: '' },
             { text: '' },
-            { text: '' },
             { text: '' }
           ],
           summaryMedia: mediaSegment,
@@ -812,12 +808,11 @@ async function buildTableRows(
           { text: '' },
           { text: '' },
           { text: '' },
-          { text: '' },
           { text: '' }
         ]
         chunk.forEach((segment, segmentIndex) => {
           if (!segment) return
-          chunkCells[segmentIndex + 1] = { segments: [segment] }
+          chunkCells[segmentIndex] = { segments: [segment] }
         })
         rows.push({ cells: chunkCells })
       }
@@ -1388,7 +1383,6 @@ export async function appendWorkOrderSection(
   let y = doc.y
 
   const headerRow: TableCell[] = [
-    { text: "S/N", bold: true },
     { text: "Location", bold: true },
     { text: "Item", bold: true },
     { text: "Subtasks", bold: true },

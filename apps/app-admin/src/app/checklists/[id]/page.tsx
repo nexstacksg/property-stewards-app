@@ -107,10 +107,10 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
                 <p className="font-medium">{checklist.name}</p>
               </div>
 
-              {checklist.description && (
+              {checklist.remarks && (
                 <div>
                   <p className="text-sm text-muted-foreground">Description</p>
-                  <p className="text-sm">{checklist.description}</p>
+                  <p className="text-sm">{checklist.remarks}</p>
                 </div>
               )}
 

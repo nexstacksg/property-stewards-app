@@ -82,7 +82,7 @@ interface ChecklistResponseItem {
 interface ChecklistResponse {
   id: string
   name: string
-  description?: string
+  remarks?: string
   propertyType: string
   status: string
   items: ChecklistResponseItem[]
@@ -259,7 +259,7 @@ function NewChecklistContent() {
         const data: ChecklistResponse = await response.json()
 
         setName(`${data.name} (Copy)`)
-        setDescription(data.description || "")
+        setDescription(data.remarks || "")
         setPropertyType(data.propertyType || "HDB")
         const mappedLocations = (data.items || []).map(mapResponseItemToDraft)
         setLocations(mappedLocations)
@@ -490,7 +490,7 @@ function NewChecklistContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
-          description,
+          remarks: description,
           propertyType,
           items: toApiPayload(locations),
         }),
