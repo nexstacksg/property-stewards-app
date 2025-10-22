@@ -82,7 +82,7 @@ interface ChecklistResponseItem {
 interface ChecklistResponse {
   id: string
   name: string
-  description?: string
+  remarks?: string
   propertyType: string
   status: string
   items: ChecklistResponseItem[]
@@ -191,7 +191,7 @@ export default function EditChecklistPage({
 
         const checklist: ChecklistResponse = await response.json()
         setName(checklist.name)
-        setDescription(checklist.description || "")
+        setDescription(checklist.remarks || "")
         setPropertyType(checklist.propertyType)
         setStatus(checklist.status)
 
@@ -460,7 +460,7 @@ export default function EditChecklistPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
-          description,
+          remarks: description,
           propertyType,
           status,
           items: toApiPayload(locations),

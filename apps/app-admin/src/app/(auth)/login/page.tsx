@@ -86,7 +86,7 @@ function LoginPageContent() {
                       <input type="checkbox" className="h-4 w-4 rounded" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
                       Remember for 30 days
                     </label>
-                    <a className="text-primary hover:underline" href="#">Forgot password</a>
+                    <a className="text-primary hover:underline" href="/forgot-password">Forgot password</a>
                   </div>
                   {error && (
                     <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">

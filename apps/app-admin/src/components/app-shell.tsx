@@ -8,7 +8,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isAuth =
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
-    pathname.startsWith('/confirm')
+    pathname.startsWith('/confirm') ||
+    pathname.startsWith('/forgot-password') ||
+    pathname.startsWith('/reset-password')
 
   if (isAuth) return <div className="min-h-screen">{children}</div>
 
