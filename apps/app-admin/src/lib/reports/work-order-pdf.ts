@@ -184,6 +184,9 @@ type TableRowInfo = {
   mediaOnly?: boolean
   // Second-level grouping key (e.g., sub-location) for color alternation
   groupKey?: string | null
+  // When true, draw a single outer border for the row and
+  // suppress inner vertical cell borders (merging columns visually).
+  mergeColumns?: boolean
 }
 
 function normalizeConditionValue(value: unknown): string | null {
@@ -751,7 +754,8 @@ async function buildTableRows(
             if (!segment) return
             chunkCells[segmentIndex] = { segments: [segment] }
           })
-          rows.push({ cells: chunkCells })
+          // Mark as merged to remove inner borders for remark rows
+          rows.push({ cells: chunkCells, mergeColumns: true })
         }
       }
     }
@@ -814,7 +818,8 @@ async function buildTableRows(
           if (!segment) return
           chunkCells[segmentIndex] = { segments: [segment] }
         })
-        rows.push({ cells: chunkCells })
+        // Mark as merged to remove inner borders for remark rows
+        rows.push({ cells: chunkCells, mergeColumns: true })
       }
     }
   }
@@ -876,12 +881,34 @@ function calculateRowHeight(doc: any, cells: TableCell[]) {
   return Math.max(rowHeight + CELL_PADDING * 2, 24)
 }
 
-function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header?: boolean; background?: string | null } = {}) {
-  const { header = false } = options
+function drawTableRow(
+  doc: any,
+  y: number,
+  cells: TableCell[],
+  options: { header?: boolean; background?: string | null; mergeColumns?: boolean } = {}
+) {
+  const { header = false, mergeColumns = false } = options
   const rowHeight = calculateRowHeight(doc, cells)
   let x = TABLE_MARGIN
 
   const colWidths2 = getColumnWidths(doc)
+  // When merging columns, paint background and outer border once
+  if (!header && mergeColumns) {
+    if (options.background) {
+      doc.save()
+      try {
+        doc.fillColor(options.background)
+        if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+        doc.rect(TABLE_MARGIN, y, getTableWidth(doc), rowHeight).fill()
+      } finally {
+        if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+        doc.restore()
+      }
+    }
+    // Draw a single outer border for the merged row
+    doc.rect(TABLE_MARGIN, y, getTableWidth(doc), rowHeight).stroke()
+  }
+
   cells.forEach((cell, index) => {
     const width = colWidths2[index]
     doc.lineWidth(0.7)
@@ -893,19 +920,22 @@ function drawTableRow(doc: any, y: number, cells: TableCell[], options: { header
       doc.rect(x, y, width, rowHeight).stroke()
       doc.font("Helvetica-Bold")
     } else {
-      if (options.background) {
-        // Light, semi-transparent fill so watermark remains visible
-        doc.save()
-        try {
-          doc.fillColor(options.background)
-          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-          doc.rect(x, y, width, rowHeight).fill()
-        } finally {
-          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-          doc.restore
+      if (!mergeColumns) {
+        if (options.background) {
+          // Light, semi-transparent fill so watermark remains visible
+          doc.save()
+          try {
+            doc.fillColor(options.background)
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+            doc.rect(x, y, width, rowHeight).fill()
+          } finally {
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+            doc.restore
+          }
         }
+        // Draw per-cell border only when not merged
+        doc.rect(x, y, width, rowHeight).stroke()
       }
-      doc.rect(x, y, width, rowHeight).stroke()
       doc.font(cell.bold ? "Helvetica-Bold" : "Helvetica")
     }
 
@@ -1423,12 +1453,12 @@ export async function appendWorkOrderSection(
       }
       // Task rows alternate; non-task rows inherit the last task background
       const background = rowInfo.isTaskRow
-        ? (groupToggle ? '#dcfce7' /* green-100 */ : '#ffe4e6' /* rose-100 */)
+        ? (groupToggle ? '#f1f5f9' /* white */ : '#ffffff' /* slate-100: slightly darker grey */)
         : currentTaskBackground
-      const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background })
-      y += consumedHeight
-      if (rowInfo.isTaskRow) currentTaskBackground = background
-    }
+          const consumedHeight = drawTableRow(doc, y, rowInfo.cells, { background, mergeColumns: rowInfo.mergeColumns === true })
+          y += consumedHeight
+          if (rowInfo.isTaskRow) currentTaskBackground = background
+        }
 
     if (rowInfo.summaryMedia) {
       // Paint background matching the last task row for media blocks

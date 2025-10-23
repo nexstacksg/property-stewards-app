@@ -85,13 +85,13 @@ export default function CustomersPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-3xl font-bold">Customers</h1>
           <p className="text-muted-foreground mt-2">Manage your customer database</p>
         </div>
-        <Link href="/customers/new">
-          <Button>
+        <Link href="/customers/new" className="w-full sm:w-auto">
+          <Button className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
             Add Customer
           </Button>
@@ -100,20 +100,20 @@ export default function CustomersPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle>Customer List</CardTitle>
               <CardDescription>View and manage all customers</CardDescription>
             </div>
-            <form onSubmit={handleSearch} className="flex gap-2">
+            <form onSubmit={handleSearch} className="flex gap-2 w-full sm:w-[260px] md:w-[320px] lg:w-[360px]">
               <input
                 type="text"
                 placeholder="Search customers..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="px-3 py-2 border rounded-md"
+                className="px-3 py-2 border rounded-md w-full"
               />
-              <Button type="submit" variant="outline">
+              <Button type="submit" variant="outline" className="shrink-0">
                 <Search className="h-4 w-4" />
               </Button>
             </form>
@@ -124,6 +124,7 @@ export default function CustomersPage() {
             <div className="text-center py-8">Loading...</div>
           ) : (
             <>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -148,7 +149,9 @@ export default function CustomersPage() {
                           ) : (
                             <User className="h-4 w-4 text-muted-foreground" />
                           )}
-                          {customer.name}
+                          <span className="block max-w-[220px] truncate" title={customer.name}>
+                            {customer.name}
+                          </span>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -156,9 +159,21 @@ export default function CustomersPage() {
                           {customer.type}
                         </Badge>
                       </TableCell>
-                      <TableCell>{customer.personInCharge}</TableCell>
-                      <TableCell>{customer.email}</TableCell>
-                      <TableCell>{customer.phone}</TableCell>
+                      <TableCell>
+                        <span className="block max-w-[200px] truncate" title={customer.personInCharge}>
+                          {customer.personInCharge}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="block max-w-[260px] truncate" title={customer.email}>
+                          {customer.email}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="block max-w-[140px] truncate" title={customer.phone}>
+                          {customer.phone}
+                        </span>
+                      </TableCell>
                       <TableCell>{getMemberBadge(customer)}</TableCell>
                       <TableCell>{customer._count.contracts}</TableCell>
                       <TableCell>
@@ -180,6 +195,7 @@ export default function CustomersPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
 
               {customers.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">

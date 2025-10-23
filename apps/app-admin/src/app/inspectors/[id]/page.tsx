@@ -118,7 +118,7 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-4">
           <Link href="/inspectors">
             <Button variant="ghost" size="icon">
@@ -135,113 +135,117 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
             <p className="text-muted-foreground mt-1">Inspector Details</p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Link href={`/inspectors/${inspector.id}/edit`}>
-            <Button>
+        <div className="flex gap-2 w-full sm:w-auto justify-end">
+          <Link href={`/inspectors/${inspector.id}/edit`} className="w-full sm:w-auto">
+            <Button className="w-full sm:w-auto">
               <Edit className="h-4 w-4 mr-2" />
               Edit Inspector
             </Button>
           </Link>
         </div>
       </div>
-
-      <div className="grid gap-6 lg:grid-cols-3">
+      {/* Top row: Information and Work Statistics */}
+      <div className="grid gap-6 lg:grid-cols-2">
         {/* Inspector Information */}
-        <div className="lg:col-span-1 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Inspector Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Mobile Phone</p>
-                <a href={`tel:${inspector.mobilePhone}`} className="flex items-center gap-2 text-primary hover:underline">
-                  <Phone className="h-4 w-4" />
-                  {inspector.mobilePhone}
-                </a>
-              </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Inspector Information</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Mobile Phone</p>
+                  <a href={`tel:${inspector.mobilePhone}`} className="flex items-center gap-2 text-primary hover:underline">
+                    <Phone className="h-4 w-4" />
+                    {inspector.mobilePhone}
+                  </a>
+                </div>
 
-              <div>
-                <p className="text-sm text-muted-foreground">Type</p>
-                <Badge variant="outline">{inspector.type}</Badge>
-              </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Type</p>
+                  <Badge variant="outline">{inspector.type}</Badge>
+                </div>
 
-              <div>
-                <p className="text-sm text-muted-foreground">Specialization</p>
-                <p className="text-sm mt-1">
-                  {inspector.specialization ? inspector.specialization : '—'}
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground">Average Rating</p>
-                {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? (
-                  <p className="text-2xl font-bold">
-                    {inspector.ratingAverage?.toFixed(1)}
-                    <span className="text-xs text-muted-foreground ml-2">({inspector.ratingCount})</span>
+                <div>
+                  <p className="text-sm text-muted-foreground">Specialization</p>
+                  <p className="text-sm mt-1 truncate" title={inspector.specialization || undefined}>
+                    {inspector.specialization ? inspector.specialization : '—'}
                   </p>
-                ) : (
-                  <p className="text-sm text-muted-foreground mt-1">No ratings yet</p>
-                )}
+                </div>
               </div>
 
-              {inspector.remarks && (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Average Rating</p>
+                  {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? (
+                    <p className="text-2xl font-bold">
+                      {inspector.ratingAverage?.toFixed(1)}
+                      <span className="text-xs text-muted-foreground ml-2">({inspector.ratingCount})</span>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground mt-1">No ratings yet</p>
+                  )}
+                </div>
+
                 <div>
                   <p className="text-sm text-muted-foreground">Remarks</p>
-                  <p className="text-sm">{inspector.remarks}</p>
+                  <p className="text-sm">{inspector.remarks || '—'}</p>
                 </div>
-              )}
 
+                <div>
+                  <p className="text-sm text-muted-foreground">Joined Date</p>
+                  <p className="font-medium">{formatDate(inspector.createdOn)}</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Work Statistics */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Work Statistics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-sm text-muted-foreground">Joined Date</p>
-                <p className="font-medium">{formatDate(inspector.createdOn)}</p>
+                <p className="text-sm text-muted-foreground">Total Jobs</p>
+                <p className="text-2xl font-bold">{stats.total}</p>
               </div>
-            </CardContent>
-          </Card>
+              <div>
+                <p className="text-sm text-muted-foreground">Completed</p>
+                <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Scheduled</p>
+                <p className="text-2xl font-bold text-blue-600">{stats.scheduled}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">In Progress</p>
+                <p className="text-2xl font-bold text-orange-600">{stats.inProgress}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
-          {/* Work Statistics */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Work Statistics</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Jobs</p>
-                  <p className="text-2xl font-bold">{stats.total}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Completed</p>
-                  <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Scheduled</p>
-                  <p className="text-2xl font-bold text-blue-600">{stats.scheduled}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">In Progress</p>
-                  <p className="text-2xl font-bold text-orange-600">{stats.inProgress}</p>
-                </div>
+      {/* Second row: Recent Work Orders */}
+      <div>
+        <Card>
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle>Recent Work Orders</CardTitle>
+                <CardDescription>Latest 10 work orders</CardDescription>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Recent Work Orders */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <div>
-                  <CardTitle>Recent Work Orders</CardTitle>
-                  <CardDescription>Latest 10 work orders</CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {inspector.workOrders.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No work orders assigned yet</p>
-              ) : (
+            </div>
+          </CardHeader>
+          <CardContent>
+            {inspector.workOrders.length === 0 ? (
+              <p className="text-muted-foreground text-center py-4">No work orders assigned yet</p>
+            ) : (
+              <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -269,7 +273,9 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
                         </TableCell>
                         <TableCell>
                           <div>
-                            <p className="text-sm">{workOrder.contract.address.address}</p>
+                            <p className="text-sm max-w-[320px] truncate" title={workOrder.contract.address.address}>
+                              {workOrder.contract.address.address}
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {workOrder.contract.address.postalCode}
                             </p>
@@ -300,10 +306,10 @@ export default async function InspectorDetailPage({ params }: { params: Promise<
                     ))}
                   </TableBody>
                 </Table>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none",
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none whitespace-nowrap",
   {
     variants: {
       variant: {
@@ -33,9 +33,15 @@ export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof badgeVariants> {}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
+function Badge({ className, variant, title, children, ...props }: BadgeProps) {
+  // Provide a helpful default title for truncated badges
+  const computedTitle = typeof title === 'string' && title.length > 0
+    ? title
+    : (typeof children === 'string' ? children : undefined)
   return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props} />
+    <div title={computedTitle} className={cn(badgeVariants({ variant }), className)} {...props}>
+      {children}
+    </div>
   )
 }
 

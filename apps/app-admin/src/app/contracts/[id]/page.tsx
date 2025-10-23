@@ -196,7 +196,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
       {/* Header */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
         <div className="flex flex-wrap items-start gap-3 sm:items-center sm:gap-4">
           <Link href="/contracts">
             <Button variant="ghost" size="icon" className="shrink-0">
@@ -218,7 +218,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
             <p className="text-muted-foreground mt-1">Contract Details</p>
           </div>
         </div>
-        <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
+        <div className="flex w-full flex-wrap gap-2 lg:ml-auto sm:w-auto sm:justify-end">
           <Link href={`/contracts/${contract.id}/edit`} className="flex-1 sm:flex-none">
             <Button variant="outline" className="w-full sm:w-auto">
               <Edit className="h-4 w-4 mr-2" />
@@ -226,29 +226,29 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
             </Button>
           </Link>
           {showPdfActions ? (
-            <div className="flex flex-1 flex-wrap gap-2 sm:flex-none">
+            <div className="flex flex-wrap gap-2 sm:flex-none">
               <PreviewPdfButton
                 href={`/api/contracts/${contract.id}/report`}
                 fileName={contractReportFileName}
                 label="Preview PDF"
-                className="flex-1 sm:flex-none"
+                className="w-full md:w-auto"
               />
               <GenerateContractReportButton
                 contractId={contract.id}
                 defaultTitle={defaultReportTitle}
                 defaultFileName={contractReportFileName}
-                className="flex-1 sm:flex-none"
+                className="w-full md:w-auto"
               />
             </div>
           ) : (
-            <ConfirmContractButton contractId={contract.id} className="flex-1 sm:flex-none" />
+            <ConfirmContractButton contractId={contract.id} className="w-full md:w-auto" />
           )}
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
         {/* Contract Information */}
-        <div className="lg:col-span-1 space-y-6">
+        <div className="xl:col-span-1 space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Contract Information</CardTitle>
@@ -274,14 +274,38 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
                     <p className="text-sm text-muted-foreground">
                       {contract.address.postalCode}
                     </p>
-                    <div className="flex gap-2 mt-1">
-                      <Badge variant="outline">{contract.address.propertyType}</Badge>
-                      <Badge variant="secondary">{contract.address.propertySize.replace(/_/g, ' ')}</Badge>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      <Badge
+                        variant="outline"
+                        className="max-w-[140px] sm:max-w-[180px] truncate"
+                        title={formatEnumLabel(contract.address.propertyType)}
+                      >
+                        {formatEnumLabel(contract.address.propertyType)}
+                      </Badge>
+                      <Badge
+                        variant="secondary"
+                        className="max-w-[140px] sm:max-w-[180px] truncate"
+                        title={contract.address.propertySize.replace(/_/g, ' ')}
+                      >
+                        {contract.address.propertySize.replace(/_/g, ' ')}
+                      </Badge>
                       {contract.address.propertySizeRange && (
-                        <Badge variant="secondary">{formatEnumLabel(contract.address.propertySizeRange)}</Badge>
+                        <Badge
+                          variant="secondary"
+                          className="max-w-[140px] sm:max-w-[180px] truncate"
+                          title={formatEnumLabel(contract.address.propertySizeRange)}
+                        >
+                          {formatEnumLabel(contract.address.propertySizeRange)}
+                        </Badge>
                       )}
                       {contract.address.relationship && (
-                        <Badge variant="outline">{formatEnumLabel(contract.address.relationship)}</Badge>
+                        <Badge
+                          variant="outline"
+                          className="max-w-[140px] sm:max-w-[180px] truncate"
+                          title={formatEnumLabel(contract.address.relationship)}
+                        >
+                          {formatEnumLabel(contract.address.relationship)}
+                        </Badge>
                       )}
                     </div>
                   </div>
@@ -295,7 +319,11 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
 
               <div>
                 <p className="text-sm text-muted-foreground">Contract Type</p>
-                <Badge variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}>
+                <Badge
+                  variant={contract.contractType === 'REPAIR' ? 'outline' : 'secondary'}
+                  className="max-w-[160px] truncate"
+                  title={contractTypeLabel}
+                >
                   {contractTypeLabel}
                 </Badge>
               </div>
@@ -315,14 +343,18 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               {contract.servicePackage && (
                 <div>
                   <p className="text-sm text-muted-foreground">Service Package</p>
-                  <Badge>{contract.servicePackage}</Badge>
+                  <Badge className="max-w-[160px] truncate" title={contract.servicePackage}>
+                    {contract.servicePackage}
+                  </Badge>
                 </div>
               )}
 
               {marketingSourceLabel && (
                 <div>
                   <p className="text-sm text-muted-foreground">Source of Marketing</p>
-                  <Badge variant="outline">{marketingSourceLabel}</Badge>
+                  <Badge variant="outline" className="max-w-[160px] truncate" title={marketingSourceLabel}>
+                    {marketingSourceLabel}
+                  </Badge>
                 </div>
               )}
 
@@ -388,7 +420,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         </div>
 
         {/* Work Orders and Checklists */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="xl:col-span-2 space-y-6">
           {/* Work Orders */}
           <Card>
             <CardHeader>
@@ -404,63 +436,65 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
               {contract.workOrders.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No work orders created yet</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Work Order ID</TableHead>
-                      <TableHead>Inspectors</TableHead>
-                      <TableHead>Scheduled</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {contract.workOrders.map((workOrder: any) => (
-                      <TableRow key={workOrder.id}>
-                        <TableCell className="font-medium">
-                          #{workOrder.id }
-                        </TableCell>
-                        <TableCell>
-                          {workOrder.inspectors && workOrder.inspectors.length > 0 ? (
-                            <div className="flex flex-col gap-1">
-                              {workOrder.inspectors.slice(0, 2).map((ins: any) => (
-                                <Link key={ins.id} href={`/inspectors/${ins.id}`} className="text-primary hover:underline">
-                                  {ins.name}
-                                </Link>
-                              ))}
-                              {workOrder.inspectors.length > 2 && (
-                                <span className="text-xs text-muted-foreground">+{workOrder.inspectors.length - 2} more</span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">Unassigned</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="text-sm">{formatDate(workOrder.scheduledStartDateTime)}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {workOrder.actualStart ? 'Started' : 'Pending'}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1">
-                            {getWorkOrderStatusIcon(workOrder.status)}
-                            <Badge variant={getWorkOrderStatusVariant(workOrder.status)}>
-                              {workOrder.status}
-                            </Badge>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Link href={`/work-orders/${workOrder.id}`}>
-                            <Button variant="outline" size="sm">View</Button>
-                          </Link>
-                        </TableCell>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Work Order ID</TableHead>
+                        <TableHead>Inspectors</TableHead>
+                        <TableHead>Scheduled</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {contract.workOrders.map((workOrder: any) => (
+                        <TableRow key={workOrder.id}>
+                          <TableCell className="font-medium">
+                            #{workOrder.id }
+                          </TableCell>
+                          <TableCell>
+                            {workOrder.inspectors && workOrder.inspectors.length > 0 ? (
+                              <div className="flex flex-col gap-1">
+                                {workOrder.inspectors.slice(0, 2).map((ins: any) => (
+                                  <Link key={ins.id} href={`/inspectors/${ins.id}`} className="text-primary hover:underline">
+                                    {ins.name}
+                                  </Link>
+                                ))}
+                                {workOrder.inspectors.length > 2 && (
+                                  <span className="text-xs text-muted-foreground">+{workOrder.inspectors.length - 2} more</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">Unassigned</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="text-sm">{formatDate(workOrder.scheduledStartDateTime)}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {workOrder.actualStart ? 'Started' : 'Pending'}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              {getWorkOrderStatusIcon(workOrder.status)}
+                              <Badge variant={getWorkOrderStatusVariant(workOrder.status)}>
+                                {workOrder.status}
+                              </Badge>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Link href={`/work-orders/${workOrder.id}`}>
+                              <Button variant="outline" size="sm">View</Button>
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -559,49 +593,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
         />
 
           {/* Financial Summary */}
-          <div className="grid gap-4 md:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">Contract Value</CardTitle>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {formatCurrency(Number(contract.value))}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">Work Orders</CardTitle>
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {contract.workOrders.length}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-medium">Completed</CardTitle>
-                  <CheckCircle className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-green-600">
-                  {completedWorkOrders}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+        
 
         </div>
       </div>
