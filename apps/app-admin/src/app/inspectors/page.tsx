@@ -207,79 +207,122 @@ export default function InspectorsPage() {
             <div className="text-center py-8">Loading...</div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Mobile Phone</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Specialization</TableHead>
-                    <TableHead>Work Orders</TableHead>
-                    <TableHead>Avg Rating</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inspectors.map((inspector) => (
-                    <TableRow key={inspector.id}>
-                      <TableCell className="font-medium">
+              {/* Card list on small screens */}
+              <div className="md:hidden space-y-3">
+                {inspectors.map((inspector) => (
+                  <div key={inspector.id} className="rounded-lg border bg-card text-card-foreground p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <User className="h-4 w-4 text-muted-foreground" />
-                          {inspector.name}
+                          <span className="font-medium truncate max-w-[160px]" title={inspector.name}>{inspector.name}</span>
+                          <Badge variant={inspector.type === 'FULL_TIME' ? 'default' : 'outline'}>
+                            {inspector.type === 'FULL_TIME' ? 'Full Time' : 'Part Time'}
+                          </Badge>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Phone className="h-3 w-3 text-muted-foreground" />
-                          {inspector.mobilePhone}
+                        <div className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
+                          <Phone className="h-3 w-3" />
+                          <span className="truncate" title={inspector.mobilePhone}>{inspector.mobilePhone}</span>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={inspector.type === 'FULL_TIME' ? 'default' : 'outline'}>
-                          {inspector.type === 'FULL_TIME' ? 'Full Time' : 'Part Time'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
                         {inspector.specialization ? (
-                          <span className="block max-w-[240px] truncate" title={inspector.specialization}>
+                          <div className="mt-1 text-xs text-muted-foreground truncate" title={inspector.specialization}>
                             {inspector.specialization}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>{inspector._count.workOrders}</TableCell>
-                      <TableCell>
-                        {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? (
-                          <span className="font-medium">
-                            {inspector.ratingAverage?.toFixed(1)}
-                            <span className="text-xs text-muted-foreground"> ({inspector.ratingCount})</span>
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={inspector.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                          {inspector.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Link href={`/inspectors/${inspector.id}`}>
-                            <Button variant="outline" size="sm">View</Button>
-                          </Link>
-                          <Link href={`/inspectors/${inspector.id}/edit`}>
-                            <Button variant="outline" size="sm">Edit</Button>
-                          </Link>
+                          </div>
+                        ) : null}
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {inspector._count.workOrders} work orders • {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? `${inspector.ratingAverage.toFixed(1)} (${inspector.ratingCount})` : 'No ratings'}
                         </div>
-                      </TableCell>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <Badge variant={inspector.status === 'ACTIVE' ? 'success' : 'secondary'}>{inspector.status}</Badge>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Link href={`/inspectors/${inspector.id}`}>
+                        <Button variant="outline" size="sm">View</Button>
+                      </Link>
+                      <Link href={`/inspectors/${inspector.id}/edit`}>
+                        <Button variant="outline" size="sm">Edit</Button>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Table on md+ */}
+              <div className="hidden md:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Mobile Phone</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Specialization</TableHead>
+                      <TableHead>Work Orders</TableHead>
+                      <TableHead>Avg Rating</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {inspectors.map((inspector) => (
+                      <TableRow key={inspector.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-muted-foreground" />
+                            {inspector.name}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Phone className="h-3 w-3 text-muted-foreground" />
+                            {inspector.mobilePhone}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={inspector.type === 'FULL_TIME' ? 'default' : 'outline'}>
+                            {inspector.type === 'FULL_TIME' ? 'Full Time' : 'Part Time'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {inspector.specialization ? (
+                            <span className="block max-w-[240px] truncate" title={inspector.specialization}>
+                              {inspector.specialization}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>{inspector._count.workOrders}</TableCell>
+                        <TableCell>
+                          {inspector.ratingCount > 0 && inspector.ratingAverage !== null ? (
+                            <span className="font-medium">
+                              {inspector.ratingAverage?.toFixed(1)}
+                              <span className="text-xs text-muted-foreground"> ({inspector.ratingCount})</span>
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={inspector.status === 'ACTIVE' ? 'success' : 'secondary'}>
+                            {inspector.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Link href={`/inspectors/${inspector.id}`}>
+                              <Button variant="outline" size="sm">View</Button>
+                            </Link>
+                            <Link href={`/inspectors/${inspector.id}/edit`}>
+                              <Button variant="outline" size="sm">Edit</Button>
+                            </Link>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
 
               {inspectors.length === 0 && (

@@ -108,65 +108,116 @@ export function DashboardFollowUps({ defaultPage = 1, pageSize = 10 }: { default
       {remarks.length === 0 ? (
         <p className="text-sm text-muted-foreground">No follow-up remarks found.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Customer</TableHead>
-              <TableHead>Contract</TableHead>
-              <TableHead>Remark</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Logged</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {remarks.map((remark) => (
-              <TableRow key={remark.id}>
-                <TableCell className="text-sm">
-                  {remark.contract?.customer ? (
-                    <Link href={`/customers/${remark.contract.customer.id}`} className="text-primary hover:underline">
-                      {remark.contract.customer.name}
-                    </Link>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  <Link href={`/contracts/${remark.contract?.id ?? remark.contractId}`} className="font-mono text-xs text-primary hover:underline">
-                    #{remark.contract?.id ?? remark.contractId}
-                  </Link>
-                </TableCell>
-                <TableCell className="max-w-md text-sm">
-                  <span className="block truncate" title={remark.body}>{remark.body}</span>
-                </TableCell>
-                <TableCell className="text-sm">
-                  <Badge variant={remark.type === "FOLLOW_UP" ? "secondary" : "outline"}>
-                    {remark.type === "FOLLOW_UP" ? "Follow Up" : "FYI"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-sm">
-                  <Badge variant={remark.status === "OPEN" ? "info" : "success"}>
-                    {remark.status === "OPEN" ? "Open" : "Completed"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {new Date(remark.createdOn).toLocaleString("en-SG", { dateStyle: "medium", timeStyle: "short" })}
-                </TableCell>
-                <TableCell className="text-sm">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => toggleStatus(remark)}
-                    disabled={updatingId === remark.id}
-                  >
-                    {remark.status === "OPEN" ? "Mark complete" : "Reopen"}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <>
+          {/* Cards on small screens */}
+          <div className="md:hidden space-y-3">
+            {remarks.map((remark) => {
+              const logged = new Date(remark.createdOn).toLocaleString("en-SG", { dateStyle: "medium", timeStyle: "short" })
+              return (
+                <div key={remark.id} className="rounded-lg border bg-card text-card-foreground p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        {remark.contract?.customer ? (
+                          <Link href={`/customers/${remark.contract.customer.id}`} className="font-medium text-primary hover:underline truncate max-w-[160px]" title={remark.contract.customer.name}>
+                            {remark.contract.customer.name}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                        <Badge variant={remark.status === "OPEN" ? "info" : "success"}>
+                          {remark.status === "OPEN" ? "Open" : "Completed"}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <Link href={`/contracts/${remark.contract?.id ?? remark.contractId}`} className="font-mono text-xs text-primary hover:underline">
+                          #{remark.contract?.id ?? remark.contractId}
+                        </Link>
+                        <span>•</span>
+                        <Badge variant={remark.type === "FOLLOW_UP" ? "secondary" : "outline"} className="whitespace-nowrap">{remark.type === "FOLLOW_UP" ? "Follow Up" : "FYI"}</Badge>
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleStatus(remark)}
+                        disabled={updatingId === remark.id}
+                      >
+                        {remark.status === "OPEN" ? "Mark" : "Reopen"}
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm truncate" title={remark.body}>{remark.body}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{logged}</p>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Table on md+ screens */}
+          <div className="hidden md:block overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Contract</TableHead>
+                  <TableHead>Remark</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Logged</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {remarks.map((remark) => (
+                  <TableRow key={remark.id}>
+                    <TableCell className="text-sm">
+                      {remark.contract?.customer ? (
+                        <Link href={`/customers/${remark.contract.customer.id}`} className="text-primary hover:underline">
+                          {remark.contract.customer.name}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Link href={`/contracts/${remark.contract?.id ?? remark.contractId}`} className="font-mono text-xs text-primary hover:underline">
+                        #{remark.contract?.id ?? remark.contractId}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="max-w-md text-sm">
+                      <span className="block truncate" title={remark.body}>{remark.body}</span>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Badge variant={remark.type === "FOLLOW_UP" ? "secondary" : "outline"}>
+                        {remark.type === "FOLLOW_UP" ? "Follow Up" : "FYI"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Badge variant={remark.status === "OPEN" ? "info" : "success"}>
+                        {remark.status === "OPEN" ? "Open" : "Completed"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(remark.createdOn).toLocaleString("en-SG", { dateStyle: "medium", timeStyle: "short" })}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleStatus(remark)}
+                        disabled={updatingId === remark.id}
+                      >
+                        {remark.status === "OPEN" ? "Mark complete" : "Reopen"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">

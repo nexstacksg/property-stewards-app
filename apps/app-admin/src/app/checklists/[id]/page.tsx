@@ -61,7 +61,7 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-4">
           <Link href="/checklists">
             <Button variant="ghost" size="icon">
@@ -78,15 +78,15 @@ export default async function ChecklistDetailPage({ params }: { params: Promise<
             <p className="text-muted-foreground mt-1">Checklist Template Details</p>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Link href={`/checklists/${checklist.id}/edit`}>
-            <Button>
+        <div className="flex gap-2 w-full  justify-end">
+          <Link href={`/checklists/${checklist.id}/edit`} className="w-full sm:w-auto">
+            <Button className="w-full sm:w-auto">
               <Edit className="h-4 w-4 mr-2" />
               Edit Template
             </Button>
           </Link>
-          <Link href={`/checklists/new?from=${checklist.id}`}>
-            <Button variant="outline">
+          <Link href={`/checklists/new?from=${checklist.id}`} className="w-full sm:w-auto">
+            <Button variant="outline" className="w-full sm:w-auto">
               <Copy className="h-4 w-4 mr-2" />
               Duplicate
             </Button>
