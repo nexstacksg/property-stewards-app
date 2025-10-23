@@ -124,77 +124,117 @@ export default function CustomersPage() {
             <div className="text-center py-8">Loading...</div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Contact Person</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Contracts</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {customers.map((customer) => (
-                    <TableRow key={customer.id}>
-                      <TableCell className="font-medium">
+              {/* Card list on small screens */}
+              <div className="md:hidden space-y-3">
+                {customers.map((customer) => (
+                  <div key={customer.id} className="rounded-lg border bg-card text-card-foreground p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           {customer.type === 'COMPANY' ? (
                             <Building2 className="h-4 w-4 text-muted-foreground" />
                           ) : (
                             <User className="h-4 w-4 text-muted-foreground" />
                           )}
-                          <span className="block max-w-[220px] truncate" title={customer.name}>
-                            {customer.name}
-                          </span>
+                          <span className="font-medium truncate max-w-[160px]" title={customer.name}>{customer.name}</span>
+                          {getMemberBadge(customer)}
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {customer.type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="block max-w-[200px] truncate" title={customer.personInCharge}>
-                          {customer.personInCharge}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="block max-w-[260px] truncate" title={customer.email}>
-                          {customer.email}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="block max-w-[140px] truncate" title={customer.phone}>
-                          {customer.phone}
-                        </span>
-                      </TableCell>
-                      <TableCell>{getMemberBadge(customer)}</TableCell>
-                      <TableCell>{customer._count.contracts}</TableCell>
-                      <TableCell>
-                        <Badge variant={customer.status === 'ACTIVE' ? 'success' : 'secondary'}>
-                          {customer.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Link href={`/customers/${customer.id}`}>
-                            <Button variant="outline" size="sm">View</Button>
-                          </Link>
-                          <Link href={`/customers/${customer.id}/edit`}>
-                            <Button variant="outline" size="sm">Edit</Button>
-                          </Link>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <Badge variant="outline" className="whitespace-nowrap">{customer.type}</Badge>
+                          <span className="truncate" title={customer.personInCharge}>{customer.personInCharge}</span>
                         </div>
-                      </TableCell>
+                        <div className="mt-1 text-xs text-muted-foreground truncate" title={customer.email}>{customer.email}</div>
+                        <div className="text-xs text-muted-foreground truncate" title={customer.phone}>{customer.phone}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <Badge variant={customer.status === 'ACTIVE' ? 'success' : 'secondary'}>{customer.status}</Badge>
+                        <div className="mt-1 text-xs text-muted-foreground">{customer._count.contracts} contracts</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Link href={`/customers/${customer.id}`}>
+                        <Button variant="outline" size="sm">View</Button>
+                      </Link>
+                      <Link href={`/customers/${customer.id}/edit`}>
+                        <Button variant="outline" size="sm">Edit</Button>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Table on md+ */}
+              <div className="hidden md:block overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Contact Person</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Phone</TableHead>
+                      <TableHead>Member</TableHead>
+                      <TableHead>Contracts</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {customers.map((customer) => (
+                      <TableRow key={customer.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            {customer.type === 'COMPANY' ? (
+                              <Building2 className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <User className="h-4 w-4 text-muted-foreground" />
+                            )}
+                            <span className="block max-w-[220px] truncate" title={customer.name}>
+                              {customer.name}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {customer.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="block max-w-[200px] truncate" title={customer.personInCharge}>
+                            {customer.personInCharge}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="block max-w-[260px] truncate" title={customer.email}>
+                            {customer.email}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="block max-w-[140px] truncate" title={customer.phone}>
+                            {customer.phone}
+                          </span>
+                        </TableCell>
+                        <TableCell>{getMemberBadge(customer)}</TableCell>
+                        <TableCell>{customer._count.contracts}</TableCell>
+                        <TableCell>
+                          <Badge variant={customer.status === 'ACTIVE' ? 'success' : 'secondary'}>
+                            {customer.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Link href={`/customers/${customer.id}`}>
+                              <Button variant="outline" size="sm">View</Button>
+                            </Link>
+                            <Link href={`/customers/${customer.id}/edit`}>
+                              <Button variant="outline" size="sm">Edit</Button>
+                            </Link>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
 
               {customers.length === 0 && (
