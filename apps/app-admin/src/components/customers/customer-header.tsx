@@ -12,7 +12,7 @@ interface CustomerHeaderProps {
 
 export function CustomerHeader({ customer }: CustomerHeaderProps) {
   return (
-    <div className="flex justify-between items-center">
+    <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex items-center gap-4">
         <Link href="/customers">
           <Button variant="ghost" size="icon">
@@ -32,9 +32,9 @@ export function CustomerHeader({ customer }: CustomerHeaderProps) {
           <p className="text-muted-foreground mt-1">Customer Details</p>
         </div>
       </div>
-      <div className="flex gap-2">
-        <Link href={`/customers/${customer.id}/edit`}>
-          <Button>
+      <div className="flex gap-2 w-full sm:w-auto justify-end">
+        <Link href={`/customers/${customer.id}/edit`} className="w-full sm:w-auto">
+          <Button className="w-full sm:w-auto">
             <Edit className="h-4 w-4 mr-2" />
             Edit Customer
           </Button>
