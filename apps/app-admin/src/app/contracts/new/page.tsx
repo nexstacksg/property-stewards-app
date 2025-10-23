@@ -861,8 +861,8 @@ function NewContractPageContent() {
       </div>
 
       <form onSubmit={handleSubmit}>
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2">
+        <div className="grid gap-6 min-[1400px]:grid-cols-3">
+          <div className="min-[1400px]:col-span-2">
             <Card>
               <CardHeader>
                 <CardTitle>Contract Information</CardTitle>
@@ -1372,7 +1372,7 @@ function NewContractPageContent() {
             </Card>
           </div>
 
-          <div className="lg:col-span-1">
+          <div className="min-[1400px]:col-span-1">
             <ContractSummary
               contractType={contractType}
               contractTypeLabel={contractTypeLabel}

@@ -85,13 +85,13 @@ export default function InspectorsPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-3xl font-bold">Inspectors</h1>
           <p className="text-muted-foreground mt-2">Manage property inspection personnel</p>
         </div>
-        <Link href="/inspectors/new">
-          <Button>
+        <Link href="/inspectors/new" className="w-full sm:w-auto">
+          <Button className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
             Add Inspector
           </Button>
@@ -99,7 +99,7 @@ export default function InspectorsPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -172,30 +172,30 @@ export default function InspectorsPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <CardTitle>Inspector List</CardTitle>
               <CardDescription>View and manage all inspectors</CardDescription>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <select
                 value={typeFilter}
                 onChange={(e) => setTypeFilter(e.target.value)}
-                className="px-3 py-2 border rounded-md"
+                className="px-3 py-2 border rounded-md w-full sm:w-[160px]"
               >
                 <option value="">All Types</option>
                 <option value="FULL_TIME">Full Time</option>
                 <option value="PART_TIME">Part Time</option>
               </select>
-              <form onSubmit={handleSearch} className="flex gap-2">
+              <form onSubmit={handleSearch} className="flex gap-2 flex-1 min-w-[220px] sm:min-w-[280px] md:min-w-[340px]">
                 <input
                   type="text"
                   placeholder="Search inspectors..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="px-3 py-2 border rounded-md"
+                  className="px-3 py-2 border rounded-md w-full"
                 />
-                <Button type="submit" variant="outline">
+                <Button type="submit" variant="outline" className="shrink-0">
                   <Search className="h-4 w-4" />
                 </Button>
               </form>
@@ -207,6 +207,7 @@ export default function InspectorsPage() {
             <div className="text-center py-8">Loading...</div>
           ) : (
             <>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -242,7 +243,9 @@ export default function InspectorsPage() {
                       </TableCell>
                       <TableCell>
                         {inspector.specialization ? (
-                          <span>{inspector.specialization}</span>
+                          <span className="block max-w-[240px] truncate" title={inspector.specialization}>
+                            {inspector.specialization}
+                          </span>
                         ) : (
                           <span className="text-muted-foreground text-sm">—</span>
                         )}
@@ -277,6 +280,7 @@ export default function InspectorsPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
 
               {inspectors.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
