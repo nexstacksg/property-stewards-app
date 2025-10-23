@@ -1183,7 +1183,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
     }
 
     let photoHeight = 0
-    let photoLayout: ReturnType<typeof preparePhotoLayout> | null = null
+    let photoLayout: ReturnType<typeof prepareGridLayout> | null = null
     if (hasPhotos) {
       photoLayout = prepareGridLayout(doc, photos.length, photoCaptions, contentWidth, PHOTO_HEIGHT)
       photoHeight = photoLayout.totalHeight
@@ -1221,7 +1221,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       contentY += MEDIA_GUTTER
     }
 
-    const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof preparePhotoLayout>) => {
+    const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof prepareGridLayout>) => {
       if (!hasPhotos || layout.rowHeights.length === 0) return 0
       const { tileWidth, rowHeights } = layout
       const rowStartYs: number[] = []
@@ -1461,22 +1461,160 @@ export async function appendWorkOrderSection(
         }
 
     if (rowInfo.summaryMedia) {
-      // Paint background matching the last task row for media blocks
-      const mediaHeightPrecalc = calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
-      if (mediaHeightPrecalc > 0 && currentTaskBackground) {
-        const tableWidth = getTableWidth(doc)
-        doc.save()
-        try {
-          doc.fillColor(currentTaskBackground)
-          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-          doc.rect(TABLE_MARGIN, y, tableWidth, mediaHeightPrecalc).fill()
-        } finally {
-          if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-          doc.restore()
+      // Split very large media blocks across pages so photos never overlap the footer
+      // and so we can show all photos, even when there are hundreds.
+      const normalizedSegments = normalizeSegments(rowInfo.summaryMedia)
+
+      // Iterate each segment and paginate it if necessary
+      for (let segIndex = 0; segIndex < normalizedSegments.length; segIndex += 1) {
+        const original = normalizedSegments[segIndex]
+        let remainingPhotos = Array.isArray(original.photos) ? original.photos.slice() : []
+        let remainingCaptions = Array.isArray(original.photoCaptions) ? original.photoCaptions.slice() : []
+        let includeText = Boolean(original.text && original.text.trim())
+        const videos = Array.isArray(original.videos) ? original.videos.slice() : []
+
+        // Helper to add a page and redraw the header
+        const ensureNewPageWithHeader = () => {
+          doc.addPage()
+          y = TABLE_MARGIN
+          const headerAgainHeight = drawTableRow(doc, y, headerRow, { header: true })
+          y += headerAgainHeight
+        }
+
+        while (includeText || remainingPhotos.length > 0 || videos.length > 0) {
+          // Available space on the current page (below current y), respecting footer area
+          let remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
+          const headerHeight = calculateRowHeight(doc, headerRow)
+          const maxPerFreshPage = (doc.page.height - TABLE_MARGIN - FOOTER_RESERVED) - (TABLE_MARGIN + headerHeight)
+
+          if (remainingSpace <= 16) {
+            // Not enough space to draw anything meaningful, go to the next page with header
+            ensureNewPageWithHeader()
+            remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
+          }
+
+          const contentWidth = getTableWidth(doc) - CELL_PADDING * 2
+
+          // Compute text block height (if needed)
+          let textHeight = 0
+          const textValue = includeText ? (original.text?.trim() || "") : ""
+          if (textValue) {
+            doc.font("Helvetica").fontSize(10)
+            textHeight = doc.heightOfString(textValue, { width: contentWidth, align: 'left' })
+          }
+
+          // Base padding for the media block
+          const basePadding = CELL_PADDING * 2
+
+          // Determine how many photo rows can fit into remainingSpace
+          let rowsToTake = 0
+          let photosToTake = 0
+
+          const hasPhotosRemaining = remainingPhotos.length > 0
+          const hasVideosRemaining = videos.length > 0
+
+          // Space budget after base + text + optional gutter if media exists
+          const needGutter = textHeight > 0 && (hasPhotosRemaining || hasVideosRemaining)
+          let availableForMedia = remainingSpace - basePadding - textHeight - (needGutter ? MEDIA_GUTTER : 0)
+
+          if (hasPhotosRemaining && availableForMedia > 0) {
+            // Compute row heights for remaining photos and include as many rows as possible
+            const layout = prepareGridLayout(doc, remainingPhotos.length, remainingCaptions, contentWidth, PHOTO_HEIGHT)
+            let acc = 0
+            for (let r = 0; r < layout.rowHeights.length; r += 1) {
+              const rowHeight = layout.rowHeights[r]
+              if (r > 0) acc += MEDIA_GUTTER
+              if (acc + rowHeight > availableForMedia) break
+              acc += rowHeight
+              rowsToTake += 1
+            }
+            photosToTake = Math.min(remainingPhotos.length, rowsToTake * MEDIA_PER_ROW)
+          }
+
+          // If no photos can fit but we still have text, render text-only chunk once
+          if (photosToTake === 0 && textHeight > 0 && remainingSpace >= basePadding + textHeight) {
+            const chunk: CellSegment = {
+              text: textValue,
+              photos: [],
+              photoCaptions: [],
+              videos: []
+            }
+            const chunkHeight = calculateMediaBlocksHeight(doc, chunk)
+            if (chunkHeight > remainingSpace) {
+              // Even text alone doesn't fit—move to next page
+              ensureNewPageWithHeader()
+              continue
+            }
+            // Background paint
+            if (currentTaskBackground) {
+              doc.save()
+              try {
+                doc.fillColor(currentTaskBackground)
+                if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+                doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
+              } finally {
+                if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+                doc.restore()
+              }
+            }
+            const consumed = drawMediaBlocks(doc, y, chunk)
+            y += consumed
+            includeText = false
+            continue
+          }
+
+          // If still nothing fits and the block is simply larger than a single fresh page,
+          // we must force a new page and try again (the loop will continue chunking rows).
+          if (photosToTake === 0 && hasPhotosRemaining) {
+            // Not enough space on current page; try a fresh page
+            if (remainingSpace < maxPerFreshPage - 4) {
+              ensureNewPageWithHeader()
+              continue
+            }
+            // At least take one row on fresh page robustly
+            const layout = prepareGridLayout(doc, remainingPhotos.length, remainingCaptions, contentWidth, PHOTO_HEIGHT)
+            rowsToTake = Math.min(1, layout.rowHeights.length)
+            photosToTake = Math.min(remainingPhotos.length, rowsToTake * MEDIA_PER_ROW)
+          }
+
+          // Compose the chunk segment
+          const chunkPhotos = remainingPhotos.slice(0, photosToTake)
+          const chunkCaptions = remainingCaptions.slice(0, photosToTake)
+          const chunk: CellSegment = {
+            text: includeText ? textValue : undefined,
+            photos: chunkPhotos,
+            photoCaptions: chunkCaptions,
+            videos: []
+          }
+          let chunkHeight = calculateMediaBlocksHeight(doc, chunk)
+
+          // If chunk still exceeds remaining space, push to next page
+          if (chunkHeight > remainingSpace) {
+            ensureNewPageWithHeader()
+            continue
+          }
+
+          // Paint matching background
+          if (currentTaskBackground) {
+            doc.save()
+            try {
+              doc.fillColor(currentTaskBackground)
+              if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+              doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
+            } finally {
+              if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+              doc.restore()
+            }
+          }
+
+          // Draw and advance pointers
+          const consumed = drawMediaBlocks(doc, y, chunk)
+          y += consumed
+          includeText = false
+          remainingPhotos = remainingPhotos.slice(photosToTake)
+          remainingCaptions = remainingCaptions.slice(photosToTake)
         }
       }
-      const mediaHeight = drawMediaBlocks(doc, y, rowInfo.summaryMedia)
-      y += mediaHeight
     }
   })
 
