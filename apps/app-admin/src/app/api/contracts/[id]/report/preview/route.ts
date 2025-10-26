@@ -67,15 +67,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params
   try {
+    const url = new URL(request.url)
+    const wantsJson = url.searchParams.get('format') === 'json'
     const result = await buildPreviewFile(id, request.url)
     if ('error' in result) return result.error
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: result.fileUrl,
-        "Cache-Control": "no-store",
-      },
-    })
+    if (wantsJson) {
+      return new Response(JSON.stringify({ fileUrl: result.fileUrl }), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+      })
+    }
+    return new Response(null, { status: 302, headers: { Location: result.fileUrl, 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error("Preview generation failed (GET):", error)
     return new Response("Failed to generate preview", { status: 500 })

@@ -43,9 +43,9 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       }
 
       setIsLoading(true)
-      // Generate preview first; server returns JSON with fileUrl
-      const apiUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}`)
-      const resp = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store' })
+      // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
+      const apiUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
+      const resp = await fetch(apiUrl, { method: 'GET', cache: 'no-store' })
       if (!resp.ok || !resp.headers.get('content-type')?.includes('application/json')) {
         throw new Error(`Failed to generate preview (${resp.status})`)
       }
