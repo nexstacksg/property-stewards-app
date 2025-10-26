@@ -37,7 +37,7 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
           } catch {}
         }
         if (!opened) {
-          showToast({ title: 'Popup blocked', description: 'Please allow popups for this site and click again.', variant: 'info' })
+          showToast({ title: 'Popup blocked', description: 'Please allow popups for this site and click again.' })
         }
         return
       }
@@ -46,10 +46,15 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
       const apiUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
       const resp = await fetch(apiUrl, { method: 'GET', cache: 'no-store' })
-      if (!resp.ok || !resp.headers.get('content-type')?.includes('application/json')) {
-        throw new Error(`Failed to generate preview (${resp.status})`)
+      let data: { fileUrl?: string; error?: string } | null = null
+      try { data = await resp.json() } catch {}
+      if (!resp.ok) {
+        const message = data?.error || `Failed to generate preview (${resp.status})`
+        throw new Error(message)
       }
-      const data = await resp.json().catch(() => null) as { fileUrl?: string }
+      if (!resp.headers.get('content-type')?.includes('application/json')) {
+        throw new Error('Unexpected server response')
+      }
       if (!data?.fileUrl) throw new Error('No file URL returned')
 
       // Do not auto-open. Store URL and switch button to Open Preview.
@@ -57,7 +62,7 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
     } catch (error) {
       console.error('Failed to generate PDF', error)
-      showToast({ title: 'Failed to generate PDF', description: 'Please try again.', variant: 'error' })
+      showToast({ title: 'Failed to generate PDF', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' })
     } finally {
       setIsLoading(false)
     }
