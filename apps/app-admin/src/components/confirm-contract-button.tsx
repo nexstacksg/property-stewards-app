@@ -50,7 +50,7 @@ export function ConfirmContractButton({ contractId, className }: ConfirmContract
       ) : (
         <>
           <CheckCircle2 className="mr-2 h-4 w-4" />
-          Mark as Complete
+          Mark as Comfirm
         </>
       )}
     </Button>
