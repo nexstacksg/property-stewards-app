@@ -184,7 +184,7 @@ export function Navigation() {
             })}
           </ul>
         </nav>
-
+        <p>Verification code: OS7K3L</p>
         <div className="border-t px-4 py-4">
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
