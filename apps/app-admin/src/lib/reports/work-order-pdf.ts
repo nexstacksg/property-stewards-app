@@ -1431,11 +1431,14 @@ export async function appendWorkOrderSection(
     const remainingSpace = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - y
     const rowH = rowInfo.mediaOnly ? 0 : calculateRowHeight(doc, rowInfo.cells)
     const mediaH = calculateMediaBlocksHeight(doc, rowInfo.summaryMedia)
-    const requiredHeight = rowH + mediaH
 
-    if (requiredHeight > remainingSpace) {
-      // Draw footer on current page before moving to the next
-      // drawFooter(doc)
+    // Pagination rule:
+    // - If the table row itself doesn't fit, start a new page before the row.
+    // - Otherwise draw the row now and let media paginate independently below.
+    // - For media-only rows, decide based on media height only.
+    const needsRowPageBreak = !rowInfo.mediaOnly && rowH > remainingSpace
+
+    if (needsRowPageBreak) {
       doc.addPage()
       y = TABLE_MARGIN
       const headerAgainHeight = drawTableRow(doc, y, headerRow, { header: true })
@@ -1566,15 +1569,9 @@ export async function appendWorkOrderSection(
           // If still nothing fits and the block is simply larger than a single fresh page,
           // we must force a new page and try again (the loop will continue chunking rows).
           if (photosToTake === 0 && hasPhotosRemaining) {
-            // Not enough space on current page; try a fresh page
-            if (remainingSpace < maxPerFreshPage - 4) {
-              ensureNewPageWithHeader()
-              continue
-            }
-            // At least take one row on fresh page robustly
-            const layout = prepareGridLayout(doc, remainingPhotos.length, remainingCaptions, contentWidth, PHOTO_HEIGHT)
-            rowsToTake = Math.min(1, layout.rowHeights.length)
-            photosToTake = Math.min(remainingPhotos.length, rowsToTake * MEDIA_PER_ROW)
+            // Not enough space on current page even for a single row of photos → move to a fresh page
+            ensureNewPageWithHeader()
+            continue
           }
 
           // Compose the chunk segment
