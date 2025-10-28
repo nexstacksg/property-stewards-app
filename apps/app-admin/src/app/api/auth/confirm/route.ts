@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { confirmUserByToken } from '@/lib/auth-confirmation'
+import getAppOrigin from '@/lib/app-origin'
 
 export const runtime = 'nodejs'
 
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Server misconfigured: AUTH_SECRET or NEXTAUTH_SECRET missing' }, { status: 500 })
   }
 
-  const url = new URL('/login', req.nextUrl.origin)
+  const url = new URL('/login', getAppOrigin(req))
   const map: Record<string, string> = {
     success: 'success',
     invalid: 'invalid',
