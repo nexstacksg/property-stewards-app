@@ -44,29 +44,43 @@ export async function middleware(req: NextRequest) {
 
   // Validate that the user still exists in DB via server route.
   // In self-hosted/proxied environments, internal fetch to the public URL can fail.
-  // Allow opting into strict failure via AUTH_VALIDATE_STRICT=true.
+  // Control via:
+  //  - AUTH_VALIDATE_SERVER=false → skip remote validation
+  //  - AUTH_VALIDATE_STRICT=true  → fail closed on fetch error
   const strictValidate = (process.env.AUTH_VALIDATE_STRICT || '').toLowerCase() === 'true'
-  try {
-    const validateUrl = new URL('/api/auth/validate', req.url)
-    const validateRes = await fetch(validateUrl, { headers: { cookie: req.headers.get('cookie') || '' } })
-    if (!validateRes.ok) {
-      const url = new URL('/login', req.url)
-      url.searchParams.set('next', pathname)
-      url.searchParams.set('logout', 'missing-user')
-      const res = NextResponse.redirect(url)
-      res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
-      return res
+  // Default OFF to avoid proxy/DNS issues; opt-in with AUTH_VALIDATE_SERVER=true
+  const enableRemoteValidate = (process.env.AUTH_VALIDATE_SERVER || '').toLowerCase() === 'true'
+  if (!secret && !enableRemoteValidate) {
+    // No way to verify session token
+    const url = new URL('/login', req.url)
+    url.searchParams.set('next', pathname)
+    const res = NextResponse.redirect(url)
+    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
+    return res
+  }
+  if (enableRemoteValidate) {
+    try {
+      const validateUrl = new URL('/api/auth/validate', req.url)
+      const validateRes = await fetch(validateUrl, { headers: { cookie: req.headers.get('cookie') || '' } })
+      if (!validateRes.ok) {
+        const url = new URL('/login', req.url)
+        url.searchParams.set('next', pathname)
+        url.searchParams.set('logout', 'missing-user')
+        const res = NextResponse.redirect(url)
+        res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
+        return res
+      }
+    } catch (err) {
+      // Network error reaching validate API. In non-strict mode, allow request.
+      if (strictValidate) {
+        const url = new URL('/login', req.url)
+        url.searchParams.set('next', pathname)
+        const res = NextResponse.redirect(url)
+        res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
+        return res
+      }
+      console.warn('Middleware: validate fetch failed; proceeding (set AUTH_VALIDATE_STRICT=true to fail)', err)
     }
-  } catch (err) {
-    // Network error reaching validate API. In non-strict mode, allow request.
-    if (strictValidate) {
-      const url = new URL('/login', req.url)
-      url.searchParams.set('next', pathname)
-      const res = NextResponse.redirect(url)
-      res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
-      return res
-    }
-    console.warn('Middleware: validate fetch failed; proceeding (set AUTH_VALIDATE_STRICT=true to fail)', err)
   }
 
   return NextResponse.next()
