@@ -6,7 +6,7 @@ import { sendEmail } from '@/lib/email'
 const DEBUG_PREFIX = '[auth-confirmation]'
 
 const CONFIRMATION_PURPOSE = 'email-confirm'
-export const CONFIRMATION_TTL_SECONDS = 60 * 60 * 24 // 24 hours
+export const CONFIRMATION_TTL_SECONDS = 60 * 60 * 24 
 
 type ConfirmationTokenPayload = {
   sub: string
