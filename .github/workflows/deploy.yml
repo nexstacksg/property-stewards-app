@@ -2,15 +2,15 @@ name: prod Deployment
 
 on:
   push:
-    branches: [main]
+    branches: [prod]
     paths:
       - "apps/app-admin/**"
       - ".github/workflows/deploy.yml"
 
 jobs:
   deploy:
-    runs-on: property-stewards
-    environment: property-stewards
+    runs-on: prod
+    environment: prod
 
     strategy:
       matrix:
