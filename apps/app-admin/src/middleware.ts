@@ -39,11 +39,18 @@ export async function middleware(req: NextRequest) {
     return res
   }
 
-  // Validate that the user still exists in DB via server route
+  // Validate that the user still exists in DB via server route.
+  // In self-hosted/proxy setups, outbound requests from middleware to the public
+  // origin can be blocked or DNS can fail. We only force-logout on explicit 401
+  // responses; other failures are treated as soft failures (allowing the request),
+  // since server pages revalidate sessions again.
   try {
     const validateUrl = new URL('/api/auth/validate', req.url)
-    const validateRes = await fetch(validateUrl, { headers: { cookie: req.headers.get('cookie') || '' } })
-    if (!validateRes.ok) {
+    const validateRes = await fetch(validateUrl, {
+      headers: { cookie: req.headers.get('cookie') || '' },
+      cache: 'no-store',
+    })
+    if (validateRes.status === 401) {
       const url = new URL('/login', req.url)
       url.searchParams.set('next', pathname)
       url.searchParams.set('logout', 'missing-user')
@@ -51,13 +58,10 @@ export async function middleware(req: NextRequest) {
       res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
       return res
     }
-  } catch (_) {
-    // On any unexpected validation error, fail closed
-    const url = new URL('/login', req.url)
-    url.searchParams.set('next', pathname)
-    const res = NextResponse.redirect(url)
-    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
-    return res
+    // For non-401 errors (e.g., 500) or network issues, let the request proceed.
+  } catch (err) {
+    // Soft-fail: proceed without blocking, but emit a console for observability
+    console.warn('[middleware] validate check failed; proceeding without hard logout', { error: String(err) })
   }
 
   return NextResponse.next()
