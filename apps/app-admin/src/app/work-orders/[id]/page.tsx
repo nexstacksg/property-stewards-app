@@ -202,7 +202,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
               .filter((entry: string) => entry.length > 0)
           : []
         if (name && subtasks.length > 0) {
-          return `${name}: ${subtasks.join(', ')}`
+          return `${name}`
         }
         if (name) return name
         if (subtasks.length > 0) return subtasks.join(', ')

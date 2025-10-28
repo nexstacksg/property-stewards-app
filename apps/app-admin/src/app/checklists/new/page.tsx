@@ -246,6 +246,8 @@ function NewChecklistContent() {
   const [rowEditIndex, setRowEditIndex] = useState<number | null>(null)
   const [rowEditLocation, setRowEditLocation] =
     useState<ChecklistLocationDraft | null>(null)
+  const [rowTaskEditIndex, setRowTaskEditIndex] = useState<number | null>(null)
+  const [rowTaskDraft, setRowTaskDraft] = useState<ChecklistTaskDraft | null>(null)
 
   useEffect(() => {
     const fromId = searchParams?.get("from")
@@ -423,30 +425,52 @@ function NewChecklistContent() {
       ...locations[index],
       tasks: locations[index].tasks.map((task) => ({ ...task })),
     })
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
   }
 
   const addTaskToRowEdit = () => {
-    setRowEditLocation((prev) =>
-      prev
-        ? {
-            ...prev,
-            tasks: [...prev.tasks, createEmptyTask()],
-          }
-        : prev,
-    )
+    setRowEditLocation((prev) => {
+      if (!prev) return prev
+      const nextTasks = [...prev.tasks, createEmptyTask()]
+      setRowTaskEditIndex(nextTasks.length - 1)
+      setRowTaskDraft(createEmptyTask())
+      return { ...prev, tasks: nextTasks }
+    })
   }
 
-  const updateRowEditTask = (
-    taskIndex: number,
+  const startRowTaskEdit = (taskIndex: number) => {
+    setRowEditLocation((prev) => {
+      if (!prev) return prev
+      const task = prev.tasks[taskIndex]
+      setRowTaskEditIndex(taskIndex)
+      setRowTaskDraft({ ...task })
+      return prev
+    })
+  }
+
+  const updateRowTaskDraft = (
     field: keyof ChecklistTaskDraft,
     value: string,
   ) => {
+    setRowTaskDraft((prev) => (prev ? { ...prev, [field]: value } : prev))
+  }
+
+  const saveRowTaskEdit = (taskIndex: number) => {
+    if (!rowTaskDraft) return
+    const trimmed: ChecklistTaskDraft = {
+      ...rowTaskDraft,
+      name: (rowTaskDraft.name || '').trim(),
+      details: (rowTaskDraft.details || '').trim(),
+    }
     setRowEditLocation((prev) => {
       if (!prev) return prev
-      const nextTasks = [...prev.tasks]
-      nextTasks[taskIndex] = { ...nextTasks[taskIndex], [field]: value }
-      return { ...prev, tasks: nextTasks }
+      const next = [...prev.tasks]
+      next[taskIndex] = trimmed
+      return { ...prev, tasks: next }
     })
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
   }
 
   const removeRowEditTask = (taskIndex: number) => {
@@ -455,16 +479,25 @@ function NewChecklistContent() {
       const nextTasks = prev.tasks.filter((_, index) => index !== taskIndex)
       return { ...prev, tasks: nextTasks }
     })
+    if (rowTaskEditIndex === taskIndex) {
+      setRowTaskEditIndex(null)
+      setRowTaskDraft(null)
+    } else if (rowTaskEditIndex !== null && rowTaskEditIndex > taskIndex) {
+      setRowTaskEditIndex(rowTaskEditIndex - 1)
+    }
   }
 
   const cancelRowEdit = () => {
     setRowEditIndex(null)
     setRowEditLocation(null)
+    setRowTaskEditIndex(null)
+    setRowTaskDraft(null)
   }
 
   const saveRowEdit = () => {
     if (rowEditIndex === null || !rowEditLocation) return
     if (!rowEditLocation.location.trim()) return
+    if (rowTaskEditIndex !== null) return
 
     const sanitizedTasks = sanitiseTasks(rowEditLocation.tasks)
     const nextLocations = [...locations]
@@ -944,54 +977,57 @@ function NewChecklistContent() {
                                     </p>
                                   )}
 
-                                  {rowEditLocation?.tasks?.map((task, taskIndex) => (
-                                    <div
-                                      key={task.id || `edit-task-${taskIndex}`}
-                                      className="border rounded-md p-3 space-y-3 bg-muted/30"
-                                    >
-                                      <div className="grid gap-3 md:grid-cols-2">
-                                        <div className="space-y-1">
-                                          <Label>Task Name *</Label>
-                                          <Input
-                                            value={task.name}
-                                            onChange={(event) =>
-                                              updateRowEditTask(
-                                                taskIndex,
-                                                "name",
-                                                event.target.value,
-                                              )
-                                            }
-                                            placeholder="e.g., Inspect railings"
-                                          />
-                                        </div>
-                                        <div className="space-y-1">
-                                          <Label>Details (comma separated)</Label>
-                                          <Input
-                                            value={task.details}
-                                            onChange={(event) =>
-                                              updateRowEditTask(
-                                                taskIndex,
-                                                "details",
-                                                event.target.value,
-                                              )
-                                            }
-                                            placeholder="e.g., Check height, Check stability"
-                                          />
-                                        </div>
+                                  {rowEditLocation?.tasks.map((task, taskIndex) => {
+                                    const isEditing = rowTaskEditIndex === taskIndex
+                                    const draftTask = isEditing && rowTaskDraft ? rowTaskDraft : task
+
+                                    return (
+                                      <div key={task.id || `row-task-${taskIndex}`} className="border rounded-md p-3">
+                                        {isEditing ? (
+                                          <div className="space-y-3">
+                                            <div className="space-y-2">
+                                              <Label>Task Name *</Label>
+                                              <Input
+                                                value={draftTask.name}
+                                                onChange={(event) => updateRowTaskDraft('name', event.target.value)}
+                                                placeholder="e.g., Inspect railings"
+                                              />
+                                            </div>
+                                            <div className="space-y-2">
+                                              <Label>Details (comma separated)</Label>
+                                              <Input
+                                                value={draftTask.details}
+                                                onChange={(event) => updateRowTaskDraft('details', event.target.value)}
+                                                placeholder="e.g., Check height, Check stability"
+                                              />
+                                            </div>
+                                            <div className="flex justify-end gap-2">
+                                              <Button type="button" variant="outline" size="sm" onClick={() => {
+                                                // Cancel edits; remove if new and empty
+                                                const t = rowEditLocation?.tasks?.[taskIndex]
+                                                const isNew = t && !t.id && !t.name && !t.details
+                                                if (isNew) removeRowEditTask(taskIndex)
+                                                setRowTaskEditIndex(null)
+                                                setRowTaskDraft(null)
+                                              }}>Cancel</Button>
+                                              <Button type="button" size="sm" onClick={() => saveRowTaskEdit(taskIndex)} disabled={!draftTask.name.trim()}>Save</Button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div className="space-y-1">
+                                              <p className="font-medium text-sm">{task.name.trim() || 'Untitled task'}</p>
+                                              <p className="text-xs text-muted-foreground">{task.details.trim() || 'No details provided'}</p>
+                                            </div>
+                                            <div className="flex gap-1">
+                                              <Button type="button" variant="ghost" size="icon" onClick={() => startRowTaskEdit(taskIndex)} aria-label="Edit task"><Pencil className="h-4 w-4" /></Button>
+                                              <Button type="button" variant="ghost" size="icon" onClick={() => removeRowEditTask(taskIndex)} aria-label="Delete task"><Trash2 className="h-4 w-4" /></Button>
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
-                                      <div className="flex justify-end">
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          onClick={() => removeRowEditTask(taskIndex)}
-                                          aria-label="Remove task"
-                                        >
-                                          <X className="h-4 w-4" />
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  ))}
+                                    )
+                                  })}
                                 </div>
 
                                 <div className="flex justify-end gap-2">
@@ -1007,7 +1043,7 @@ function NewChecklistContent() {
                                     type="button"
                                     size="sm"
                                     onClick={saveRowEdit}
-                                    disabled={!rowEditLocation?.location.trim()}
+                                    disabled={!rowEditLocation?.location.trim() || rowTaskEditIndex !== null}
                                   >
                                     Save
                                   </Button>
