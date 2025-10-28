@@ -1,5 +1,12 @@
 import { Buffer } from 'node:buffer'
 
+// Runtime flags to control conversion behavior
+const NO_IMAGE_PROXY = process.env.NO_IMAGE_PROXY === '1'
+const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '1024', 10)
+const RESIZE_MAX_DIM = PROXY_MAX_DIM
+const TARGET_FORMAT: 'png' | 'jpeg' = (process.env.PDF_IMAGE_FORMAT === 'png' ? 'png' : 'jpeg')
+const JPEG_QUALITY = Math.min(95, Math.max(40, Number.parseInt(process.env.PDF_IMAGE_QUALITY || '60', 10) || 60))
+
 // Lightweight magic-byte sniffing for common formats that PDFKit often sees
 // We only need to distinguish JPEG/PNG (supported) vs others (to convert)
 
@@ -101,11 +108,11 @@ async function convertWithSharp(buf: Buffer, to: 'png' | 'jpeg'): Promise<Buffer
   const meta = await base.metadata().catch(() => ({} as any))
   const w = typeof meta.width === 'number' ? meta.width : undefined
   const h = typeof meta.height === 'number' ? meta.height : undefined
-  const tooLarge = (w && w > 4096) || (h && h > 4096)
-  const resized = tooLarge ? base.resize({ width: w && h && w >= h ? 4096 : undefined, height: w && h && h > w ? 4096 : undefined, fit: 'inside', withoutEnlargement: true }) : base
+  const tooLarge = (w && w > RESIZE_MAX_DIM) || (h && h > RESIZE_MAX_DIM)
+  const resized = tooLarge ? base.resize({ width: w && h && w >= h ? RESIZE_MAX_DIM : undefined, height: w && h && h > w ? RESIZE_MAX_DIM : undefined, fit: 'inside', withoutEnlargement: true }) : base
 
-  if (to === 'png') return resized.png({ compressionLevel: 9 }).toBuffer()
-  return resized.jpeg({ quality: 82, mozjpeg: true }).toBuffer()
+  if (to === 'png') return resized.png({ compressionLevel: 4, adaptiveFiltering: true }).toBuffer()
+  return resized.jpeg({ quality: JPEG_QUALITY, mozjpeg: true, progressive: true, chromaSubsampling: '4:2:0' }).toBuffer()
 }
 
 /**
@@ -115,12 +122,12 @@ async function convertWithSharp(buf: Buffer, to: 'png' | 'jpeg'): Promise<Buffer
 export async function ensurePdfSupportedImage(buf: Buffer): Promise<Buffer | null> {
   if (!buf || buf.length === 0) return null
   if (buf.length < 32) return null
-  // Always normalize to PNG to eliminate edge cases across formats
+  // Always normalize to configured target to eliminate edge cases across formats
   try {
-    const converted = await convertWithSharp(buf, 'png')
+    const converted = await convertWithSharp(buf, TARGET_FORMAT)
     return isPdfKitCompatibleImage(converted) ? converted : null
   } catch {
-    // If sharp is unavailable, only accept already-safe PNG/JPEG; else caller will proxy-convert
+    // If sharp is unavailable, accept validated PNG/JPEG buffers; otherwise null
     const kind = detectImageKind(buf)
     if (kind === 'png' || kind === 'jpeg') {
       return isPdfKitCompatibleImage(buf) ? buf : null
@@ -148,7 +155,7 @@ export async function loadNormalizedImage(url: string): Promise<Buffer | null> {
     const resp = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'image/avif,image/webp,image/*;q=0.9,*/*;q=0.8' },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(6000)
     })
     if (!resp.ok) return null
     const arr = await resp.arrayBuffer()
@@ -157,10 +164,10 @@ export async function loadNormalizedImage(url: string): Promise<Buffer | null> {
     if (normalized) return normalized
 
     // Fallback: try a no-dependency on-the-fly converter (wsrv.nl)
-    // Note: uses third-party CDN; disable by setting NO_IMAGE_PROXY=1 in env if undesired
-    if (process.env.NO_IMAGE_PROXY === '1') return null
-    const proxy = `https://wsrv.nl/?url=${encodeURIComponent(url)}&output=png&w=2048&h=2048&fit=inside`
-    const proxied = await fetch(proxy, { method: 'GET', signal: AbortSignal.timeout(10000) }).catch(() => null as any)
+    // Note: uses third-party CDN; disable with NO_IMAGE_PROXY=1
+    if (NO_IMAGE_PROXY) return null
+    const proxy = `https://wsrv.nl/?url=${encodeURIComponent(url)}&output=png&w=${PROXY_MAX_DIM}&h=${PROXY_MAX_DIM}&fit=inside`
+    const proxied = await fetch(proxy, { method: 'GET', signal: AbortSignal.timeout(6000) }).catch(() => null as any)
     if (proxied?.ok) {
       const proxBuf = Buffer.from(await proxied.arrayBuffer())
       const kind = detectImageKind(proxBuf)

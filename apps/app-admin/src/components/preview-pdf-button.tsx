@@ -43,26 +43,57 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       }
 
       setIsLoading(true)
-      // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
-      const apiUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
-      const resp = await fetch(apiUrl, { method: 'GET', cache: 'no-store' })
-      let data: { fileUrl?: string; error?: string } | null = null
-      try { data = await resp.json() } catch {}
-      if (!resp.ok) {
-        const message = data?.error || `Failed to generate preview (${resp.status})`
-        throw new Error(message)
-      }
-      if (!resp.headers.get('content-type')?.includes('application/json')) {
-        throw new Error('Unexpected server response')
-      }
-      if (!data?.fileUrl) throw new Error('No file URL returned')
 
-      // Do not auto-open. Store URL and switch button to Open Preview.
-      setReadyUrl(data.fileUrl)
+      // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
+      const jsonUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
+      const redirectUrl = href.replace(/\/report(?:\?.*)?$/, (m) => m.replace('/report', '/report/preview'))
+
+      // Request JSON preview; allow long-running server work without aborting
+      let fileUrl: string | undefined
+      try {
+        const resp = await fetch(jsonUrl, { method: 'GET', cache: 'no-store' })
+        let data: { fileUrl?: string; error?: string } | null = null
+        if (resp.headers.get('content-type')?.includes('application/json')) {
+          try { data = await resp.json() } catch {}
+        }
+        if (!resp.ok) {
+          const message = data?.error || `Failed to generate preview (${resp.status})`
+          throw new Error(message)
+        }
+        if (data?.fileUrl) fileUrl = data.fileUrl
+      } catch (e) {
+        // ignore; we will poll the lightweight check endpoint instead
+      }
+
+      // If no URL yet, poll the check endpoint (does not generate) for up to 2 minutes
+      if (!fileUrl) {
+        const checkUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json&check=1`)
+        const started = Date.now()
+        const timeoutMs = 120000
+        const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
+        while (!fileUrl && Date.now() - started < timeoutMs) {
+          try {
+            const r = await fetch(checkUrl, { method: 'GET', cache: 'no-store' })
+            if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
+              const j = await r.json().catch(() => ({})) as any
+              if (j?.fileUrl) {
+                fileUrl = j.fileUrl
+                break
+              }
+            }
+          } catch {}
+          await sleep(3000)
+        }
+      }
+
+      if (!fileUrl) {
+        throw new Error('Preview not ready yet — please try again shortly')
+      }
+      setReadyUrl(fileUrl)
       showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
     } catch (error) {
       console.error('Failed to generate PDF', error)
-      showToast({ title: 'Failed to generate PDF', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' })
+      showToast({ title: 'Preview not ready', description: error instanceof Error ? error.message : 'Please try again shortly.', variant: 'error' })
     } finally {
       setIsLoading(false)
     }
