@@ -1606,7 +1606,5 @@ export async function appendWorkOrderSection(
     }
   })
 
-  // Footer for the last page of this section (does not change doc.y)
-  // drawFooter(doc)
 }
  
