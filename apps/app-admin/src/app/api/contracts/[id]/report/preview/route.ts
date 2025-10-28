@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server"
 import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
+import { Condition } from "@prisma/client"
 
 import { getContractWithWorkOrders } from "@/app/api/contracts/[id]/report/contract-fetcher"
 import { createContractReportBuffer } from "@/app/api/contracts/[id]/report/report-builder"
@@ -21,6 +22,22 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const versionParam = searchParams.get("version")
   const versionLabel = versionParam ? (versionParam.startsWith("v") ? versionParam : `v${versionParam}`) : "v0.0 (Preview)"
   const workOrderId = searchParams.get('wo')
+  const entryOnly = searchParams.get('entryOnly') === '0' ? false : true
+
+  // Parse optional conditions from query (?conditions=A&conditions=B or CSV)
+  const allConditions = new Set(Object.values(Condition))
+  const multi = (typeof (searchParams as any).getAll === 'function') ? (searchParams as any).getAll('conditions') as string[] : []
+  const csv = searchParams.get('conditions')
+  const rawConditions = [
+    ...multi,
+    ...(csv && csv.includes(',') ? csv.split(',') : [])
+  ]
+  const normalizedConditions = rawConditions
+    .map(v => (typeof v === 'string' ? v.trim().toUpperCase() : ''))
+    .filter(v => allConditions.has(v as Condition))
+  const allowedConditions = normalizedConditions.length > 0
+    ? Array.from(new Set(normalizedConditions))
+    : Array.from(allConditions)
 
   // Compute a lightweight data signature so we can reuse the preview unless data changed
   const timestamps: number[] = []
@@ -46,8 +63,9 @@ async function buildPreviewFile(id: string, requestUrl: string) {
     if (Array.isArray(it.locations)) it.locations.forEach((loc: any) => { pushDate(loc.updatedOn); pushDate(loc.createdOn) })
   })
   const dataEpoch = timestamps.length ? Math.max(...timestamps) : new Date(contract.createdOn || Date.now()).getTime()
+  const condSig = allowedConditions.slice().sort().join('|')
   const normalizedTitle = (customTitle || '').trim()
-  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}`
+  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}:${entryOnly ? 'entry' : 'full'}:${condSig}`
 
   const nameSeg = sanitizeSegment(contract.customer?.name) || "contract"
   const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
@@ -83,8 +101,9 @@ async function buildPreviewFile(id: string, requestUrl: string) {
       titleOverride: customTitle,
       versionLabel,
       generatedOn,
-      entryOnly: true,
+      entryOnly,
       filterByWorkOrderId: workOrderId,
+      allowedConditions,
     }) as Buffer
   } catch (err) {
     console.error('Preview generation error (builder):', err)
