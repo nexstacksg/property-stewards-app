@@ -1,0 +1,54 @@
+
+name: prod Deployment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/app-admin/**"
+      - ".github/workflows/deploy.yml"
+
+jobs:
+  deploy:
+    runs-on: prod
+    environment: prod
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout 🛎
+        uses: actions/checkout@v4
+
+      - name: Setup Lock File Path
+        uses: actions/setup-node@v3
+
+      - name: Use .env.prod file
+        run: |
+          cp .env.prod .env
+        working-directory: apps/app-admin
+
+        working-directory: apps/app-admin
+
+      - name: Install dependencies 👨🏻‍💻
+        run: |
+          pnpm install --no-frozen-lockfile
+        working-directory: apps/app-admin
+
+      - name: Build Next app
+        run: |
+          npm run build
+        working-directory: apps/app-admin
+
+      - name: Check PM2 status before
+        run: pm2 status
+
+      - name: Restart Application with PM2
+        run: |
+          pm2 delete property || true  # Delete if exists, ignore error if not found
+          pm2 start npm --name "property" -- start2
+        working-directory: apps/app-admin
+
+      - name: Sync PM2
+        run: pm2 save

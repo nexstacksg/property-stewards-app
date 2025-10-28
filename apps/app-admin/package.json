@@ -7,6 +7,7 @@
     "build": "prisma generate && next build",
     "postbuild": "pnpm cache:warm:ci",
     "start": "next start",
+    "start2": "next start -3005",
     "lint": "eslint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
