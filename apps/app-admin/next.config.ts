@@ -12,7 +12,8 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   experimental: {
-    serverComponentsExternalPackages: ["pdfkit"],
+    // Ensure native binaries are available in serverless
+    serverComponentsExternalPackages: ["pdfkit", "sharp"],
   },
 };
 
