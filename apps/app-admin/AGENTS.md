@@ -2,11 +2,11 @@
 
 ## Project Structure & Module Organization
 - `src/app` — Next.js App Router pages and API routes (e.g., `src/app/api/*/route.ts`).
-- `src/components` — Reusable UI; files in kebab-case, components exported in PascalCase.
+- `src/components` — Reusable UI. Files in kebab-case; export components in PascalCase.
 - `src/lib` — Server-side utilities (Prisma, Redis, S3, helpers). Import via `@/*`.
 - `prisma` — Prisma schema, migrations, and `seed.ts`.
 - `public` — Static assets.
-- `docs` — Setup docs; see `VERCEL_ENV_SETUP.md`, `REDIS_SETUP.md`.
+- `docs` — Local setup and environment guides.
 - Tests — Place in `src/__tests__` with `*.test.ts(x)`.
 
 ## Build, Test, and Development Commands
@@ -23,17 +23,18 @@
 - Components: files in kebab-case (e.g., `add-checklist-button.tsx`); export in PascalCase.
 - Routes: App Router with `page.tsx` for pages and `route.ts` for APIs.
 - Styles: TailwindCSS v4; prefer utility-first classes in components.
-- Linting: fix all ESLint issues before opening PRs.
+- Fix all ESLint issues before opening PRs.
 
 ## Testing Guidelines
-- No runner configured yet. When adding tests, prefer Jest or Vitest.
-- Place unit tests under `src/__tests__`; name `*.test.ts` or `*.test.tsx`.
+- No runner configured yet. Prefer Jest or Vitest when adding tests.
+- Place unit tests under `src/__tests__`; name files `*.test.ts` or `*.test.tsx`.
 - Prioritize coverage for `src/lib` utilities and `src/app/api/*/route.ts` handlers.
 
 ## Commit & Pull Request Guidelines
-- Commits: concise, imperative subject (≤72 chars), optional scope. Example: `fix(work-orders): handle null dates`.
+- Commits: concise, imperative subject (≤72 chars), optional scope.
+  Example: `fix(work-orders): handle null dates`.
 - PRs: include a clear summary, linked issues, before/after UI screenshots, and migration notes if Prisma schema changes.
-- Keep PRs focused and small; include `docs:` updates when behavior/config changes. Run `pnpm lint` and build locally before requesting review.
+- Keep PRs focused and small; run `pnpm lint` and `pnpm build` locally before requesting review.
 
 ## Security & Configuration Tips
 - Configure env via `.env`/Vercel (database, Redis, S3, OpenAI, WhatsApp). Never commit secrets.

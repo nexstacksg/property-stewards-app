@@ -71,32 +71,74 @@ export function GenerateContractReportButton({
     }
     setSubmitting(true)
     try {
-      const response = await fetch(`/api/contracts/${contractId}/reports`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title,
-          conditions: selectedConditions,
-        })
-      })
+      // Phase 1: Build preview with the same conditions, then commit a versioned copy.
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
+      const url = new URL(`/api/contracts/${contractId}/report/preview`, origin)
+      url.searchParams.set('format', 'json')
+      url.searchParams.set('nocache', '1')
+      url.searchParams.set('entryOnly', '1')
+      // Use the same title in preview so the server-side signature matches during commit
+      if (title && title.trim().length > 0) {
+        url.searchParams.set('title', title.trim())
+      }
+      // Append all selected conditions as repeated params for precise filtering
+      selectedConditions.forEach((c) => url.searchParams.append('conditions', c))
 
-      if (!response.ok) {
-        throw new Error(`Failed to generate PDF (${response.status})`)
+      let fileUrl: string | undefined
+      try {
+        const resp = await fetch(url.toString(), { method: 'GET', cache: 'no-store' })
+        if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
+          const data = await resp.json().catch(() => ({})) as any
+          fileUrl = data?.fileUrl
+        }
+      } catch {}
+
+      // Poll check endpoint if not ready yet
+      if (!fileUrl) {
+        const checkUrl = new URL(url.toString())
+        checkUrl.searchParams.set('check', '1')
+        const timeoutMs = 180000
+        const start = Date.now()
+        const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
+        while (!fileUrl && Date.now() - start < timeoutMs) {
+          try {
+            const r = await fetch(checkUrl.toString(), { method: 'GET', cache: 'no-store' })
+            if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
+              const j = await r.json().catch(() => ({})) as any
+              if (j?.fileUrl) { fileUrl = j.fileUrl; break }
+            }
+          } catch {}
+          await sleep(3000)
+        }
       }
 
-      const data = await response.json()
-      const downloadUrl: string | undefined = data?.fileUrl
-      if (downloadUrl) {
-        const link = document.createElement("a")
-        link.href = downloadUrl
-        link.target = "_blank"
-        link.download = downloadUrl.split("/").pop() || defaultFileName
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        showToast({ title: "Report generated", description: "PDF downloaded and saved.", variant: "success" })
+      if (!fileUrl) {
+        throw new Error('Preview not ready. Please try again shortly.')
+      }
+
+      // Phase 2: Commit (copy preview → versioned) and create DB record
+      const commitResp = await fetch(`/api/contracts/${contractId}/reports/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, conditions: selectedConditions, entryOnly: true })
+      })
+      if (!commitResp.ok) {
+        const msg = `Commit failed (${commitResp.status})`
+        throw new Error(msg)
+      }
+      const commitData = await commitResp.json()
+      const versionedUrl: string | undefined = commitData?.fileUrl
+      if (versionedUrl) {
+        const a = document.createElement('a')
+        a.href = versionedUrl
+        a.target = '_blank'
+        a.download = versionedUrl.split('/').pop() || defaultFileName
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        showToast({ title: 'Report generated', description: 'PDF downloaded and saved.', variant: 'success' })
       } else {
-        showToast({ title: "Report generated", description: "Stored in history.", variant: "success" })
+        showToast({ title: 'Report generated', description: 'Stored in history.', variant: 'success' })
       }
 
       setOpen(false)
