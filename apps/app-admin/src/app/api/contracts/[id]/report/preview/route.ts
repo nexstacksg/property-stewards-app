@@ -20,6 +20,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const customTitle = searchParams.get("title")
   const versionParam = searchParams.get("version")
   const versionLabel = versionParam ? (versionParam.startsWith("v") ? versionParam : `v${versionParam}`) : "v0.0 (Preview)"
+  const workOrderId = searchParams.get('wo')
 
   // Compute a lightweight data signature so we can reuse the preview unless data changed
   const timestamps: number[] = []
@@ -46,7 +47,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   })
   const dataEpoch = timestamps.length ? Math.max(...timestamps) : new Date(contract.createdOn || Date.now()).getTime()
   const normalizedTitle = (customTitle || '').trim()
-  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}`
+  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}`
 
   const nameSeg = sanitizeSegment(contract.customer?.name) || "contract"
   const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
@@ -83,6 +84,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
       versionLabel,
       generatedOn,
       entryOnly: true,
+      filterByWorkOrderId: workOrderId,
     }) as Buffer
   } catch (err) {
     console.error('Preview generation error (builder):', err)

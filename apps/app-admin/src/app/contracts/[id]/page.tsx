@@ -193,6 +193,19 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
   // Show PDF actions only for confirmed contracts
   const showPdfActions = contract.status === 'CONFIRMED'
 
+  // Choose a default Work Order for faster preview PDF generation
+  const previewWorkOrderId = (() => {
+    const wos = Array.isArray(contract.workOrders) ? contract.workOrders : []
+    if (wos.length === 0) return null
+    // Prefer COMPLETED, else SCHEDULED, else the first
+    const byStatus = (s: string) => wos.filter((w: any) => w.status === s)
+    const completed = byStatus('COMPLETED')
+    if (completed.length > 0) return completed[0].id
+    const scheduled = byStatus('SCHEDULED')
+    if (scheduled.length > 0) return scheduled[0].id
+    return wos[0].id
+  })()
+
   return (
     <div className="space-y-6 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
       {/* Header */}
@@ -228,7 +241,7 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           {showPdfActions ? (
             <div className="flex flex-wrap gap-2 sm:flex-none">
               <PreviewPdfButton
-                href={`/api/contracts/${contract.id}/report`}
+                href={`/api/contracts/${contract.id}/report${previewWorkOrderId ? `?wo=${previewWorkOrderId}` : ''}`}
                 fileName={contractReportFileName}
                 label="Preview PDF"
                 className="w-full md:w-auto"

@@ -2,10 +2,11 @@ import { Buffer } from 'node:buffer'
 
 // Runtime flags to control conversion behavior
 const NO_IMAGE_PROXY = process.env.NO_IMAGE_PROXY === '1'
-const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '1024', 10)
+// Defaults if env vars are not set
+const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '640', 10)
 const RESIZE_MAX_DIM = PROXY_MAX_DIM
 const TARGET_FORMAT: 'png' | 'jpeg' = (process.env.PDF_IMAGE_FORMAT === 'png' ? 'png' : 'jpeg')
-const JPEG_QUALITY = Math.min(95, Math.max(40, Number.parseInt(process.env.PDF_IMAGE_QUALITY || '60', 10) || 60))
+const JPEG_QUALITY = Math.min(95, Math.max(40, Number.parseInt(process.env.PDF_IMAGE_QUALITY || '50', 10) || 50))
 
 // Lightweight magic-byte sniffing for common formats that PDFKit often sees
 // We only need to distinguish JPEG/PNG (supported) vs others (to convert)
