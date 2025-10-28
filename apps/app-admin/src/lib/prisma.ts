@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client'
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
   prismaListenersAdded?: boolean
+  prismaInstanceCount?: number
 }
 
 // Configure connection URL with Vercel-optimized settings
@@ -11,13 +12,18 @@ const connectionUrl = databaseUrl ?
   `${databaseUrl}${databaseUrl.includes('?') ? '&' : '?'}connection_limit=1&pool_timeout=10&connect_timeout=10&statement_timeout=10000` : 
   undefined
 
-// Track instance creation for debugging
-let instanceCount = 0
+// Track instance creation for debugging (per-process)
+globalForPrisma.prismaInstanceCount = globalForPrisma.prismaInstanceCount ?? 0
 
 // Single instance pattern - CRITICAL for connection management
 export const prisma = globalForPrisma.prisma ?? (() => {
-  instanceCount++
-  console.log(`[Prisma] Creating new instance #${instanceCount} at ${new Date().toISOString()}`)
+  globalForPrisma.prismaInstanceCount! += 1
+  const instanceCount = globalForPrisma.prismaInstanceCount
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(
+      `[Prisma] Creating new instance #${instanceCount} (pid ${process.pid}) at ${new Date().toISOString()}`
+    )
+  }
   
   const client = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
