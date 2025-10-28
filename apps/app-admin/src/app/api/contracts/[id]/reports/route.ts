@@ -13,6 +13,8 @@ import { Condition } from "@prisma/client"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+// Allow longer execution for heavy PDF builds in hosted environments
+export const maxDuration = 600
 
 async function resolveCurrentUserId() {
   const secret = getAuthSecret()
