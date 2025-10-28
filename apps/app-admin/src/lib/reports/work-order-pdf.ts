@@ -191,27 +191,6 @@ type TableRowInfo = {
   mergeColumns?: boolean
 }
 
-// Simple concurrency-limited mapper for image fetch/convert
-async function mapLimit<T, U>(items: T[], limit: number, mapper: (item: T, index: number) => Promise<U>): Promise<U[]> {
-  const results: U[] = new Array(items.length) as U[]
-  let next = 0
-  let active = 0
-  return await new Promise<U[]>((resolve, reject) => {
-    const pump = () => {
-      if (next >= items.length && active === 0) return resolve(results)
-      while (active < PHOTO_CONCURRENCY && next < items.length) {
-        const i = next++
-        active++
-        Promise.resolve(mapper(items[i], i))
-          .then((val) => { results[i] = val })
-          .catch(reject)
-          .finally(() => { active--; pump() })
-      }
-    }
-    pump()
-  })
-}
-
 function normalizeConditionValue(value: unknown): string | null {
   if (value === null || value === undefined) return null
   const text = String(value).trim()
@@ -399,31 +378,25 @@ async function buildRemarkSegment({
   const images: Buffer[] = []
   const photoCaptions: (string | null)[] = []
 
-  if (uniquePhotoSources.length > 0) {
-    const results = await mapLimit(uniquePhotoSources, PHOTO_CONCURRENCY, async (source) => {
-      if (!source.url) return { buf: null as Buffer | null, caption: null as string | null }
-      let buffer: Buffer | undefined
-      if (imageCache.has(source.url)) {
-        buffer = imageCache.get(source.url)!
-      } else {
-        const fetched = await fetchImage(source.url)
-        if (fetched) {
-          imageCache.set(source.url, fetched)
-          buffer = fetched
-        }
+  for (const source of uniquePhotoSources) {
+    if (!source.url) continue
+    let buffer: Buffer | undefined
+    if (imageCache.has(source.url)) {
+      buffer = imageCache.get(source.url)!
+    } else {
+      const fetched = await fetchImage(source.url)
+      if (fetched) {
+        imageCache.set(source.url, fetched)
+        buffer = fetched
       }
+    }
+    if (buffer) {
+      images.push(buffer)
       const caption = (typeof source.caption === 'string' && source.caption.trim().length > 0)
         ? source.caption.trim()
         : null
-      return { buf: buffer ?? null, caption }
-    })
-
-    results.forEach(({ buf, caption }) => {
-      if (buf) {
-        images.push(buf)
-        photoCaptions.push(caption)
-      }
-    })
+      photoCaptions.push(caption)
+    }
   }
 
   const lines: string[] = []

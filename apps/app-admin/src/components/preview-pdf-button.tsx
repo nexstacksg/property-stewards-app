@@ -43,10 +43,22 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       }
 
       setIsLoading(true)
+      // Build robust preview URLs while preserving existing query params (e.g., wo=...)
+      const buildPreviewUrl = (extraParams?: Record<string, string>) => {
+        const url = new URL(href, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+        // Replace trailing /report with /report/preview
+        url.pathname = url.pathname.replace(/\/report$/, '/report/preview')
+        url.searchParams.set('format', 'json')
+        if (extraParams) {
+          for (const [k, v] of Object.entries(extraParams)) {
+            url.searchParams.set(k, v)
+          }
+        }
+        return url.toString()
+      }
 
-      // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
-      const jsonUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
-      const redirectUrl = href.replace(/\/report(?:\?.*)?$/, (m) => m.replace('/report', '/report/preview'))
+      // Generate preview first via GET (format=json)
+      const jsonUrl = buildPreviewUrl()
 
       // Request JSON preview; allow long-running server work without aborting
       let fileUrl: string | undefined
@@ -67,7 +79,7 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
 
       // If no URL yet, poll the check endpoint (does not generate) for up to 2 minutes
       if (!fileUrl) {
-        const checkUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json&check=1`)
+        const checkUrl = buildPreviewUrl({ check: '1' })
         const started = Date.now()
         const timeoutMs = 120000
         const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))

@@ -2,11 +2,7 @@ import { Buffer } from 'node:buffer'
 
 // Runtime flags to control conversion behavior
 const NO_IMAGE_PROXY = process.env.NO_IMAGE_PROXY === '1'
-// Defaults if env vars are not set
-const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '640', 10)
-const RESIZE_MAX_DIM = PROXY_MAX_DIM
-const TARGET_FORMAT: 'png' | 'jpeg' = (process.env.PDF_IMAGE_FORMAT === 'png' ? 'png' : 'jpeg')
-const JPEG_QUALITY = Math.min(95, Math.max(40, Number.parseInt(process.env.PDF_IMAGE_QUALITY || '50', 10) || 50))
+const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '1600', 10)
 
 // Lightweight magic-byte sniffing for common formats that PDFKit often sees
 // We only need to distinguish JPEG/PNG (supported) vs others (to convert)
@@ -109,11 +105,11 @@ async function convertWithSharp(buf: Buffer, to: 'png' | 'jpeg'): Promise<Buffer
   const meta = await base.metadata().catch(() => ({} as any))
   const w = typeof meta.width === 'number' ? meta.width : undefined
   const h = typeof meta.height === 'number' ? meta.height : undefined
-  const tooLarge = (w && w > RESIZE_MAX_DIM) || (h && h > RESIZE_MAX_DIM)
-  const resized = tooLarge ? base.resize({ width: w && h && w >= h ? RESIZE_MAX_DIM : undefined, height: w && h && h > w ? RESIZE_MAX_DIM : undefined, fit: 'inside', withoutEnlargement: true }) : base
+  const tooLarge = (w && w > 4096) || (h && h > 4096)
+  const resized = tooLarge ? base.resize({ width: w && h && w >= h ? 4096 : undefined, height: w && h && h > w ? 4096 : undefined, fit: 'inside', withoutEnlargement: true }) : base
 
-  if (to === 'png') return resized.png({ compressionLevel: 4, adaptiveFiltering: true }).toBuffer()
-  return resized.jpeg({ quality: JPEG_QUALITY, mozjpeg: true, progressive: true, chromaSubsampling: '4:2:0' }).toBuffer()
+  if (to === 'png') return resized.png({ compressionLevel: 9 }).toBuffer()
+  return resized.jpeg({ quality: 82, mozjpeg: true }).toBuffer()
 }
 
 /**
@@ -123,9 +119,9 @@ async function convertWithSharp(buf: Buffer, to: 'png' | 'jpeg'): Promise<Buffer
 export async function ensurePdfSupportedImage(buf: Buffer): Promise<Buffer | null> {
   if (!buf || buf.length === 0) return null
   if (buf.length < 32) return null
-  // Always normalize to configured target to eliminate edge cases across formats
+  // Always normalize to PNG to eliminate edge cases across formats
   try {
-    const converted = await convertWithSharp(buf, TARGET_FORMAT)
+    const converted = await convertWithSharp(buf, 'png')
     return isPdfKitCompatibleImage(converted) ? converted : null
   } catch {
     // If sharp is unavailable, accept validated PNG/JPEG buffers; otherwise null
