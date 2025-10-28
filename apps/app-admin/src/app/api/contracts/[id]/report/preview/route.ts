@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
+import { PutObjectCommand } from "@aws-sdk/client-s3"
 
 import { getContractWithWorkOrders } from "@/app/api/contracts/[id]/report/contract-fetcher"
 import { createContractReportBuffer } from "@/app/api/contracts/[id]/report/report-builder"
@@ -26,15 +26,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const folder = `${SPACE_DIRECTORY}/pdf/${nameSeg}-${postalSeg}`
   const storageKey = `${folder}/contract-${nameSeg}-preview.pdf`
 
-  // If a preview already exists and no cache-bypass flag is present, reuse it
-  const url = new URL(requestUrl)
-  const noCache = url.searchParams.get('nocache') === '1'
-  if (!noCache) {
-    try {
-      await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
-      return { fileUrl: `${PUBLIC_URL}/${storageKey}`, reused: true as const }
-    } catch {}
-  }
+  // Always regenerate preview; avoid stale files and CDN cache issues
 
   const generatedOn = new Date()
   let buffer: Buffer
@@ -56,6 +48,8 @@ async function buildPreviewFile(id: string, requestUrl: string) {
       Key: storageKey,
       Body: buffer,
       ContentType: "application/pdf",
+      CacheControl: "no-store, no-cache, must-revalidate, max-age=0",
+      Expires: new Date(0) as any,
       ACL: "public-read",
     } as any))
   } catch (err) {
@@ -63,7 +57,8 @@ async function buildPreviewFile(id: string, requestUrl: string) {
     return { error: new Response(JSON.stringify({ error: 'Failed to upload preview file' }), { status: 500, headers: { 'Content-Type': 'application/json' } }) }
   }
 
-  const fileUrl = `${PUBLIC_URL}/${storageKey}`
+  // Append a timestamp to bust any CDN cache on read
+  const fileUrl = `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`
   return { fileUrl, reused: false as const }
 }
 

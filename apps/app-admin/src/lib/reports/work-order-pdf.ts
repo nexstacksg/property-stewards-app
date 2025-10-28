@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { isPdfKitCompatibleImage, loadNormalizedImage } from "@/lib/image"
 
 export const TABLE_MARGIN = 36
 // Space reserved at the bottom of every page for footer/version/paging
@@ -205,25 +206,8 @@ function isConditionAllowed(value: unknown, allowed?: Set<string>): boolean {
 }
 
 async function fetchImage(url: string): Promise<Buffer | null> {
-  if (!url) return null
-
-  try {
-    if (url.startsWith("data:")) {
-      const base64 = url.split(",")[1]
-      return Buffer.from(base64, "base64")
-    }
-
-    if (!/^https?:/i.test(url)) {
-      return null
-    }
-
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
-    if (!response.ok) return null
-    const arrayBuffer = await response.arrayBuffer()
-    return Buffer.from(arrayBuffer)
-  } catch (error) {
-    return null
-  }
+  // Normalize every remote/data image into PNG/JPEG so PDFKit always accepts it
+  return loadNormalizedImage(url)
 }
 
 function prepareGridLayout(
@@ -966,13 +950,16 @@ function drawTableRow(
         const drawY = rowStartYs[row]
 
         try {
+          if (!buffer || buffer.length < 32 || !isPdfKitCompatibleImage(buffer)) {
+            throw new Error('unsupported-image-buffer')
+          }
           doc.image(buffer, drawX, drawY, {
             fit: [tileWidth, PHOTO_HEIGHT],
             align: "center",
             valign: "top"
           })
         } catch (error) {
-          console.error("Failed to render photo in PDF", error)
+          console.warn("Skipped an invalid photo while rendering PDF", (error as Error)?.message)
           doc.save()
           doc.rect(drawX, drawY, tileWidth, PHOTO_HEIGHT).stroke("#ef4444")
           doc.font("Helvetica").fontSize(8).fillColor("#ef4444")
