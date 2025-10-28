@@ -3,7 +3,8 @@ import { Buffer } from 'node:buffer'
 // Runtime flags to control conversion behavior
 const NO_IMAGE_PROXY = process.env.NO_IMAGE_PROXY === '1'
 // Defaults if env vars are not set
-const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '640', 10)
+// Slightly smaller default to reduce PDF memory and time
+const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '480', 10)
 const RESIZE_MAX_DIM = PROXY_MAX_DIM
 const TARGET_FORMAT: 'png' | 'jpeg' = (process.env.PDF_IMAGE_FORMAT === 'png' ? 'png' : 'jpeg')
 const JPEG_QUALITY = Math.min(95, Math.max(40, Number.parseInt(process.env.PDF_IMAGE_QUALITY || '50', 10) || 50))
@@ -123,16 +124,17 @@ async function convertWithSharp(buf: Buffer, to: 'png' | 'jpeg'): Promise<Buffer
 export async function ensurePdfSupportedImage(buf: Buffer): Promise<Buffer | null> {
   if (!buf || buf.length === 0) return null
   if (buf.length < 32) return null
-  // Always normalize to configured target to eliminate edge cases across formats
+  // Fast path: already PNG/JPEG and sane for PDFKit → return as‑is
+  const kind = detectImageKind(buf)
+  if ((kind === 'png' || kind === 'jpeg') && isPdfKitCompatibleImage(buf)) {
+    return buf
+  }
+  // Otherwise, try to convert with sharp
   try {
     const converted = await convertWithSharp(buf, TARGET_FORMAT)
     return isPdfKitCompatibleImage(converted) ? converted : null
   } catch {
-    // If sharp is unavailable, accept validated PNG/JPEG buffers; otherwise null
-    const kind = detectImageKind(buf)
-    if (kind === 'png' || kind === 'jpeg') {
-      return isPdfKitCompatibleImage(buf) ? buf : null
-    }
+    // If sharp is unavailable and the input wasn't already compatible, bail
     return null
   }
 }

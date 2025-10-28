@@ -24,7 +24,7 @@ import { GenerateContractReportButton } from "@/components/generate-contract-rep
 import { ConfirmContractButton } from "@/components/confirm-contract-button"
 import { AddWorkOrderButton } from "@/components/add-work-order-button"
 import { ContractFollowUpRemarks } from "@/components/contract-follow-up-remarks"
-import { buildContractReportFilename } from "@/lib/filename"
+import { buildContractReportFilename, sanitizeSegment } from "@/lib/filename"
 import { ContractGeneratedReports } from "@/components/contract-generated-reports"
 
 async function getContract(id: string) {
@@ -169,6 +169,8 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
     contract.id
   )
   const defaultReportTitle = `${contractTypeLabel} Report`
+  const nameSeg = sanitizeSegment(contract.customer?.name) || 'contract'
+  const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
   const reports = Array.isArray(contract.reports)
     ? contract.reports.map((report: any) => ({
         ...report,
@@ -241,7 +243,13 @@ export default async function ContractDetailPage({ params }: { params: Promise<{
           {showPdfActions ? (
             <div className="flex flex-wrap gap-2 sm:flex-none">
               <PreviewPdfButton
-                href={`/api/contracts/${contract.id}/report${previewWorkOrderId ? `?wo=${previewWorkOrderId}` : ''}`}
+                href={() => {
+                  const base = new URL(`/api/contracts/${contract.id}/report`, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+                  if (previewWorkOrderId) base.searchParams.set('wo', String(previewWorkOrderId))
+                  base.searchParams.set('nameSeg', nameSeg)
+                  base.searchParams.set('postalSeg', postalSeg)
+                  return base.pathname + base.search
+                }()}
                 fileName={contractReportFileName}
                 label="Preview PDF"
                 className="w-full md:w-auto"

@@ -20,25 +20,37 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const workOrderId = url.searchParams.get('wo')
   const customTitle = url.searchParams.get("title")
 
-  // For lightweight checks, avoid fetching the full contract tree; we only need the storage key
+  // For lightweight checks, avoid fetching the full contract tree; we only need the storage key.
+  // Prefer client-provided segments to skip DB entirely.
   if (checkOnly) {
-    const baseOnly = await prisma.contract.findUnique({
-      where: { id },
-      select: { id: true, customer: { select: { name: true } }, address: { select: { postalCode: true } } }
-    }) as any
-    if (!baseOnly) {
-      return { error: new Response(JSON.stringify({ error: 'Contract not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }) }
+    let nameSeg = sanitizeSegment(url.searchParams.get('nameSeg') || url.searchParams.get('name') || '')
+    let postalSeg = sanitizeSegment(url.searchParams.get('postalSeg') || url.searchParams.get('postal') || '')
+
+    if (!nameSeg || !postalSeg) {
+      const noDb = (process.env.PREVIEW_CHECK_NO_DB || '').toLowerCase() === 'true'
+      if (noDb) {
+        // Cannot compute a key without DB and no hints — report pending quickly
+        return { fileUrl: undefined as any, reused: false as const }
+      }
+      const baseOnly = await prisma.contract.findUnique({
+        where: { id },
+        select: { id: true, customer: { select: { name: true } }, address: { select: { postalCode: true } } }
+      }) as any
+      if (!baseOnly) {
+        return { error: new Response(JSON.stringify({ error: 'Contract not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }) }
+      }
+      nameSeg = sanitizeSegment(baseOnly.customer?.name) || 'contract'
+      postalSeg = sanitizeSegment(baseOnly.address?.postalCode) || baseOnly.id.slice(-8)
     }
-    const nameSeg = sanitizeSegment(baseOnly.customer?.name) || 'contract'
-    const postalSeg = sanitizeSegment(baseOnly.address?.postalCode) || baseOnly.id.slice(-8)
     const folder = `${SPACE_DIRECTORY}/pdf/${nameSeg}-${postalSeg}`
     const storageKey = `${folder}/contract-${nameSeg}-preview.pdf`
     try {
-      await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
-      return { fileUrl: `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`, reused: true as const }
-    } catch {
-      return { fileUrl: undefined as any, reused: false as const }
-    }
+      const head = await fetch(`${PUBLIC_URL}/${storageKey}`, { method: 'HEAD', cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(5000) }).catch(() => null as any)
+      if (head && head.ok) {
+        return { fileUrl: `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`, reused: true as const }
+      }
+    } catch {}
+    return { fileUrl: undefined as any, reused: false as const }
   }
 
   // Heavy path: load full tree and compute signature to decide reuse
@@ -147,6 +159,26 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   try {
     const url = new URL(request.url)
     const wantsJson = url.searchParams.get('format') === 'json'
+    const isCheck = url.searchParams.get('check') === '1'
+
+    if (wantsJson && !isCheck) {
+      // Kick off generation in the background and respond quickly to avoid proxy timeouts
+      const key = `${id}|wo=${url.searchParams.get('wo') || ''}|title=${url.searchParams.get('title') || ''}|version=${url.searchParams.get('version') || ''}`
+      const globalAny = globalThis as unknown as { __ps_preview_jobs__?: Map<string, number> }
+      if (!globalAny.__ps_preview_jobs__) globalAny.__ps_preview_jobs__ = new Map<string, number>()
+      const jobs = globalAny.__ps_preview_jobs__!
+      const last = jobs.get(key) || 0
+      const staleMs = 5 * 60 * 1000
+      if (Date.now() - last > staleMs) {
+        jobs.set(key, Date.now())
+        // Fire-and-forget build; errors are logged server-side
+        setImmediate(() => { buildPreviewFile(id, request.url).catch((e) => console.error('Preview build (bg) error:', e)) })
+      }
+      return new Response(JSON.stringify({ pending: true }), {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+      })
+    }
+
     const result = await buildPreviewFile(id, request.url)
     if ('error' in result) return result.error
     if (wantsJson) {

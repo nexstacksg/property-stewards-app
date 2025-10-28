@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { isPdfKitCompatibleImage, loadNormalizedImage, ensurePdfSupportedImage } from "@/lib/image"
-const PHOTO_CONCURRENCY = Math.max(2, Math.min(16, Number.parseInt(process.env.PDF_IMAGE_CONCURRENCY || '8', 10) || 8))
+// Lower default concurrency to reduce memory pressure on small hosts
+const PHOTO_CONCURRENCY = Math.max(2, Math.min(16, Number.parseInt(process.env.PDF_IMAGE_CONCURRENCY || '4', 10) || 4))
 
 export const TABLE_MARGIN = 36
 // Space reserved at the bottom of every page for footer/version/paging
