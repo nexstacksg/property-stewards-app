@@ -7,6 +7,7 @@ import {
   createConfirmationToken,
   sendConfirmationEmail,
 } from '@/lib/auth-confirmation'
+import { getRequestOrigin } from '@/lib/origin'
 
 export const runtime = 'nodejs'
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
         console.info('[signup] Existing unconfirmed user found, resending confirmation', { userId: existingUser.id })
         const resend = await sendConfirmationEmail({
           user: { id: existingUser.id, username: existingUser.username, email: existingUser.email },
-          origin: req.nextUrl.origin,
+          origin: getRequestOrigin(req),
         })
 
         if (!resend) {
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
 
     const emailResult = await sendConfirmationEmail({
       user: { id: user.id, username: user.username, email: user.email },
-      origin: req.nextUrl.origin,
+      origin: getRequestOrigin(req),
       token,
     })
 
