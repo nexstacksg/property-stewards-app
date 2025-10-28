@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { PutObjectCommand } from "@aws-sdk/client-s3"
+import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3"
 
 import { getContractWithWorkOrders } from "@/app/api/contracts/[id]/report/contract-fetcher"
 import { createContractReportBuffer } from "@/app/api/contracts/[id]/report/report-builder"
@@ -8,6 +8,7 @@ import { s3Client, BUCKET_NAME, SPACE_DIRECTORY, PUBLIC_URL } from "@/lib/s3-cli
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+export const maxDuration = 60
 
 async function buildPreviewFile(id: string, requestUrl: string) {
   const contract = await getContractWithWorkOrders(id)
@@ -20,13 +21,52 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const versionParam = searchParams.get("version")
   const versionLabel = versionParam ? (versionParam.startsWith("v") ? versionParam : `v${versionParam}`) : "v0.0 (Preview)"
 
+  // Compute a lightweight data signature so we can reuse the preview unless data changed
+  const timestamps: number[] = []
+  const pushDate = (value?: any) => {
+    if (!value) return
+    const n = new Date(value).getTime()
+    if (Number.isFinite(n)) timestamps.push(n)
+  }
+  pushDate(contract.updatedOn)
+  if (Array.isArray(contract.workOrders)) contract.workOrders.forEach((w: any) => pushDate(w.updatedOn))
+  const cl = contract.contractChecklist
+  if (cl) pushDate(cl.updatedOn)
+  const items = cl?.items || []
+  items.forEach((it: any) => {
+    // ItemEntry (contributions)
+    if (Array.isArray(it.contributions)) it.contributions.forEach((e: any) => { pushDate(e.updatedOn); pushDate(e.createdOn) })
+    // ChecklistTask and entries
+    if (Array.isArray(it.checklistTasks)) it.checklistTasks.forEach((t: any) => {
+      pushDate(t.updatedOn); pushDate(t.createdOn)
+      if (Array.isArray(t.entries)) t.entries.forEach((e: any) => { pushDate(e.updatedOn); pushDate(e.createdOn) })
+    })
+    // Locations
+    if (Array.isArray(it.locations)) it.locations.forEach((loc: any) => { pushDate(loc.updatedOn); pushDate(loc.createdOn) })
+  })
+  const dataEpoch = timestamps.length ? Math.max(...timestamps) : new Date(contract.createdOn || Date.now()).getTime()
+  const normalizedTitle = (customTitle || '').trim()
+  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}`
+
   const nameSeg = sanitizeSegment(contract.customer?.name) || "contract"
   const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
   // Same folder as versioned files; fixed preview name
   const folder = `${SPACE_DIRECTORY}/pdf/${nameSeg}-${postalSeg}`
   const storageKey = `${folder}/contract-${nameSeg}-preview.pdf`
 
-  // Always regenerate preview; avoid stale files and CDN cache issues
+  // Reuse existing preview unless explicitly bypassed with nocache=1
+  const url = new URL(requestUrl)
+  const noCache = url.searchParams.get('nocache') === '1'
+  if (!noCache) {
+    try {
+      const head = await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
+      const meta = (head as any)?.Metadata || {}
+      const storedSig = meta['preview-etag'] || meta['preview_etag'] || meta['Preview-Etag']
+      if (storedSig && String(storedSig) === previewSignature) {
+        return { fileUrl: `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`, reused: true as const }
+      }
+    } catch {}
+  }
 
   const generatedOn = new Date()
   let buffer: Buffer
@@ -50,6 +90,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
       ContentType: "application/pdf",
       CacheControl: "no-store, no-cache, must-revalidate, max-age=0",
       Expires: new Date(0) as any,
+      Metadata: { 'preview-etag': previewSignature } as any,
       ACL: "public-read",
     } as any))
   } catch (err) {

@@ -44,25 +44,47 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
 
       setIsLoading(true)
       // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
-      const apiUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
-      const resp = await fetch(apiUrl, { method: 'GET', cache: 'no-store' })
+      const jsonUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
+      const redirectUrl = href.replace(/\/report(?:\?.*)?$/, (m) => m.replace('/report', '/report/preview'))
+
+      // Add a 60s safety timeout to avoid hanging fetch in the browser
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 60000)
+      let resp: Response
+      try {
+        resp = await fetch(jsonUrl, { method: 'GET', cache: 'no-store', signal: controller.signal })
+      } finally {
+        clearTimeout(timeout)
+      }
       let data: { fileUrl?: string; error?: string } | null = null
-      try { data = await resp.json() } catch {}
+      // Only try to parse JSON when server declares it
+      if (resp.headers.get('content-type')?.includes('application/json')) {
+        try { data = await resp.json() } catch {}
+      }
       if (!resp.ok) {
         const message = data?.error || `Failed to generate preview (${resp.status})`
         throw new Error(message)
       }
-      if (!resp.headers.get('content-type')?.includes('application/json')) {
-        throw new Error('Unexpected server response')
+      // If JSON parse failed or no fileUrl is provided, fall back to 302 route
+      if (!data?.fileUrl) {
+        setReadyUrl(redirectUrl)
+        showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
+        return
       }
-      if (!data?.fileUrl) throw new Error('No file URL returned')
 
       // Do not auto-open. Store URL and switch button to Open Preview.
       setReadyUrl(data.fileUrl)
       showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
     } catch (error) {
       console.error('Failed to generate PDF', error)
-      showToast({ title: 'Failed to generate PDF', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' })
+      // As a final fallback, offer opening the redirect route directly
+      try {
+        const fallbackUrl = href.replace(/\/report(?:\?.*)?$/, (m) => m.replace('/report', '/report/preview'))
+        setReadyUrl(fallbackUrl)
+        showToast({ title: 'Preview queued', description: 'Click “Open Preview” to open in a new tab.', variant: 'success' })
+      } catch {
+        showToast({ title: 'Failed to generate PDF', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' })
+      }
     } finally {
       setIsLoading(false)
     }

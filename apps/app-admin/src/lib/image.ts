@@ -1,5 +1,9 @@
 import { Buffer } from 'node:buffer'
 
+// Runtime flags to control conversion behavior
+const NO_IMAGE_PROXY = process.env.NO_IMAGE_PROXY === '1'
+const PROXY_MAX_DIM = Number.parseInt(process.env.PDF_IMAGE_MAX_DIM || '1600', 10)
+
 // Lightweight magic-byte sniffing for common formats that PDFKit often sees
 // We only need to distinguish JPEG/PNG (supported) vs others (to convert)
 
@@ -120,7 +124,7 @@ export async function ensurePdfSupportedImage(buf: Buffer): Promise<Buffer | nul
     const converted = await convertWithSharp(buf, 'png')
     return isPdfKitCompatibleImage(converted) ? converted : null
   } catch {
-    // If sharp is unavailable, only accept already-safe PNG/JPEG; else caller will proxy-convert
+    // If sharp is unavailable, accept validated PNG/JPEG buffers; otherwise null
     const kind = detectImageKind(buf)
     if (kind === 'png' || kind === 'jpeg') {
       return isPdfKitCompatibleImage(buf) ? buf : null
@@ -148,7 +152,7 @@ export async function loadNormalizedImage(url: string): Promise<Buffer | null> {
     const resp = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'image/avif,image/webp,image/*;q=0.9,*/*;q=0.8' },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(6000)
     })
     if (!resp.ok) return null
     const arr = await resp.arrayBuffer()
@@ -157,10 +161,10 @@ export async function loadNormalizedImage(url: string): Promise<Buffer | null> {
     if (normalized) return normalized
 
     // Fallback: try a no-dependency on-the-fly converter (wsrv.nl)
-    // Note: uses third-party CDN; disable by setting NO_IMAGE_PROXY=1 in env if undesired
-    if (process.env.NO_IMAGE_PROXY === '1') return null
-    const proxy = `https://wsrv.nl/?url=${encodeURIComponent(url)}&output=png&w=2048&h=2048&fit=inside`
-    const proxied = await fetch(proxy, { method: 'GET', signal: AbortSignal.timeout(10000) }).catch(() => null as any)
+    // Note: uses third-party CDN; disable with NO_IMAGE_PROXY=1
+    if (NO_IMAGE_PROXY) return null
+    const proxy = `https://wsrv.nl/?url=${encodeURIComponent(url)}&output=png&w=${PROXY_MAX_DIM}&h=${PROXY_MAX_DIM}&fit=inside`
+    const proxied = await fetch(proxy, { method: 'GET', signal: AbortSignal.timeout(6000) }).catch(() => null as any)
     if (proxied?.ok) {
       const proxBuf = Buffer.from(await proxied.arrayBuffer())
       const kind = detectImageKind(proxBuf)

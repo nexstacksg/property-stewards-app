@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { isPdfKitCompatibleImage, loadNormalizedImage } from "@/lib/image"
+import { isPdfKitCompatibleImage, loadNormalizedImage, ensurePdfSupportedImage } from "@/lib/image"
+const PHOTO_CONCURRENCY = Math.max(2, Math.min(16, Number.parseInt(process.env.PDF_IMAGE_CONCURRENCY || '8', 10) || 8))
 
 export const TABLE_MARGIN = 36
 // Space reserved at the bottom of every page for footer/version/paging
@@ -1228,13 +1229,16 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
         const drawY = rowStartYs[row]
 
         try {
+          if (!buffer || buffer.length < 32 || !isPdfKitCompatibleImage(buffer)) {
+            throw new Error('unsupported-image-buffer')
+          }
           doc.image(buffer, drawX, drawY, {
             fit: [tileWidth, PHOTO_HEIGHT],
             align: "center",
             valign: "top"
           })
         } catch (error) {
-          console.error("Failed to render photo in PDF", error)
+          console.warn("Skipped an invalid photo while rendering PDF", (error as Error)?.message)
           doc.save()
           doc.rect(drawX, drawY, tileWidth, PHOTO_HEIGHT).stroke("#ef4444")
           doc.font("Helvetica").fontSize(8).fillColor("#ef4444")
