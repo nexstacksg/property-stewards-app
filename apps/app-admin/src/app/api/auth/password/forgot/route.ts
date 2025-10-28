@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { sendPasswordResetEmail } from '@/lib/password-reset'
+import { getRequestOrigin } from '@/lib/origin'
 
 export const runtime = 'nodejs'
 
@@ -18,7 +19,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'If an account exists, a reset link has been sent.' })
     }
 
-    const sent = await sendPasswordResetEmail({ id: user.id, email: user.email, username: user.username }, req.nextUrl.origin)
+    const origin = getRequestOrigin(req)
+    const sent = await sendPasswordResetEmail({ id: user.id, email: user.email, username: user.username }, origin)
     if (!sent) {
       return NextResponse.json({ error: 'Unable to send reset email. Try again later.' }, { status: 500 })
     }
@@ -29,4 +31,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
 }
-
