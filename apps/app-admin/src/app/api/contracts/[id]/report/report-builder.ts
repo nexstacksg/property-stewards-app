@@ -26,6 +26,7 @@ export type ReportBuildOptions = {
   // and suppress location remarks, task-level media-only blocks, and synthetic
   // "No remarks recorded." rows.
   entryOnly?: boolean
+  filterByWorkOrderId?: string | null
 }
 
 function applyWatermark(doc: any, logoBuffer?: Buffer) {
@@ -286,7 +287,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
   await appendWorkOrderSection(doc, combinedWorkOrder, imageCache, {
     heading: 'Inspection Checklist',
     includeMeta: false,
-    filterByWorkOrderId: null,
+    filterByWorkOrderId: options.filterByWorkOrderId ?? null,
     allowedConditions: options.allowedConditions ?? undefined,
     entryOnly: options.entryOnly ?? false,
   })
