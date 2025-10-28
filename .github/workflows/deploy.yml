@@ -29,12 +29,12 @@ jobs:
 
       - name: Install dependencies 👨🏻‍💻
         run: |
-          pnpm install --no-frozen-lockfile
+          pnpm install
         working-directory: apps/app-admin
 
       - name: Build Next app
         run: |
-          npm run build
+          pnpm run build
         working-directory: apps/app-admin
 
       - name: Check PM2 status before
