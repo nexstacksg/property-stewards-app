@@ -39,26 +39,8 @@ export async function middleware(req: NextRequest) {
     return res
   }
 
-  // Validate that the user still exists in DB via server route
-  try {
-    const validateUrl = new URL('/api/auth/validate', req.url)
-    const validateRes = await fetch(validateUrl, { headers: { cookie: req.headers.get('cookie') || '' } })
-    if (!validateRes.ok) {
-      const url = new URL('/login', req.url)
-      url.searchParams.set('next', pathname)
-      url.searchParams.set('logout', 'missing-user')
-      const res = NextResponse.redirect(url)
-      res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
-      return res
-    }
-  } catch (_) {
-    // On any unexpected validation error, fail closed
-    const url = new URL('/login', req.url)
-    url.searchParams.set('next', pathname)
-    const res = NextResponse.redirect(url)
-    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
-    return res
-  }
+  // Skip network validation in middleware to avoid proxy/DNS issues in
+  // self-hosted environments. Server routes/pages will revalidate as needed.
 
   return NextResponse.next()
 }
