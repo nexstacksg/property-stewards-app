@@ -57,15 +57,22 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   // Reuse existing preview unless explicitly bypassed with nocache=1
   const url = new URL(requestUrl)
   const noCache = url.searchParams.get('nocache') === '1'
+  const checkOnly = url.searchParams.get('check') === '1'
   if (!noCache) {
     try {
       const head = await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
       const meta = (head as any)?.Metadata || {}
       const storedSig = meta['preview-etag'] || meta['preview_etag'] || meta['Preview-Etag']
-      if (storedSig && String(storedSig) === previewSignature) {
+      const valid = storedSig && String(storedSig) === previewSignature
+      if (valid || checkOnly) {
         return { fileUrl: `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`, reused: true as const }
       }
     } catch {}
+  }
+
+  if (checkOnly) {
+    // Not found or invalid signature: report pending without generating
+    return { fileUrl: undefined as any, reused: false as const }
   }
 
   const generatedOn = new Date()
@@ -128,11 +135,15 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     const result = await buildPreviewFile(id, request.url)
     if ('error' in result) return result.error
     if (wantsJson) {
-      return new Response(JSON.stringify({ fileUrl: result.fileUrl }), {
+      const payload = result.fileUrl ? { fileUrl: result.fileUrl } : { pending: true }
+      return new Response(JSON.stringify(payload), {
         headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
       })
     }
-    return new Response(null, { status: 302, headers: { Location: result.fileUrl, 'Cache-Control': 'no-store' } })
+    if (result.fileUrl) {
+      return new Response(null, { status: 302, headers: { Location: result.fileUrl, 'Cache-Control': 'no-store' } })
+    }
+    return new Response('Pending', { status: 202, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error("Preview generation failed (GET):", error)
     return new Response("Failed to generate preview", { status: 500 })

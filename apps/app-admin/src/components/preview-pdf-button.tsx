@@ -43,48 +43,57 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       }
 
       setIsLoading(true)
+
       // Generate preview first via GET (format=json) to avoid POST 405 on some deployments
       const jsonUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json`)
       const redirectUrl = href.replace(/\/report(?:\?.*)?$/, (m) => m.replace('/report', '/report/preview'))
 
-      // Add a 60s safety timeout to avoid hanging fetch in the browser
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 60000)
-      let resp: Response
+      // Request JSON preview; allow long-running server work without aborting
+      let fileUrl: string | undefined
       try {
-        resp = await fetch(jsonUrl, { method: 'GET', cache: 'no-store', signal: controller.signal })
-      } finally {
-        clearTimeout(timeout)
-      }
-      let data: { fileUrl?: string; error?: string } | null = null
-      // Only try to parse JSON when server declares it
-      if (resp.headers.get('content-type')?.includes('application/json')) {
-        try { data = await resp.json() } catch {}
-      }
-      if (!resp.ok) {
-        const message = data?.error || `Failed to generate preview (${resp.status})`
-        throw new Error(message)
-      }
-      // If JSON parse failed or no fileUrl is provided, fall back to 302 route
-      if (!data?.fileUrl) {
-        setReadyUrl(redirectUrl)
-        showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
-        return
+        const resp = await fetch(jsonUrl, { method: 'GET', cache: 'no-store' })
+        let data: { fileUrl?: string; error?: string } | null = null
+        if (resp.headers.get('content-type')?.includes('application/json')) {
+          try { data = await resp.json() } catch {}
+        }
+        if (!resp.ok) {
+          const message = data?.error || `Failed to generate preview (${resp.status})`
+          throw new Error(message)
+        }
+        if (data?.fileUrl) fileUrl = data.fileUrl
+      } catch (e) {
+        // ignore; we will poll the lightweight check endpoint instead
       }
 
-      // Do not auto-open. Store URL and switch button to Open Preview.
-      setReadyUrl(data.fileUrl)
+      // If no URL yet, poll the check endpoint (does not generate) for up to 2 minutes
+      if (!fileUrl) {
+        const checkUrl = href.replace(/\/report(?:\?.*)?$/, (m) => `${m.replace('/report', '/report/preview')}?format=json&check=1`)
+        const started = Date.now()
+        const timeoutMs = 120000
+        const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
+        while (!fileUrl && Date.now() - started < timeoutMs) {
+          try {
+            const r = await fetch(checkUrl, { method: 'GET', cache: 'no-store' })
+            if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
+              const j = await r.json().catch(() => ({})) as any
+              if (j?.fileUrl) {
+                fileUrl = j.fileUrl
+                break
+              }
+            }
+          } catch {}
+          await sleep(3000)
+        }
+      }
+
+      if (!fileUrl) {
+        throw new Error('Preview not ready yet — please try again shortly')
+      }
+      setReadyUrl(fileUrl)
       showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
     } catch (error) {
       console.error('Failed to generate PDF', error)
-      // As a final fallback, offer opening the redirect route directly
-      try {
-        const fallbackUrl = href.replace(/\/report(?:\?.*)?$/, (m) => m.replace('/report', '/report/preview'))
-        setReadyUrl(fallbackUrl)
-        showToast({ title: 'Preview queued', description: 'Click “Open Preview” to open in a new tab.', variant: 'success' })
-      } catch {
-        showToast({ title: 'Failed to generate PDF', description: error instanceof Error ? error.message : 'Please try again.', variant: 'error' })
-      }
+      showToast({ title: 'Preview not ready', description: error instanceof Error ? error.message : 'Please try again shortly.', variant: 'error' })
     } finally {
       setIsLoading(false)
     }
