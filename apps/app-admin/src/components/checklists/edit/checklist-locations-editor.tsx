@@ -270,7 +270,7 @@ export function ChecklistTemplateLocationsEditor({ locations, onLocationsChange 
             {locations.map((location, index) => {
               const taskSummaries = (location.tasks ?? [])
                 .map((task) => {
-                  const name = task.name.trim(); const details = task.details.trim(); if (!name && !details) return ""; return details ? `${name} (${details})` : name
+                  const name = task.name.trim(); const details = task.details.trim(); if (!name && !details) return ""; return details ? `${name}` : name
                 })
                 .filter(Boolean)
               return (
@@ -368,7 +368,15 @@ export function ChecklistTemplateLocationsEditor({ locations, onLocationsChange 
                           </div>
                         </div>
                         <div className="flex gap-1">
-                          <Button type="button" variant="ghost" size="icon" onClick={() => setRowEditIndex(index)} aria-label="Edit location"><Pencil className="h-4 w-4" /></Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => startRowEdit(index)}
+                            aria-label="Edit location"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
                           <Button type="button" variant="ghost" size="icon" onClick={() => removeLocation(index)} aria-label="Remove location"><X className="h-4 w-4" /></Button>
                         </div>
                       </div>
@@ -397,4 +405,3 @@ export function ChecklistTemplateLocationsEditor({ locations, onLocationsChange 
     </Card>
   )
 }
-

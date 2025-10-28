@@ -21,18 +21,57 @@ async function getContract(contractId: string) {
     include: {
       customer: true,
       address: true,
-      contractChecklist: {
-        include: {
-          items: {
+                contractChecklist: {
             include: {
-              enteredBy: true,
-              checklistTasks: true
-            },
-            orderBy: { order: "asc" }
+              items: {
+                include: {
+                  contributions: {
+                    include: {
+                      inspector: true,
+                      user: {
+                        select: {
+                          id: true,
+                          username: true,
+                          email: true
+                        }
+                      },
+                      media: {
+                        orderBy: { order: 'asc' }
+                      },
+                      task: {
+                        select: {
+                          id: true,
+                          photos: true,
+                          videos: true,
+                          condition: true,
+                          name: true,
+                          status: true
+                        }
+                      }
+                    }
+                  },
+                  checklistTasks: {
+                    include: {
+                      entries: {
+                        select: { id: true }
+                      },
+                      location: true
+                    }
+                  },
+                  locations: {
+                    orderBy: { order: 'asc' },
+                    include: {
+                      tasks: {
+                        orderBy: { createdOn: 'asc' }
+                      }
+                    }
+                  }
+                },
+                orderBy: { order: 'asc' }
+              }
+            }
           }
         }
-      }
-    }
   })
 
   if (!contract || !contract.contractChecklist) {
@@ -321,7 +360,7 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                                 .filter((entry: string) => entry.length > 0)
                             : []
                           if (name && subtasks.length > 0) {
-                            return `${name}: ${subtasks.join(", ")}`
+                            return `${name}`
                           }
                           if (name) return name
                           if (subtasks.length > 0) return subtasks.join(", ")
@@ -337,6 +376,7 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                       const hasLocations = locationSummaries.length > 0
                       const hasFallbackTasks = fallbackNames.length > 0 && !hasLocations
 
+
                       return (
                         <TableRow key={item.id}>
                           <TableCell className="font-medium">{item.order}</TableCell>
@@ -348,11 +388,11 @@ export default async function ContractChecklistPage({ params }: { params: Promis
                                   {locationSummaries.join(" • ")}
                                 </p>
                               )}
-                              {!hasLocations && hasFallbackTasks && (
+                              {/* {!hasLocations && hasFallbackTasks && (
                                 <p className="mt-1 text-sm text-muted-foreground">
                                   {fallbackNames.join(" • ")}
                                 </p>
-                              )}
+                              )} */}
                               {item.description && (
                                 <p className="mt-1 text-sm text-muted-foreground/80 italic">{item.description}</p>
                               )}
