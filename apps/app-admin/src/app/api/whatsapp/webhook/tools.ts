@@ -550,11 +550,14 @@ You can omit any numbers you want to leave unset.`
           if (idx >= 1 && idx <= tasks.length && cond) pairs.push({ index: idx, cond })
         }
         if (pairs.length === 0) {
-          // Try bare list: "Good, Good, Fair"
-          const words = text.split(/[\s,;\n]+/).filter(Boolean)
+          // Try bare list: support multi-word phrases like "Not Applicable" and hyphen/space variants.
+          // This regex finds any of the allowed conditions or 1-5 in sequence without requiring explicit numbering.
+          const tokenRe = /(not\s*applicable|n\/?a|na|un[\s-]*observable|un[\s-]*satisfactory|good|fair|[1-5])/gi
+          let wmatch: RegExpExecArray | null
           let pos = 1
-          for (const w of words) {
-            const cond = mapWord(w)
+          while ((wmatch = tokenRe.exec(text)) !== null) {
+            const token = (wmatch[1] || '').trim()
+            const cond = mapWord(token)
             if (!cond) continue
             if (pos > tasks.length) break
             pairs.push({ index: pos, cond })

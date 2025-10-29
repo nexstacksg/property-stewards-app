@@ -6,11 +6,16 @@ const globalForPrisma = globalThis as unknown as {
   prismaInstanceCount?: number
 }
 
-// Configure connection URL with Vercel-optimized settings
+// Configure connection URL with environment-tunable pooling
 const databaseUrl = process.env.DATABASE_URL
-const connectionUrl = databaseUrl ? 
-  `${databaseUrl}${databaseUrl.includes('?') ? '&' : '?'}connection_limit=1&pool_timeout=10&connect_timeout=10&statement_timeout=10000` : 
-  undefined
+const connLimit = Number(process.env.PRISMA_CONNECTION_LIMIT || '30')
+const poolTimeout = Number(process.env.PRISMA_POOL_TIMEOUT || '30') // seconds
+const connectTimeout = Number(process.env.PRISMA_CONNECT_TIMEOUT || '10') // seconds
+const statementTimeout = Number(process.env.PRISMA_STATEMENT_TIMEOUT || '60000') // ms
+
+const connectionUrl = databaseUrl
+  ? `${databaseUrl}${databaseUrl.includes('?') ? '&' : '?'}connection_limit=${connLimit}&pool_timeout=${poolTimeout}&connect_timeout=${connectTimeout}&statement_timeout=${statementTimeout}`
+  : undefined
 
 // Track instance creation for debugging (per-process)
 globalForPrisma.prismaInstanceCount = globalForPrisma.prismaInstanceCount ?? 0

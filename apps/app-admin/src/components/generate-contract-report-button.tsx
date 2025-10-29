@@ -97,6 +97,8 @@ export function GenerateContractReportButton({
       if (!fileUrl) {
         const checkUrl = new URL(url.toString())
         checkUrl.searchParams.set('check', '1')
+        // Remove nocache on check so server can do a cheap HEAD and return fast
+        checkUrl.searchParams.delete('nocache')
         const timeoutMs = 180000
         const start = Date.now()
         const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))

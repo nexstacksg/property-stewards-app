@@ -102,6 +102,26 @@ export async function POST(
       )
     }
 
+    // Preload source items outside the transaction to keep the tx short
+    let preSourceItems: Array<{ name: string; action?: string; order?: number; tasks?: Array<{ name?: string | null; details?: string | null }> }> = []
+    if (items && items.length > 0) {
+      preSourceItems = items
+    } else if (templateId) {
+      const template = await prisma.checklist.findUnique({
+        where: { id: templateId },
+        include: { items: { include: { tasks: true } } },
+      })
+      if (!template) {
+        return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+      }
+      preSourceItems = template.items.map((it: any) => ({
+        name: it.name,
+        action: it.action,
+        order: it.order,
+        tasks: Array.isArray(it.tasks) ? it.tasks : undefined,
+      }))
+    }
+
     // Create the checklist in a transaction
     const contractChecklist = await prisma.$transaction(async (tx) => {
       // If templateId provided, store reference on contract
@@ -119,36 +139,8 @@ export async function POST(
         }
       })
 
-      // Determine source items: custom items (preferred) or template items
-      let sourceItems: Array<{
-        name: string
-        action?: string
-        order?: number
-        tasks?: Array<{ name?: string | null; details?: string | null }>
-      }> = []
-      if (items && items.length > 0) {
-        sourceItems = items
-      } else if (templateId) {
-        const template = await tx.checklist.findUnique({
-          where: { id: templateId },
-          include: {
-            items: {
-              include: {
-                tasks: true,
-              },
-            },
-          },
-        })
-        if (!template) {
-          throw new Error('Template not found')
-        }
-        sourceItems = template.items.map((it)=> ({
-          name: it.name,
-          action: it.action,
-          order: it.order,
-          tasks: Array.isArray((it as any).tasks) ? (it as any).tasks : undefined,
-        })) 
-      } 
+      // Use preloaded source items to reduce work inside the transaction
+      const sourceItems = preSourceItems
 
       if (sourceItems.length > 0) {
         for (const [index, item] of sourceItems.entries()) {
@@ -195,45 +187,23 @@ export async function POST(
               },
             })
 
-            for (const subtaskName of seed.subtasks) {
-              await tx.checklistTask.create({
-                data: {
-                  itemId: createdItem.id,
-                  locationId: location.id,
-                  name: subtaskName,
-                  status: 'PENDING',
-                },
-              })
+            // Batch insert tasks for this location to minimize transaction time
+            const tasksData = seed.subtasks.map((subtaskName) => ({
+              itemId: createdItem.id,
+              locationId: location.id,
+              name: subtaskName,
+              status: 'PENDING' as const,
+            }))
+            if (tasksData.length > 0) {
+              await tx.checklistTask.createMany({ data: tasksData })
             }
           }
         }
       }
 
-      return await tx.contractChecklist.findUnique({
-        where: { id: checklist.id },
-        include: {
-          items: {
-            orderBy: { order: 'asc' },
-            include: {
-              checklistTasks: {
-                orderBy: { createdOn: 'asc' },
-                include: {
-                  location: true,
-                },
-              },
-              locations: {
-                orderBy: { order: 'asc' },
-                include: {
-                  tasks: {
-                    orderBy: { createdOn: 'asc' }
-                  }
-                }
-              }
-            }as any
-          }
-        }
-      })
-    }, { timeout: 60000, maxWait: 20000 })
+      // Return minimal payload (client only checks success)
+      return { id: checklist.id }
+    }, { timeout: 180000, maxWait: 60000, isolationLevel: 'ReadCommitted' })
 
     return NextResponse.json(contractChecklist, { status: 201 })
   } catch (error) {
@@ -328,15 +298,15 @@ export async function PUT(
             },
           })
 
-          for (const subtaskName of seed.subtasks) {
-            await tx.checklistTask.create({
-              data: {
-                itemId: createdItem.id,
-                locationId: location.id,
-                name: subtaskName,
-                status: 'PENDING',
-              },
-            })
+          // Batch insert tasks for this location
+          const tasksData = seed.subtasks.map((subtaskName) => ({
+            itemId: createdItem.id,
+            locationId: location.id,
+            name: subtaskName,
+            status: 'PENDING' as const,
+          }))
+          if (tasksData.length > 0) {
+            await tx.checklistTask.createMany({ data: tasksData })
           }
         }
       }
@@ -366,7 +336,7 @@ export async function PUT(
           }
         }
       })
-    }, { timeout: 60000, maxWait: 20000 })
+    }, { timeout: 180000, maxWait: 60000, isolationLevel: 'ReadCommitted' })
 
     return NextResponse.json(updatedChecklist)
   } catch (error) {

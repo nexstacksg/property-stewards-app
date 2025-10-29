@@ -12,17 +12,15 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
 async function buildPreviewFile(id: string, requestUrl: string) {
-  const contract = await getContractWithWorkOrders(id)
-  if (!contract) {
-    return { error: new Response(JSON.stringify({ error: "Contract not found" }), { status: 404, headers: { "Content-Type": "application/json" } }) }
-  }
-
   const { searchParams } = new URL(requestUrl)
   const customTitle = searchParams.get("title")
   const versionParam = searchParams.get("version")
   const versionLabel = versionParam ? (versionParam.startsWith("v") ? versionParam : `v${versionParam}`) : "v0.0 (Preview)"
   const workOrderId = searchParams.get('wo')
   const entryOnly = searchParams.get('entryOnly') === '0' ? false : true
+  const url = new URL(requestUrl)
+  const noCache = url.searchParams.get('nocache') === '1'
+  const checkOnly = url.searchParams.get('check') === '1'
 
   // Parse optional conditions from query (?conditions=A&conditions=B or CSV)
   const allConditions = new Set(Object.values(Condition))
@@ -39,6 +37,39 @@ async function buildPreviewFile(id: string, requestUrl: string) {
     ? Array.from(new Set(normalizedConditions))
     : Array.from(allConditions)
 
+  // For lightweight checks, avoid heavy contract fetch
+  if (checkOnly) {
+    // Minimal fields for folder path only
+    const contractBasic = await (await import('@/lib/prisma')).default.contract.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        customer: { select: { name: true } },
+        address: { select: { postalCode: true } },
+      }
+    }) as any
+    if (!contractBasic) {
+      return { error: new Response(JSON.stringify({ error: "Contract not found" }), { status: 404, headers: { "Content-Type": "application/json" } }) }
+    }
+    const nameSeg = sanitizeSegment(contractBasic.customer?.name) || "contract"
+    const postalSeg = sanitizeSegment(contractBasic.address?.postalCode) || contractBasic.id.slice(-8)
+    const folder = `${SPACE_DIRECTORY}/pdf/${nameSeg}-${postalSeg}`
+    const storageKey = `${folder}/contract-${nameSeg}-preview.pdf`
+    // When checking, always try HEAD (even if prior call passed nocache=1)
+    try {
+      await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
+      return { fileUrl: `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`, reused: true as const }
+    } catch {
+      return { fileUrl: undefined as any, reused: false as const }
+    }
+  }
+
+  // Heavy path: build/generate preview with full data
+  const contract = await getContractWithWorkOrders(id)
+  if (!contract) {
+    return { error: new Response(JSON.stringify({ error: "Contract not found" }), { status: 404, headers: { "Content-Type": "application/json" } }) }
+  }
+
   // Compute a lightweight data signature so we can reuse the preview unless data changed
   const timestamps: number[] = []
   const pushDate = (value?: any) => {
@@ -52,14 +83,11 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   if (cl) pushDate(cl.updatedOn)
   const items = cl?.items || []
   items.forEach((it: any) => {
-    // ItemEntry (contributions)
     if (Array.isArray(it.contributions)) it.contributions.forEach((e: any) => { pushDate(e.updatedOn); pushDate(e.createdOn) })
-    // ChecklistTask and entries
     if (Array.isArray(it.checklistTasks)) it.checklistTasks.forEach((t: any) => {
       pushDate(t.updatedOn); pushDate(t.createdOn)
       if (Array.isArray(t.entries)) t.entries.forEach((e: any) => { pushDate(e.updatedOn); pushDate(e.createdOn) })
     })
-    // Locations
     if (Array.isArray(it.locations)) it.locations.forEach((loc: any) => { pushDate(loc.updatedOn); pushDate(loc.createdOn) })
   })
   const dataEpoch = timestamps.length ? Math.max(...timestamps) : new Date(contract.createdOn || Date.now()).getTime()
@@ -69,30 +97,23 @@ async function buildPreviewFile(id: string, requestUrl: string) {
 
   const nameSeg = sanitizeSegment(contract.customer?.name) || "contract"
   const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
-  // Same folder as versioned files; fixed preview name
   const folder = `${SPACE_DIRECTORY}/pdf/${nameSeg}-${postalSeg}`
   const storageKey = `${folder}/contract-${nameSeg}-preview.pdf`
 
   // Reuse existing preview unless explicitly bypassed with nocache=1
-  const url = new URL(requestUrl)
-  const noCache = url.searchParams.get('nocache') === '1'
-  const checkOnly = url.searchParams.get('check') === '1'
   if (!noCache) {
     try {
       const head = await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
       const meta = (head as any)?.Metadata || {}
       const storedSig = meta['preview-etag'] || meta['preview_etag'] || meta['Preview-Etag']
       const valid = storedSig && String(storedSig) === previewSignature
-      if (valid || checkOnly) {
+      if (valid) {
         return { fileUrl: `${PUBLIC_URL}/${storageKey}?v=${Date.now()}`, reused: true as const }
       }
     } catch {}
   }
 
-  if (checkOnly) {
-    // Not found or invalid signature: report pending without generating
-    return { fileUrl: undefined as any, reused: false as const }
-  }
+  // Generate new preview
 
   const generatedOn = new Date()
   let buffer: Buffer
