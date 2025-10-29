@@ -590,7 +590,7 @@ export function ChecklistLocationsEditor(props: Props) {
                 const name = task.name.trim()
                 const details = task.details.trim()
                 if (!name && !details) return ""
-                return details ? `${name} (${details})` : name
+                return details ? `${name}` : name
               })
               .filter((entry) => entry.length > 0)
 
