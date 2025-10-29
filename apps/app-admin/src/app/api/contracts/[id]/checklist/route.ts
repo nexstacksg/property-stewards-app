@@ -195,15 +195,15 @@ export async function POST(
               },
             })
 
-            for (const subtaskName of seed.subtasks) {
-              await tx.checklistTask.create({
-                data: {
-                  itemId: createdItem.id,
-                  locationId: location.id,
-                  name: subtaskName,
-                  status: 'PENDING',
-                },
-              })
+            // Batch insert tasks for this location to minimize transaction time
+            const tasksData = seed.subtasks.map((subtaskName) => ({
+              itemId: createdItem.id,
+              locationId: location.id,
+              name: subtaskName,
+              status: 'PENDING' as const,
+            }))
+            if (tasksData.length > 0) {
+              await tx.checklistTask.createMany({ data: tasksData })
             }
           }
         }
@@ -233,7 +233,7 @@ export async function POST(
           }
         }
       })
-    }, { timeout: 60000, maxWait: 20000 })
+    }, { timeout: 180000, maxWait: 60000, isolationLevel: 'ReadCommitted' })
 
     return NextResponse.json(contractChecklist, { status: 201 })
   } catch (error) {
@@ -328,15 +328,15 @@ export async function PUT(
             },
           })
 
-          for (const subtaskName of seed.subtasks) {
-            await tx.checklistTask.create({
-              data: {
-                itemId: createdItem.id,
-                locationId: location.id,
-                name: subtaskName,
-                status: 'PENDING',
-              },
-            })
+          // Batch insert tasks for this location
+          const tasksData = seed.subtasks.map((subtaskName) => ({
+            itemId: createdItem.id,
+            locationId: location.id,
+            name: subtaskName,
+            status: 'PENDING' as const,
+          }))
+          if (tasksData.length > 0) {
+            await tx.checklistTask.createMany({ data: tasksData })
           }
         }
       }
@@ -366,7 +366,7 @@ export async function PUT(
           }
         }
       })
-    }, { timeout: 60000, maxWait: 20000 })
+    }, { timeout: 180000, maxWait: 60000, isolationLevel: 'ReadCommitted' })
 
     return NextResponse.json(updatedChecklist)
   } catch (error) {
