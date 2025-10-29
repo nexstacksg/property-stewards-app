@@ -71,11 +71,12 @@ export function GenerateContractReportButton({
     }
     setSubmitting(true)
     try {
-      // Phase 1: Build preview with the same conditions, then commit a versioned copy.
+      // Phase 1: Kick off preview build asynchronously, then poll until ready, then commit.
       const origin = typeof window !== 'undefined' ? window.location.origin : ''
       const url = new URL(`/api/contracts/${contractId}/report/preview`, origin)
-      url.searchParams.set('format', 'json')
-      url.searchParams.set('nocache', '1')
+      url.searchParams.set('format', 'json') // not required for async, but harmless
+      url.searchParams.set('nocache', '1')   // do not reuse old preview
+      url.searchParams.set('async', '1')     // return immediately; build in background
       url.searchParams.set('entryOnly', '1')
       // Use the same title in preview so the server-side signature matches during commit
       if (title && title.trim().length > 0) {
@@ -85,13 +86,7 @@ export function GenerateContractReportButton({
       selectedConditions.forEach((c) => url.searchParams.append('conditions', c))
 
       let fileUrl: string | undefined
-      try {
-        const resp = await fetch(url.toString(), { method: 'GET', cache: 'no-store' })
-        if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
-          const data = await resp.json().catch(() => ({})) as any
-          fileUrl = data?.fileUrl
-        }
-      } catch {}
+      try { await fetch(url.toString(), { method: 'GET', cache: 'no-store' }) } catch {}
 
       // Poll check endpoint if not ready yet
       if (!fileUrl) {
@@ -99,6 +94,7 @@ export function GenerateContractReportButton({
         checkUrl.searchParams.set('check', '1')
         // Remove nocache on check so server can do a cheap HEAD and return fast
         checkUrl.searchParams.delete('nocache')
+        checkUrl.searchParams.delete('async')
         const timeoutMs = 180000
         const start = Date.now()
         const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
@@ -145,9 +141,9 @@ export function GenerateContractReportButton({
 
       setOpen(false)
       router.refresh()
-    } catch (error) {
-      console.error("Failed to generate PDF", error)
-      showToast({ title: "Failed to generate PDF", description: error instanceof Error ? error.message : undefined, variant: "error" })
+    } catch {
+      // Suppress console errors (including 504s); show a gentle toast
+      showToast({ title: "Report not ready", description: "Please try again shortly.", variant: "info" })
     } finally {
       setSubmitting(false)
     }

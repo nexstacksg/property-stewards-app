@@ -57,29 +57,16 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
         return url.toString()
       }
 
-      // Generate preview first via GET (format=json)
-      const jsonUrl = buildPreviewUrl()
+      // Kick off preview generation asynchronously so the request returns immediately
+      const jsonUrl = buildPreviewUrl({ async: '1' })
 
       // Request JSON preview; allow long-running server work without aborting
       let fileUrl: string | undefined
-      try {
-        const resp = await fetch(jsonUrl, { method: 'GET', cache: 'no-store' })
-        let data: { fileUrl?: string; error?: string } | null = null
-        if (resp.headers.get('content-type')?.includes('application/json')) {
-          try { data = await resp.json() } catch {}
-        }
-        if (!resp.ok) {
-          const message = data?.error || `Failed to generate preview (${resp.status})`
-          throw new Error(message)
-        }
-        if (data?.fileUrl) fileUrl = data.fileUrl
-      } catch (e) {
-        // ignore; we will poll the lightweight check endpoint instead
-      }
+      try { await fetch(jsonUrl, { method: 'GET', cache: 'no-store' }) } catch {}
 
       // If no URL yet, poll the check endpoint (does not generate) for up to 2 minutes
       if (!fileUrl) {
-        const checkUrl = buildPreviewUrl({ check: '1' })
+        const checkUrl = buildPreviewUrl({ check: '1', async: '' })
         const started = Date.now()
         const timeoutMs = 120000
         const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
@@ -99,13 +86,15 @@ export function PreviewPdfButton({ href, fileName, label = "Preview PDF", classN
       }
 
       if (!fileUrl) {
-        throw new Error('Preview not ready yet — please try again shortly')
+        // Do not throw or log; show a subtle toast and exit quietly
+        showToast({ title: 'Preview not ready', description: 'Please try again shortly.', variant: 'info' })
+        return
       }
       setReadyUrl(fileUrl)
       showToast({ title: 'Preview ready', description: 'Click “Open Preview” to view in a new tab.', variant: 'success' })
-    } catch (error) {
-      console.error('Failed to generate PDF', error)
-      showToast({ title: 'Preview not ready', description: error instanceof Error ? error.message : 'Please try again shortly.', variant: 'error' })
+    } catch {
+      // Suppress console errors for gateway timeouts; show a gentle toast instead
+      showToast({ title: 'Preview not ready', description: 'Please try again shortly.', variant: 'info' })
     } finally {
       setIsLoading(false)
     }

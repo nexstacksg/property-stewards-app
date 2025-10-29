@@ -21,6 +21,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const url = new URL(requestUrl)
   const noCache = url.searchParams.get('nocache') === '1'
   const checkOnly = url.searchParams.get('check') === '1'
+  const asyncKickoff = url.searchParams.get('async') === '1'
 
   // Parse optional conditions from query (?conditions=A&conditions=B or CSV)
   const allConditions = new Set(Object.values(Condition))
@@ -62,6 +63,73 @@ async function buildPreviewFile(id: string, requestUrl: string) {
     } catch {
       return { fileUrl: undefined as any, reused: false as const }
     }
+  }
+
+  if (asyncKickoff) {
+    // Fire-and-forget: start generation in the background and return quickly
+    ;(async () => {
+      try {
+        const contract = await getContractWithWorkOrders(id)
+        if (!contract) return
+        // Compute signature for metadata
+        const timestamps: number[] = []
+        const pushDate = (value?: any) => { if (!value) return; const n = new Date(value).getTime(); if (Number.isFinite(n)) timestamps.push(n) }
+        pushDate(contract.updatedOn)
+        if (Array.isArray(contract.workOrders)) contract.workOrders.forEach((w: any) => pushDate(w.updatedOn))
+        const cl = contract.contractChecklist
+        if (cl) pushDate(cl.updatedOn)
+        const items = cl?.items || []
+        items.forEach((it: any) => {
+          if (Array.isArray(it.contributions)) it.contributions.forEach((e: any) => { pushDate(e.updatedOn); pushDate(e.createdOn) })
+          if (Array.isArray(it.checklistTasks)) it.checklistTasks.forEach((t: any) => {
+            pushDate(t.updatedOn); pushDate(t.createdOn)
+            if (Array.isArray(t.entries)) t.entries.forEach((e: any) => { pushDate(e.updatedOn); pushDate(e.createdOn) })
+          })
+          if (Array.isArray(it.locations)) it.locations.forEach((loc: any) => { pushDate(loc.updatedOn); pushDate(loc.createdOn) })
+        })
+        const dataEpoch = timestamps.length ? Math.max(...timestamps) : new Date(contract.createdOn || Date.now()).getTime()
+        const condSig = allowedConditions.slice().sort().join('|')
+        const normalizedTitle = (customTitle || '').trim()
+        const signature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}:${entryOnly ? 'entry' : 'full'}:${condSig}`
+
+        const nameSeg = sanitizeSegment(contract.customer?.name) || "contract"
+        const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
+        const folder = `${SPACE_DIRECTORY}/pdf/${nameSeg}-${postalSeg}`
+        const storageKey = `${folder}/contract-${nameSeg}-preview.pdf`
+
+        // If a valid preview already exists, skip heavy build
+        try {
+          const head = await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: storageKey } as any))
+          const meta = (head as any)?.Metadata || {}
+          const storedSig = meta['preview-etag'] || meta['preview_etag'] || meta['Preview-Etag']
+          const valid = storedSig && String(storedSig) === signature
+          if (valid) return
+        } catch {}
+
+        const buffer = await createContractReportBuffer(contract, {
+          titleOverride: customTitle,
+          versionLabel,
+          generatedOn: new Date(),
+          entryOnly,
+          filterByWorkOrderId: workOrderId,
+          allowedConditions,
+        }) as Buffer
+        await s3Client.send(new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: storageKey,
+          Body: buffer,
+          ContentType: "application/pdf",
+          CacheControl: "no-store, no-cache, must-revalidate, max-age=0",
+          Expires: new Date(0) as any,
+          Metadata: { 'preview-etag': signature } as any,
+          ACL: "public-read",
+        } as any))
+      } catch (err) {
+        console.error('Preview async kickoff error:', err)
+      }
+    })()
+
+    return { accepted: true as const }
   }
 
   // Heavy path: build/generate preview with full data
