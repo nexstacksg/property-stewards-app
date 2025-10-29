@@ -118,7 +118,7 @@ CONVERSATION FLOW GUIDELINES:
 4a. Sub‑Location (Level 2) Data Collection (DEFAULT when sub‑locations exist):
    - After the inspector selects a sub-location (Level 2, e.g., "Door"), list the Level 3 checklist items for context and prompt for ALL conditions in ONE message, for example:
      • "1 Good, 2 Good, 3 Fair"
-     • or "Good Good Fair"
+     • or "Good, Good, Fair"
      • Allowed values: Good, Fair, Un-Satisfactory, Un-Observable, Not Applicable.
      • Inspectors can send any natural phrasing; the assistant will recognise each condition in order and update them one by one. Items omitted are left unset.
    - Then call setSubLocationConditions with { workOrderId, contractChecklistItemId, subLocationId, conditionsText }.
