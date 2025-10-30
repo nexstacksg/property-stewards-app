@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import BrandLogo from '@/components/brand-logo'
 
 export default function SignupPage() {
   const router = useRouter()
@@ -44,7 +45,9 @@ export default function SignupPage() {
       <div className="w-full max-w-lg">
         <div className="bg-white/95 backdrop-blur border border-gray-200 rounded-2xl shadow-xl">
           <div className="p-8 md:p-10">
-            <div className="text-2xl md:text-3xl font-bold tracking-tight text-gray-900">propertySteward</div>
+            <div className="flex justify-center">
+              <BrandLogo className="w-48 md:w-56" priority />
+            </div>
             <h1 className="text-xl md:text-2xl font-semibold mt-1">Welcome</h1>
             <p className="text-gray-500 mt-2">
               Please enter your details to create your admin account.
