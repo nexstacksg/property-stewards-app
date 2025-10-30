@@ -525,7 +525,6 @@ export default function ItemEntriesDialog({
     }
   }
 
-  console.log(displayEntries)
 
   return (
     <Dialog open={open} onOpenChange={handleDialogToggle}>
