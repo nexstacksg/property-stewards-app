@@ -85,7 +85,6 @@ export default function ChecklistsPage() {
   }
 
 
-  console.log('here',checklists)
 
   return (
     <div className="p-6 space-y-6">
