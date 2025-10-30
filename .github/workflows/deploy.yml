@@ -25,7 +25,7 @@ jobs:
 
       - name: Prepare environment files
         run: |
-          cp /root/.env ./apps/app-admin/.env
+          cp /root/.env ./apps/app-admin/.env.local
 
       - name: Install dependencies 👨🏻‍💻
         run: |
