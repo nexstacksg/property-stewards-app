@@ -64,6 +64,7 @@ export async function POST(
     let taskId: string | undefined
     let locationId: string | undefined
     let conditionsByTaskJson: string | undefined
+    let findingsJson: string | undefined
     let condition: string | undefined
     let workOrderId = 'unknown'
     let photoFiles: File[] = []
@@ -79,6 +80,7 @@ export async function POST(
       taskId = toStringValue(form.get('taskId'))
       locationId = toStringValue(form.get('locationId'))
       conditionsByTaskJson = toStringValue(form.get('conditionsByTask'))
+      findingsJson = toStringValue(form.get('findings'))
       condition = toStringValue(form.get('condition'))
       const rawWorkOrderId = toStringValue(form.get('workOrderId'))
       if (rawWorkOrderId) workOrderId = rawWorkOrderId
@@ -94,6 +96,35 @@ export async function POST(
       const rawVideoCaptions = form.getAll('videoCaptions')
       videoCaptions = rawVideoCaptions
         .map((value) => (typeof value === 'string' ? value.trim() : ''))
+
+      // Per-task media arrays (aligned by index)
+      // taskPhotos[], taskPhotoTaskIds[], taskPhotoCaptions[]
+      // taskVideos[], taskVideoTaskIds[], taskVideoCaptions[]
+      const rawTaskPhotoFiles = form.getAll('taskPhotos').filter((v): v is File => v instanceof File && v.size > 0)
+      const rawTaskPhotoTaskIds = form.getAll('taskPhotoTaskIds').map((v) => (typeof v === 'string' ? v : '')).filter(Boolean)
+      const rawTaskPhotoCaptions = form.getAll('taskPhotoCaptions').map((v) => (typeof v === 'string' ? v.trim() : ''))
+      const rawTaskVideoFiles = form.getAll('taskVideos').filter((v): v is File => v instanceof File && v.size > 0)
+      const rawTaskVideoTaskIds = form.getAll('taskVideoTaskIds').map((v) => (typeof v === 'string' ? v : '')).filter(Boolean)
+      const rawTaskVideoCaptions = form.getAll('taskVideoCaptions').map((v) => (typeof v === 'string' ? v.trim() : ''))
+
+      // Compose them into arrays of tuples [{ taskId, file, caption }]
+      var taskPhotoUploads: Array<{ taskId: string; file: File; caption: string | null }> = []
+      var taskVideoUploads: Array<{ taskId: string; file: File; caption: string | null }> = []
+      for (let i = 0; i < rawTaskPhotoFiles.length; i++) {
+        const file = rawTaskPhotoFiles[i]
+        const tid = rawTaskPhotoTaskIds[i] || rawTaskPhotoTaskIds[rawTaskPhotoTaskIds.length - 1]
+        const capRaw = rawTaskPhotoCaptions[i] || ''
+        taskPhotoUploads.push({ taskId: tid, file, caption: capRaw.trim().length > 0 ? capRaw.trim() : null })
+      }
+      for (let i = 0; i < rawTaskVideoFiles.length; i++) {
+        const file = rawTaskVideoFiles[i]
+        const tid = rawTaskVideoTaskIds[i] || rawTaskVideoTaskIds[rawTaskVideoTaskIds.length - 1]
+        const capRaw = rawTaskVideoCaptions[i] || ''
+        taskVideoUploads.push({ taskId: tid, file, caption: capRaw.trim().length > 0 ? capRaw.trim() : null })
+      }
+
+      ;(request as any)._taskPhotoUploads = taskPhotoUploads
+      ;(request as any)._taskVideoUploads = taskVideoUploads
     } else {
       const body = await request.json()
       remark = typeof body.remark === 'string' ? body.remark.trim() : undefined
@@ -105,6 +136,11 @@ export async function POST(
         conditionsByTaskJson = JSON.stringify(body.conditionsByTask)
       } else if (typeof body.conditionsByTask === 'string') {
         conditionsByTaskJson = body.conditionsByTask
+      }
+      if (Array.isArray(body.findings)) {
+        findingsJson = JSON.stringify(body.findings)
+      } else if (typeof body.findings === 'string') {
+        findingsJson = body.findings
       }
       condition = typeof body.condition === 'string' ? body.condition : undefined
       if (typeof body.workOrderId === 'string' && body.workOrderId.trim().length > 0) {
@@ -123,7 +159,26 @@ export async function POST(
     const normalizedTaskId = taskId && taskId.trim().length > 0 ? taskId.trim() : null
     const normalizedLocationId = locationId && locationId.trim().length > 0 ? locationId.trim() : null
 
-    // Parse bulk conditions when provided (location-level update)
+    // Parse findings when provided (preferred)
+    type Finding = { taskId: string; condition: string; cause?: string; resolution?: string }
+    let findings: Finding[] = []
+    if (findingsJson) {
+      try {
+        const parsed = JSON.parse(findingsJson)
+        if (Array.isArray(parsed)) {
+          findings = parsed
+            .map((e: any) => ({
+              taskId: typeof e?.taskId === 'string' ? e.taskId : '',
+              condition: typeof e?.condition === 'string' ? e.condition.trim().toUpperCase().replace(/\s|-/g, '_') : '',
+              cause: typeof e?.cause === 'string' ? e.cause.trim() : undefined,
+              resolution: typeof e?.resolution === 'string' ? e.resolution.trim() : undefined,
+            }))
+            .filter((e) => e.taskId && e.condition && ALLOWED_CONDITIONS.includes(e.condition))
+        }
+      } catch {}
+    }
+
+    // Parse legacy bulk conditions (location-level update)
     let conditionsByTask: Array<{ taskId: string; condition: string }> = []
     if (conditionsByTaskJson) {
       try {
@@ -139,7 +194,7 @@ export async function POST(
       } catch {}
     }
     const isLocationMode = !normalizedTaskId && normalizedLocationId
-    const isBulkLocationMode = isLocationMode && conditionsByTask.length > 0
+    const isBulkLocationMode = isLocationMode && (findings.length > 0 || conditionsByTask.length > 0)
 
     if (!normalizedTaskId && !isLocationMode) {
       return NextResponse.json({ error: 'Subtask is required (or provide locationId for location-level remark).'}, { status: 400 })
@@ -158,9 +213,10 @@ export async function POST(
     let requiresPhoto = Boolean(normalizedCondition && normalizedCondition !== 'NOT_APPLICABLE' && normalizedCondition !== 'UN_OBSERVABLE')
     const hasPhotos = photoFiles.length > 0
     if (isBulkLocationMode) {
-      const conds = conditionsByTask.map((e) => e.condition)
+      const conds = (findings.length > 0 ? findings.map((e) => e.condition) : conditionsByTask.map((e) => e.condition))
+      // UI requires all conditions to have media; keep remark gating minimal
       requiresRemark = conds.some((c) => c !== 'GOOD' && c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
-      requiresPhoto = conds.some((c) => c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
+      requiresPhoto = false // task-level media will be validated per finding below
     }
 
     if (requiresRemark && trimmedRemark.length === 0) {
@@ -200,9 +256,10 @@ export async function POST(
       if (!location || location.itemId !== id) {
         return NextResponse.json({ error: 'Location not found for this checklist item' }, { status: 400 })
       }
-      const tasks = await prisma.checklistTask.findMany({ where: { id: { in: conditionsByTask.map((e) => e.taskId) } }, select: { id: true, itemId: true, locationId: true } })
+      const taskIds = (findings.length > 0 ? findings.map((e) => e.taskId) : conditionsByTask.map((e) => e.taskId))
+      const tasks = await prisma.checklistTask.findMany({ where: { id: { in: taskIds } }, select: { id: true, itemId: true, locationId: true } })
       const taskSet = new Set(tasks.filter((t) => t.itemId === id).map((t) => t.id))
-      const missing = conditionsByTask.map((e) => e.taskId).filter((tid) => !taskSet.has(tid))
+      const missing = taskIds.filter((tid) => !taskSet.has(tid))
       if (missing.length > 0) {
         return NextResponse.json({ error: 'One or more subtasks are invalid for this checklist item' }, { status: 400 })
       }
@@ -301,10 +358,69 @@ export async function POST(
         await prisma.checklistTask.update({ where: { id: targetTask!.id }, data: { condition: normalizedCondition ?? null } })
       }
     } else {
-      // Bulk update each subtask condition
-      const updates = conditionsByTask.map((e) =>
-        prisma.checklistTask.update({ where: { id: e.taskId }, data: { condition: e.condition } })
-      )
+      // Build findings from legacy conditions if not provided
+      if (findings.length === 0) {
+        findings = conditionsByTask.map((e) => ({ taskId: e.taskId, condition: e.condition }))
+      }
+
+      // Validate task-level requirements: media per finding; cause/resolution for FAIR or UNSATISFACTORY
+      const ALLOW_EMPTY_CR = ['GOOD', 'UN_OBSERVABLE', 'NOT_APPLICABLE']
+      const taskPhotoUploads = ((request as any)._taskPhotoUploads || []) as Array<{ taskId: string; file: File; caption: string | null }>
+      const taskVideoUploads = ((request as any)._taskVideoUploads || []) as Array<{ taskId: string; file: File; caption: string | null }>
+      const uploadsByTask = new Map<string, { photos: typeof taskPhotoUploads; videos: typeof taskVideoUploads }>()
+      findings.forEach((f) => {
+        uploadsByTask.set(f.taskId, { photos: [], videos: [] } as any)
+      })
+      taskPhotoUploads.forEach((u) => { if (uploadsByTask.has(u.taskId)) (uploadsByTask.get(u.taskId) as any).photos.push(u) })
+      taskVideoUploads.forEach((u) => { if (uploadsByTask.has(u.taskId)) (uploadsByTask.get(u.taskId) as any).videos.push(u) })
+
+      for (const f of findings) {
+        const pack = uploadsByTask.get(f.taskId)
+        const total = (pack?.photos?.length || 0) + (pack?.videos?.length || 0)
+        if (total === 0) {
+          return NextResponse.json({ error: 'Each subtask condition requires at least one media file.' }, { status: 400 })
+        }
+        if (!ALLOW_EMPTY_CR.includes(f.condition)) {
+          if (!f.cause || !f.resolution) {
+            return NextResponse.json({ error: 'Cause and resolution are required for FAIR or UNSATISFACTORY conditions.' }, { status: 400 })
+          }
+        }
+      }
+
+      // Create findings and upload task media
+      const findingRows = await Promise.all(findings.map((f) => prisma.checklistTaskFinding.create({ data: { entryId: entry.id, taskId: f.taskId, details: { condition: f.condition, ...(f.cause ? { cause: f.cause } : {}), ...(f.resolution ? { resolution: f.resolution } : {}) } as any } })))
+      const findingByTask = new Map<string, string>()
+      findingRows.forEach((row) => findingByTask.set(row.taskId, row.id))
+
+      // Upload task-level media and link to both entry and task for clean delete, and push into legacy arrays
+      const createdMedia: Array<{ taskId: string; type: 'PHOTO' | 'VIDEO'; url: string; caption: string | null }> = []
+      for (const u of ((request as any)._taskPhotoUploads || []) as Array<{ taskId: string; file: File; caption: string | null }>) {
+        const url = await uploadFile(u.file, workOrderId, entry.id, 'photos')
+        await prisma.itemEntryMedia.create({ data: { entryId: entry.id, taskId: u.taskId, url, caption: u.caption, type: 'PHOTO', order: 0 } })
+        createdMedia.push({ taskId: u.taskId, type: 'PHOTO', url, caption: u.caption })
+      }
+      for (const u of ((request as any)._taskVideoUploads || []) as Array<{ taskId: string; file: File; caption: string | null }>) {
+        const url = await uploadFile(u.file, workOrderId, entry.id, 'videos')
+        await prisma.itemEntryMedia.create({ data: { entryId: entry.id, taskId: u.taskId, url, caption: u.caption, type: 'VIDEO', order: 0 } })
+        createdMedia.push({ taskId: u.taskId, type: 'VIDEO', url, caption: u.caption })
+      }
+
+      // Maintain legacy arrays for task to make existing UI display media
+      if (createdMedia.length > 0) {
+        const mediaByTask = new Map<string, { photos: string[]; videos: string[] }>()
+        createdMedia.forEach((m) => {
+          const bucket = mediaByTask.get(m.taskId) || { photos: [], videos: [] }
+          if (m.type === 'PHOTO') bucket.photos.push(m.url)
+          else bucket.videos.push(m.url)
+          mediaByTask.set(m.taskId, bucket)
+        })
+        for (const [taskIdKey, pack] of mediaByTask.entries()) {
+          await prisma.checklistTask.update({ where: { id: taskIdKey }, data: { ...(pack.photos.length ? { photos: { push: pack.photos } } : {}), ...(pack.videos.length ? { videos: { push: pack.videos } } : {}) } })
+        }
+      }
+
+      // Update each subtask condition to latest
+      const updates = findings.map((f) => prisma.checklistTask.update({ where: { id: f.taskId }, data: { condition: f.condition } }))
       await Promise.all(updates)
     }
 
@@ -328,6 +444,7 @@ export async function POST(
           },
         },
         location: true,
+        findings: true,
       },
     })
 
