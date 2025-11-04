@@ -125,7 +125,7 @@ export default function EditRemarkForm({
               return (
                 <div key={f.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium truncate" title={taskName}>{taskName}</div>
+                    <div className="text-sm font-medium w-60" title={taskName}>{taskName}</div>
                     <select
                       className="h-8 w-56 rounded-md border text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
                       value={condValue}
