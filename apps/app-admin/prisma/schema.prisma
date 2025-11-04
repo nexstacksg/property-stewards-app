@@ -241,9 +241,11 @@ model ItemEntry {
   inspectorId     String?
   userId          String?
   remarks         String?
+  // Deprecated: cause/resolution now stored per task in ItemEntryTaskDetail
   cause           String?
   resolution      String?
   includeInReport Boolean @default(false)
+  // Deprecated: condition now stored per task in ItemEntryTaskDetail
   condition       Condition?
   taskId          String?
   photos          String[] @default([])
@@ -258,6 +260,8 @@ model ItemEntry {
   locationId      String?
   location        ContractChecklistLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   media           ItemEntryMedia[]
+  // New: per-task findings for this remark (JSON-based details and media)
+  findings        ChecklistTaskFinding[]
 
   @@index([itemId])
   @@index([inspectorId])
@@ -271,22 +275,48 @@ model ItemEntry {
 
 model ItemEntryMedia {
   id        String               @id @default(cuid())
-  entryId   String
+  entryId   String?
+  taskId    String?
   url       String
   caption   String?
   type      ItemEntryMediaType
   order     Int                  @default(0)
   createdOn DateTime             @default(now())
 
-  entry ItemEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  // Location-level media when linked to ItemEntry (whole-location)
+  entry    ItemEntry?            @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  // Per-task media when linked directly to ChecklistTask
+  task     ChecklistTask?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([entryId])
+  @@index([taskId])
   @@index([type])
 }
 
 enum ItemEntryMediaType {
   PHOTO
   VIDEO
+}
+
+/// New per-task detail for a remark (ItemEntry).
+/// Stores condition/cause/resolution for the specific task, and a JSON blob
+/// of media with captions, grouped by photos/videos, preserving order.
+/// Per-task finding for a specific ItemEntry (remark).
+/// Holds condition/cause/resolution and other structured data as JSON.
+model ChecklistTaskFinding {
+  id        String    @id @default(cuid())
+  entryId   String
+  taskId    String
+  details   Json?
+  createdOn DateTime  @default(now())
+  updatedOn DateTime  @updatedAt
+
+  entry     ItemEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  task      ChecklistTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([entryId])
+  @@index([taskId])
+  @@unique([entryId, taskId])
 }
 
 model ChecklistTask {
@@ -306,6 +336,10 @@ model ChecklistTask {
   location   ContractChecklistLocation? @relation(fields: [locationId], references: [id], onDelete: Cascade)
   entries    ItemEntry[]
   inspector  Inspector?             @relation(fields: [inspectorId], references: [id], onDelete: SetNull)
+  // New: per-remark per-task findings
+  findings   ChecklistTaskFinding[]
+  // New: captioned media for the task
+  media      ItemEntryMedia[]
 
   @@index([itemId])
   @@index([inspectorId])
