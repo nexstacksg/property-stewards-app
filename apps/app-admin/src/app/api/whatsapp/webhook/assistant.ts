@@ -390,8 +390,17 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) {
-            return data.message || 'Conditions updated. If any item is Fair or Un-Satisfactory, please provide the cause and resolution in ONE message (e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."). Otherwise, please enter the remarks for this sub-location.'
+        if (data?.success) {
+            return (
+              data.message || [
+                'Conditions updated.',
+                'If any item is Fair or Un‑Satisfactory, please provide BOTH cause and resolution in ONE message:',
+                '• 1: <cause>\\n  2: <resolution>',
+                '• Cause: <your cause>\\n  Resolution: <your resolution>',
+                '',
+                'Otherwise, please enter the remarks for this sub‑location.'
+              ].join('\\n')
+            )
           }
           // If parsing failed, show helpful hint
           return 'I could not detect valid conditions. Please reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair".'
@@ -516,7 +525,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             if (!f?.success && typeof f?.error === 'string') {
               const err = String(f.error)
               if (/cause and resolution/i.test(err)) {
-                return `${err}\n\nPlease send both in ONE message, e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."`
+                return [
+                  err,
+                  '',
+                  'Please send BOTH in one message using either format:',
+                  '• 1: <cause>\\n  2: <resolution>',
+                  '• Cause: <your cause>\\n  Resolution: <your resolution>'
+                ].join('\\n')
               }
               if (/media is required/i.test(err)) {
                 return 'Media is required for this task. Please send at least one photo or video.'
@@ -530,10 +545,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
               if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
                 return [
                   `Next: ${name} requires details.`,
-                  'Please provide BOTH the cause and the resolution in ONE message.',
-                  'Examples:',
-                  '  • 1: <cause>, 2: <resolution>',
-                  '  • Cause: <text>  Resolution: <text>'
+                  'Please send BOTH in one message using either format:',
+                  '• 1: <cause>\n  2: <resolution>',
+                  '• Cause: <your cause>\n  Resolution: <your resolution>'
                 ].join('\\n')
               }
               return `Next: ${name} — please send photos/videos (media is required for all conditions).`
@@ -845,11 +859,10 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         // If awaiting cause/resolution text, keep their text; otherwise re-prompt
         if (meta?.taskFlowStage === 'cause' || meta?.taskFlowStage === 'resolution') {
           return [
-            'Please provide BOTH the cause and the resolution in ONE message.',
-            'Examples:',
-            '  • 1: <cause>, 2: <resolution>',
-            '  • Cause: <text>  Resolution: <text>'
-          ].join('\n')
+            'Please send BOTH in one message using either format:',
+            '• 1: <cause>\n  2: <resolution>',
+            '• Cause: <your cause>\n  Resolution: <your resolution>'
+          ].join('\\n')
         }
         // If in job confirmation
         if (meta?.jobStatus === 'confirming' || meta?.lastMenu === 'confirm') {

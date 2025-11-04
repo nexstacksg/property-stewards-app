@@ -617,7 +617,10 @@ You can omit any numbers you want to leave unset.`
         lines.push('')
         if (nextTaskId) {
             if (nextCond === 'FAIR' || nextCond === 'UNSATISFACTORY') {
-              lines.push(`Next: ${nextTaskName || 'the next task'} requires details. Please provide the cause and resolution in ONE message, e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."`)
+              lines.push(`Next: ${nextTaskName || 'the next task'} requires details.`)
+              lines.push('Please send BOTH in one message using either format:')
+              lines.push('• 1: <cause>\\n  2: <resolution>')
+              lines.push('• Cause: <your cause>\\n  Resolution: <your resolution>')
             } else {
               lines.push(`Next: ${nextTaskName || 'the next task'} — please send photos/videos (media is required for all conditions).`)
             }
@@ -915,7 +918,7 @@ You can omit any numbers you want to leave unset.`
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
             dbg('completeTask:set_condition', { taskId, condition, nextStage })
             if (nextStage === 'cause') {
-              return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please provide the cause and resolution in ONE message, e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."' })
+              return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please send BOTH in one message using either format:\n• 1: <cause>\n  2: <resolution>\n• Cause: <your cause>\n  Resolution: <your resolution>' })
             }
           }
 
@@ -955,7 +958,7 @@ You can omit any numbers you want to leave unset.`
         if (phase === 'set_cause_resolution') {
           if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing cause and resolution' })
           const raw = String(args.text ?? args.cause ?? args.remarks ?? '').trim()
-          if (!raw) return JSON.stringify({ success: false, error: 'Please provide both cause and resolution in one message.' })
+          if (!raw) return JSON.stringify({ success: false, error: 'Please provide BOTH cause and resolution in one message.' })
           const extract = () => {
             // Prefer explicit labels first
             let causeMatch = /cause\s*[:\-]\s*([^]+?)(?=resolution\s*[:\-]|$)/i.exec(raw)
@@ -981,7 +984,7 @@ You can omit any numbers you want to leave unset.`
           }
           const { cause, resolution } = extract()
           if (!cause || !resolution) {
-            return JSON.stringify({ success: false, error: 'Please send both in one message. Try "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."' })
+            return JSON.stringify({ success: false, error: 'Please send BOTH in one message using either format:\n• 1: <cause>\n  2: <resolution>\n• Cause: <your cause>\n  Resolution: <your resolution>' })
           }
           const latest = await getSessionState(sessionId)
           const taskId = latest.currentTaskId
@@ -1213,6 +1216,23 @@ You can omit any numbers you want to leave unset.`
                 if (!causeText && latest2.pendingTaskCause) causeText = latest2.pendingTaskCause
                 if (!resolutionText && latest2.pendingTaskResolution) resolutionText = latest2.pendingTaskResolution
               } catch {}
+            }
+
+            // If still missing, read from ChecklistTaskFinding.details (canonical store for per-task cause/resolution)
+            if ((!causeText || !resolutionText) && entryId && taskId) {
+              try {
+                const finding = await prisma.checklistTaskFinding.findUnique({
+                  where: { entryId_taskId: { entryId, taskId } } as any,
+                  select: { details: true }
+                })
+                const det = finding?.details && typeof finding.details === 'object' ? (finding.details as any) : null
+                if (det) {
+                  if (!causeText && typeof det.cause === 'string') causeText = det.cause.trim()
+                  if (!resolutionText && typeof det.resolution === 'string') resolutionText = det.resolution.trim()
+                }
+              } catch (e) {
+                console.error('finalize: failed to read ChecklistTaskFinding', e)
+              }
             }
 
             if (requiresPhoto && photoCount === 0) {
