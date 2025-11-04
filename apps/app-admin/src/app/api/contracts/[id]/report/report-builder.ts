@@ -162,6 +162,40 @@ function appendSignOffSection(doc: any, contract: any) {
 
   doc.y = topY + required
   doc.moveDown(0.5)
+
+  // Add a full-width Remarks box below the signatures
+  const remarksHeight = 160
+  const gapBelowSign = 12
+  let remarksY = doc.y + gapBelowSign
+  let available = doc.page.height - TABLE_MARGIN - FOOTER_RESERVED - remarksY
+  if (available < remarksHeight) {
+    doc.addPage()
+    remarksY = TABLE_MARGIN
+  }
+
+  const remarksWidth = doc.page.width - TABLE_MARGIN * 2
+  const remarksX = TABLE_MARGIN
+  doc.save()
+  try {
+    doc.roundedRect(remarksX, remarksY, remarksWidth, remarksHeight, 6).stroke()
+    // Title
+    doc.font('Helvetica-Bold').fontSize(10)
+    doc.text('Remarks', remarksX + 10, remarksY + 8, { width: remarksWidth - 20 })
+
+    // Guide lines for handwriting/notes
+    const lineLeft = remarksX + 10
+    const lineRight = remarksX + remarksWidth - 10
+    let lineY = remarksY + 26
+    while (lineY < remarksY + remarksHeight - 12) {
+      doc.moveTo(lineLeft, lineY).lineTo(lineRight, lineY).stroke()
+      lineY += 18
+    }
+  } finally {
+    doc.restore()
+  }
+
+  doc.y = remarksY + remarksHeight
+  doc.moveDown(0.5)
 }
 
 async function writeContractReport(doc: any, contract: any, options: ReportBuildOptions) {
