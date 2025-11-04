@@ -79,7 +79,6 @@ function filterToolsByNames(names: string[]) {
 }
 
 // Legacy compatibility no-ops
-export function getCachedThreadId(phone: string) { return phone }
 export async function postAssistantMessageIfThread(phone: string, content: string) {
   const hist = await loadHistory(phone)
   hist.push({ role: 'assistant', content })
@@ -838,11 +837,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           ].join('\n')
         }
         // If awaiting cause/resolution text, keep their text; otherwise re-prompt
-        if (meta?.taskFlowStage === 'cause') {
-          return 'Please describe the cause for this issue (a short sentence is fine).'
-        }
-        if (meta?.taskFlowStage === 'resolution') {
-          return 'Please describe the resolution (a short sentence is fine).'
+        if (meta?.taskFlowStage === 'cause' || meta?.taskFlowStage === 'resolution') {
+          return [
+            'Please provide BOTH the cause and the resolution in ONE message.',
+            'Examples:',
+            '  • 1: <cause>, 2: <resolution>',
+            '  • Cause: <text>  Resolution: <text>'
+          ].join('\n')
         }
         // If in job confirmation
         if (meta?.jobStatus === 'confirming' || meta?.lastMenu === 'confirm') {
