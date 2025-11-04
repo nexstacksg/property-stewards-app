@@ -192,7 +192,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
         const jobsFormatted = jobs.map((job: any, index: number) => {
           const raw = job.scheduled_date
           const date = raw instanceof Date ? raw : (raw ? new Date(raw) : null)
-          const time = date ? date.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''
+          const time = date ? date.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' }) : ''
           return {
             id: job.id,
             jobNumber: index + 1,
@@ -237,7 +237,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             id: args.jobId,
             property: workOrder.property_address,
             customer: workOrder.customer_name,
-            time: workOrder.scheduled_start.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true }),
+            time: workOrder.scheduled_start.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Singapore' }),
             status: workOrder.status
           }
         })

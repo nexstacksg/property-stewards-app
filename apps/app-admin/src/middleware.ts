@@ -1,50 +1,69 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { verifyJwt } from '@/lib/jwt'
-import { getAuthSecret } from '@/lib/auth-secret'
+import { NextResponse, type NextRequest } from 'next/server'
 
-const PUBLIC_PATHS = [
-  '/login',
-  '/signup',
-  '/confirm',
-  '/forgot-password',
-  '/reset-password',
-]
+
+function isPublicPath(pathname: string) {
+  // Public/auth routes and static assets
+  if (pathname.startsWith('/api')) return true
+  if (pathname.startsWith('/_next')) return true
+  if (pathname.startsWith('/static')) return true
+  if (pathname === '/favicon.ico') return true
+  if (pathname === '/login') return true
+  if (pathname === '/signup' || pathname.startsWith('/signup')) return true
+  if (pathname === '/forgot-password') return true
+  if (pathname === '/reset-password') return true
+  if (pathname === '/confirm' || pathname.startsWith('/confirm')) return true
+  if (pathname.startsWith('/(auth)')) return true
+  return false
+}
 
 export async function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl
+  const { nextUrl } = req
+  const pathname = nextUrl.pathname
 
-  // Allow public paths and Next internals
-  const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p))
-  const isNextAsset = pathname.startsWith('/_next') || pathname.startsWith('/favicon.ico') || pathname.startsWith('/public')
-  const isAuthApi = pathname.startsWith('/api/auth')
-  const isApiRoute = pathname.startsWith('/api')
-  if (isPublic || isNextAsset || isAuthApi || isApiRoute) {
+  if (isPublicPath(pathname)) {
     return NextResponse.next()
   }
 
-  const token = req.cookies.get('session')?.value
-  const secret = getAuthSecret()
-  if (!token || !secret) {
-    const url = new URL('/login', req.url)
-    url.searchParams.set('next', pathname)
-    return NextResponse.redirect(url)
+  const session = req.cookies.get('session')?.value
+  if (!session) return NextResponse.next()
+
+  // Always check for protected paths when a session cookie exists
+
+  // Validate session against DB via existing API (avoids Prisma in middleware)
+  try {
+    const validateUrl = new URL('/api/auth/validate', nextUrl.origin)
+    const res = await fetch(validateUrl, {
+      method: 'GET',
+      headers: {
+        // forward incoming cookies so API can read the session
+        cookie: req.headers.get('cookie') || ''
+      },
+    })
+
+    if (!res.ok) {
+      // Invalidate session and redirect to login
+      const loginUrl = new URL('/login', nextUrl.origin)
+      const redirect = NextResponse.redirect(loginUrl)
+      redirect.cookies.set('session', '', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 0,
+      })
+      return redirect
+    }
+
+    return NextResponse.next()
+  } catch {
+    // In case of network or unexpected error, allow navigation (fail-open)
+    return NextResponse.next()
   }
-
-  const payload = await verifyJwt(token, secret)
-  if (!payload) {
-    const url = new URL('/login', req.url)
-    url.searchParams.set('next', pathname)
-    const res = NextResponse.redirect(url)
-    res.cookies.set('session', '', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 0 })
-    return res
-  }
-
-  // Skip network validation in middleware to avoid proxy/DNS issues in
-  // self-hosted environments. Server routes/pages will revalidate as needed.
-
-  return NextResponse.next()
 }
 
 export const config = {
-  matcher: ['/((?!api/auth|_next|favicon.ico|public).*)'],
+  matcher: [
+    // Run for all app paths except static assets
+    '/((?!_next|static|.*\\..*).*)',
+  ],
 }
