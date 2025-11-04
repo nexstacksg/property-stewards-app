@@ -123,7 +123,7 @@ export default function AddRemarkForm({
                 return (
                   <div key={task.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium truncate" title={task.name || 'Untitled subtask'}>
+                      <span className="text-sm font-medium w-60" title={task.name || 'Untitled subtask'}>
                         {task.name || 'Untitled subtask'}
                       </span>
                       <select
