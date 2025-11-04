@@ -255,9 +255,9 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
         await updateSessionState(phoneNumber, { currentTaskEntryId })
       }
       if (currentTaskEntryId) {
-        // Save media and persist caption as ItemEntryMedia caption; do not merge into entry.remarks
+        // Save media and persist caption as ItemEntryMedia caption; tag with taskId when available
         const effectiveCaption = mediaRemark || ""
-        await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType, effectiveCaption)
+        await saveMediaToItemEntry(currentTaskEntryId, publicUrl, mediaType, effectiveCaption, activeTaskId || null)
         handledByTaskFlow = true
         // If we are in sub-location mode (no active task), keep media stage and tailor the message
         const isSubLocationMode = !activeTaskId && !!(currentSubLocationName || currentLocation)

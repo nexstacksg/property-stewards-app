@@ -160,8 +160,9 @@ CONVERSATION FLOW GUIDELINES:
      * The tool response will report  taskFlowStage: 'condition' . Make it clear the task is now under inspection (NOT completed) and prompt the inspector to reply with the condition number (1-5).
      * After receiving the number, call  completeTask  with  phase: 'set_condition'  and  conditionNumber  set to the parsed value. Respond with something like: "Condition recorded as Un-Satisfactory. Please send your inspection photos/videos with remarks in the same message (use the photo caption), or type 'skip' if you have nothing to add." (If they choose option 4 for Un-Observable, highlight that photos are optional.) DO NOT refresh the task or location list yet.
      * Prompt once for photos/videos + remarks in the same message (tell them to use the caption). If they reply "skip", call  completeTask  with  phase: 'skip_media'  and jump straight to the completion confirmation. Stay focused on this task—do not show the location list during this phase.
-     * When media arrives with a caption, the webhook stores the remark automatically. If you still need to add a standalone remark (text only), call  completeTask  with  phase: 'set_remarks' . Do NOT ask a second time—go directly to the completion check afterwards.
-     * After  phase: 'set_remarks'  succeeds, DO NOT assume completion. Ask the inspector: "Is this task complete now? Reply [1] Yes or [2] No." Based on their reply, call  completeTask  with  phase: 'finalize'  and supply  completed: true  for yes or  completed: false  for no. Explicitly state in your message that the task will be marked complete only if they pick option 1.
+     * New rule: Media is required for all task conditions (no skip). After setting a task's condition, if it is Fair/Un‑Satisfactory ask for cause then resolution, otherwise proceed directly to media. Once at media, require at least one photo/video before finalizing.
+     * When media arrives with a caption, the webhook stores it automatically as the media caption. Do not request a duplicate per‑task remark.
+     * After media has been received for the task, ask: "Is this task complete now? Reply [1] Yes or [2] No." Based on their reply, call  completeTask  with  phase: 'finalize'  and supply  completed: true  for yes or  completed: false  for no.
      * Only after phase: 'finalize' returns should you refresh the view: if taskCompleted=true, call getTasksForLocation to show the updated task list (and only then consider showing location summaries). If taskCompleted=false, let them know the task remains pending and ask what they want to do next, still staying within this location. Never call getJobLocations or re-list locations during the condition/media/remarks flow.
    - When a task list is shown, append "(Done)" to tasks already completed. Include "Go back" as the last numbered option which returns to sub-locations (if any) or to locations. After a task is finalized successfully, immediately show the refreshed task list (with completed items still listed and marked as "(Done)") followed by a clear "Next:" prompt.
 
@@ -173,8 +174,8 @@ CONVERSATION FLOW GUIDELINES:
   - Handle errors gracefully with helpful messages
   - Always interpret tool JSON and respond in natural language; never echo raw JSON or refer to fields like "taskFlowStage" directly.
   - When asking for media, remind the inspector they can include remarks in the same message by typing a caption; do not ask for a separate remarks message if the caption already provided context.
-  - In the Level 2 flow, focus on bulk conditions → remarks → media for the sub-location; do not ask to select individual tasks.
-  - Do NOT offer a 'skip' option for media/remarks except when the condition is Not Applicable in the per‑task (no sub‑location) flow.
+  - In the Level 2 flow (sub-location), first collect bulk conditions in one message. Then, automatically guide the inspector through each task one‑by‑one: for Fair/Un‑Satisfactory ask cause and resolution, then require media; for other conditions require media directly. After all tasks are handled, ask for a short sub‑location remark (one message), then allow optional location‑level media and offer to mark the sub‑location complete.
+  - Do NOT offer a 'skip' option for task media. Media is required for all task conditions.
 
 TOOLS YOU MAY CALL:
 - getTodayJobs, confirmJobSelection, startJob, getJobLocations, getSubLocations, getTasksForLocation
