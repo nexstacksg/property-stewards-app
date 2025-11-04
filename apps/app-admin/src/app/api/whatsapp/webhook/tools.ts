@@ -696,10 +696,15 @@ You can omit any numbers you want to leave unset.`
             inspectorId = await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId)
           }
         }
-        // Create a new ItemEntry at item level, tagged in the remarks header with the sub-location name
+        // Upsert a single ItemEntry for this item+sub-location (shared across tasks)
         const prefix = subLocationName ? `[${subLocationName}] ` : ''
-        // Do not store cause/resolution at ItemEntry (location) level; keep them per-task in ChecklistTaskFinding
-        const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
+        let entry = await prisma.itemEntry.findFirst({ where: { itemId: contractChecklistItemId, locationId: subLocationId }, orderBy: { createdOn: 'desc' } })
+        if (entry) {
+          entry = await prisma.itemEntry.update({ where: { id: entry.id }, data: { remarks: `${prefix}${remarks}` } })
+        } else {
+          // Do not store cause/resolution at ItemEntry (location) level; keep them per-task in ChecklistTaskFinding
+          entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
+        }
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         if (sessionId) {
           await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
@@ -993,8 +998,17 @@ You can omit any numbers you want to leave unset.`
           let entryId = latest.currentTaskEntryId
           if (!entryId) {
             const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
-            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: locId, condition: (latest.currentTaskCondition as any) || undefined } as any })
-            entryId = created.id
+            // Prefer a single location-level entry (shared across tasks)
+            if (locId) {
+              const locationEntry = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, locationId: locId }, orderBy: { createdOn: 'desc' } })
+              if (locationEntry) {
+                entryId = locationEntry.id
+              }
+            }
+            if (!entryId) {
+              const created = await prisma.itemEntry.create({ data: { itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: (latest.currentTaskLocationId || latest.currentSubLocationId || undefined) as any, condition: (latest.currentTaskCondition as any) || undefined } as any })
+              entryId = created.id
+            }
           }
           try {
             const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId, taskId } } as any })
@@ -1025,16 +1039,22 @@ You can omit any numbers you want to leave unset.`
           // Ensure entry exists
           if (!entryId) {
             const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
-            const created = await prisma.itemEntry.create({
-              data: {
-                taskId,
-                itemId: taskItemId,
-                inspectorId: inspectorId || undefined,
-                locationId: locId,
-                condition: (latest.currentTaskCondition as any) || undefined,
-              } as any
-            })
-            entryId = created.id
+            // Prefer a single location-level entry (shared across tasks)
+            if (locId) {
+              const locationEntry = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, locationId: locId }, orderBy: { createdOn: 'desc' } })
+              if (locationEntry) entryId = locationEntry.id
+            }
+            if (!entryId) {
+              const created = await prisma.itemEntry.create({
+                data: {
+                  itemId: taskItemId,
+                  inspectorId: inspectorId || undefined,
+                  locationId: locId,
+                  condition: (latest.currentTaskCondition as any) || undefined,
+                } as any
+              })
+              entryId = created.id
+            }
           }
           // Upsert per-task finding details JSON with resolution
           try {
@@ -1077,8 +1097,15 @@ You can omit any numbers you want to leave unset.`
 
           if (!entryId) {
             const locId = session.currentTaskLocationId || session.currentSubLocationId || undefined
-            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId, locationId: locId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } as any })
-            entryId = created.id
+            // Prefer a single location-level entry (shared across tasks)
+            if (locId) {
+              const locationEntry = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, locationId: locId }, orderBy: { createdOn: 'desc' } })
+              if (locationEntry) entryId = locationEntry.id
+            }
+            if (!entryId) {
+              const created = await prisma.itemEntry.create({ data: { itemId: taskItemId, inspectorId, locationId: locId, condition: (session.currentTaskCondition as any) || undefined, remarks: shouldSkipRemarks ? null : remarks || null } as any })
+              entryId = created.id
+            }
           } else if (!shouldSkipRemarks) {
             await prisma.itemEntry.update({ where: { id: entryId }, data: { remarks } })
           }
