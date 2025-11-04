@@ -20,10 +20,6 @@ type Props = {
   setConditionsByTask: (next: Record<string, string>) => void
   remarkText: string
   setRemarkText: (v: string) => void
-  causeText: string
-  setCauseText: (v: string) => void
-  resolutionText: string
-  setResolutionText: (v: string) => void
   submitting: boolean
   formError: string | null
   onSubmit: React.FormEventHandler<HTMLFormElement>
@@ -37,6 +33,19 @@ type Props = {
   onMediaSelection: React.ChangeEventHandler<HTMLInputElement>
   onClearMedia: () => void
   mediaInputRef: RefObject<HTMLInputElement>
+  // Per-task media and details
+  taskPhotoFiles: Record<string, PendingMediaFile[]>
+  taskVideoFiles: Record<string, PendingMediaFile[]>
+  onTaskMediaSelection: (taskId: string, e: React.ChangeEvent<HTMLInputElement>) => void
+  onTaskMediaClear: (taskId: string) => void
+  updateTaskPhotoCaption: (taskId: string, index: number, caption: string) => void
+  updateTaskVideoCaption: (taskId: string, index: number, caption: string) => void
+  removeTaskPhotoAt: (taskId: string, index: number) => void
+  removeTaskVideoAt: (taskId: string, index: number) => void
+  taskCauseById: Record<string, string>
+  setTaskCauseById: (updater: (prev: Record<string, string>) => Record<string, string>) => void
+  taskResolutionById: Record<string, string>
+  setTaskResolutionById: (updater: (prev: Record<string, string>) => Record<string, string>) => void
 }
 
 export default function AddRemarkForm({
@@ -50,10 +59,6 @@ export default function AddRemarkForm({
   setConditionsByTask,
   remarkText,
   setRemarkText,
-  causeText,
-  setCauseText,
-  resolutionText,
-  setResolutionText,
   submitting,
   formError,
   onSubmit,
@@ -67,7 +72,20 @@ export default function AddRemarkForm({
   onMediaSelection,
   onClearMedia,
   mediaInputRef,
+  taskPhotoFiles,
+  taskVideoFiles,
+  onTaskMediaSelection,
+  onTaskMediaClear,
+  updateTaskPhotoCaption,
+  updateTaskVideoCaption,
+  removeTaskPhotoAt,
+  removeTaskVideoAt,
+  taskCauseById,
+  setTaskCauseById,
+  taskResolutionById,
+  setTaskResolutionById,
 }: Props) {
+  const needsCauseResolution = (cond: string | undefined) => cond === 'FAIR' || cond === 'UNSATISFACTORY'
   return (
     <form onSubmit={onSubmit} className="space-y-4 rounded-md border bg-background p-4 shadow-sm">
       {formError && <p className="text-sm text-destructive">{formError}</p>}
@@ -90,32 +108,170 @@ export default function AddRemarkForm({
           </select>
         </div>
         <div className="space-y-2 md:col-span-2">
-          <Label>Conditions for subtasks</Label>
+          <Label>Conditions & Findings</Label>
           {availableTasks.length === 0 ? (
             <p className="text-sm text-muted-foreground">No subtasks for this location.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <div className="flex flex-col gap-4 min-w-max">
-                {availableTasks.map((task) => (
-                  <div key={task.id} className="flex justify-between items-center gap-2">
-                    <span className="text-xs text-muted-foreground  truncate" title={task.name || 'Untitled subtask'}>
-                      {task.name || 'Untitled subtask'}
-                    </span>
-                    <select
-                      className="h-8 w-55 rounded-md border  text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-                      value={conditionsByTask[task.id] ?? ''}
-                      onChange={(e) => setConditionsByTask({ ...conditionsByTask, [task.id]: e.target.value })}
-                      disabled={submitting}
-                    >
-                      {CONDITION_OPTIONS.map((option) => (
-                        <option key={option.value || 'empty'} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+            <div className="space-y-3">
+              {availableTasks.map((task) => {
+                const cond = conditionsByTask[task.id] ?? ''
+                const tPhotos = taskPhotoFiles[task.id] || []
+                const tVideos = taskVideoFiles[task.id] || []
+                const cause = taskCauseById[task.id] || ''
+                const resolution = taskResolutionById[task.id] || ''
+                const inputId = `task-media-${itemId}-${task.id}`
+                return (
+                  <div key={task.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium truncate" title={task.name || 'Untitled subtask'}>
+                        {task.name || 'Untitled subtask'}
+                      </span>
+                      <select
+                        className="h-8 w-56 rounded-md border text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                        value={cond}
+                        onChange={(e) => setConditionsByTask({ ...conditionsByTask, [task.id]: e.target.value })}
+                        disabled={submitting}
+                      >
+                        {CONDITION_OPTIONS.map((option) => (
+                          <option key={option.value || 'empty'} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {needsCauseResolution(cond) ? (
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor={`task-cause-${task.id}`}>Cause</Label>
+                          <textarea
+                            id={`task-cause-${task.id}`}
+                            className="w-full min-h-[72px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                            value={cause}
+                            onChange={(e) => setTaskCauseById((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                            disabled={submitting}
+                            placeholder="Describe the suspected cause"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor={`task-resolution-${task.id}`}>Resolution</Label>
+                          <textarea
+                            id={`task-resolution-${task.id}`}
+                            className="w-full min-h-[72px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
+                            value={resolution}
+                            onChange={(e) => setTaskResolutionById((prev) => ({ ...prev, [task.id]: e.target.value }))}
+                            disabled={submitting}
+                            placeholder="Outline the recommended resolution"
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label>Attachments (task)</Label>
+                        <div className="flex items-center gap-2">
+                          {(tPhotos.length > 0 || tVideos.length > 0) && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onTaskMediaClear(task.id)}
+                              disabled={submitting}
+                              className="h-8 px-2 text-xs"
+                            >
+                              <X className="mr-1 h-3 w-3" />Clear all
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => document.getElementById(inputId)?.click()}
+                            disabled={submitting}
+                            title="Add photos or videos to this task"
+                          >
+                            <Upload className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{tPhotos.length} photo(s) • {tVideos.length} video(s)</p>
+                      <input
+                        id={inputId}
+                        type="file"
+                        multiple
+                        accept="image/*,video/*"
+                        className="hidden"
+                        onChange={(e) => onTaskMediaSelection(task.id, e)}
+                        disabled={submitting}
+                      />
+                      {(tPhotos.length > 0 || tVideos.length > 0) && (
+                        <div className="mt-2 space-y-2 text-sm">
+                          {tPhotos.map((entry, index) => (
+                            <div key={`tphoto-${task.id}-${index}-${entry.file.name}`} className="rounded border bg-background px-2 py-2 text-muted-foreground">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="truncate">Photo: {entry.file.name || `photo-${index + 1}`}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeTaskPhotoAt(task.id, index)}
+                                  className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  disabled={submitting}
+                                  aria-label={`Remove ${entry.file.name || 'photo'}`}
+                                >
+                                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                  <span className="sr-only">Remove file</span>
+                                </button>
+                              </div>
+                              <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`tphoto-caption-${task.id}-${index}`}>
+                                Caption (optional)
+                              </label>
+                              <input
+                                id={`tphoto-caption-${task.id}-${index}`}
+                                type="text"
+                                className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
+                                value={entry.caption}
+                                onChange={(event) => updateTaskPhotoCaption(task.id, index, event.target.value)}
+                                placeholder="Describe this photo"
+                                disabled={submitting}
+                              />
+                            </div>
+                          ))}
+                          {tVideos.map((entry, index) => (
+                            <div key={`tvideo-${task.id}-${index}-${entry.file.name}`} className="rounded border bg-background px-2 py-2 text-muted-foreground">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="truncate">Video: {entry.file.name || `video-${index + 1}`}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeTaskVideoAt(task.id, index)}
+                                  className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  disabled={submitting}
+                                  aria-label={`Remove ${entry.file.name || 'video'}`}
+                                >
+                                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                  <span className="sr-only">Remove file</span>
+                                </button>
+                              </div>
+                              <label className="mt-2 block text-xs text-muted-foreground" htmlFor={`tvideo-caption-${task.id}-${index}`}>
+                                Caption (optional)
+                              </label>
+                              <input
+                                id={`tvideo-caption-${task.id}-${index}`}
+                                type="text"
+                                className="mt-1 w-full rounded border px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-0 focus:border-gray-300"
+                                value={entry.caption}
+                                onChange={(event) => updateTaskVideoCaption(task.id, index, event.target.value)}
+                                placeholder="Describe this video"
+                                disabled={submitting}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ))}
-              </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -130,30 +286,6 @@ export default function AddRemarkForm({
           placeholder="Add context for this location"
           disabled={submitting}
         />
-      </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor={`cause-text-${itemId}`}>Cause</Label>
-          <textarea
-            id={`cause-text-${itemId}`}
-            className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-            value={causeText}
-            onChange={(event) => setCauseText(event.target.value)}
-            placeholder="Describe the suspected cause (optional)"
-            disabled={submitting}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`resolution-text-${itemId}`}>Resolution</Label>
-          <textarea
-            id={`resolution-text-${itemId}`}
-            className="w-full min-h-[80px] rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
-            value={resolutionText}
-            onChange={(event) => setResolutionText(event.target.value)}
-            placeholder="Outline the recommended resolution (optional)"
-            disabled={submitting}
-          />
-        </div>
       </div>
       <div className="space-y-3">
         <div className="space-y-2">
@@ -283,4 +415,3 @@ export default function AddRemarkForm({
     </form>
   )
 }
-

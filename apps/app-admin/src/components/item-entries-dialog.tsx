@@ -48,24 +48,32 @@ export default function ItemEntriesDialog({
   // Per-location: map subtask -> condition for bulk update
   const [conditionsByTask, setConditionsByTask] = useState<Record<string, string>>({})
   const [remarkText, setRemarkText] = useState<string>("")
-  const [causeText, setCauseText] = useState<string>("")
-  const [resolutionText, setResolutionText] = useState<string>("")
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
   const [photoFiles, setPhotoFiles] = useState<PendingMediaFile[]>([])
   const [videoFiles, setVideoFiles] = useState<PendingMediaFile[]>([])
+  // Per-task media and details
+  const [taskPhotoFiles, setTaskPhotoFiles] = useState<Record<string, PendingMediaFile[]>>({})
+  const [taskVideoFiles, setTaskVideoFiles] = useState<Record<string, PendingMediaFile[]>>({})
+  const [taskCauseById, setTaskCauseById] = useState<Record<string, string>>({})
+  const [taskResolutionById, setTaskResolutionById] = useState<Record<string, string>>({})
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [editingRemarkText, setEditingRemarkText] = useState<string>("")
   const [editingCondition, setEditingCondition] = useState<string>("")
   const [editingConditionsByTask, setEditingConditionsByTask] = useState<Record<string, string>>({})
   const [editingTasksForLocation, setEditingTasksForLocation] = useState<Task[]>([])
-  const [editingCauseText, setEditingCauseText] = useState<string>("")
-  const [editingResolutionText, setEditingResolutionText] = useState<string>("")
   const [editingError, setEditingError] = useState<string | null>(null)
   const [editingSubmitting, setEditingSubmitting] = useState(false)
   const [editingMediaCaptions, setEditingMediaCaptions] = useState<Record<string, string>>({})
+  const [editingFindingsByTask, setEditingFindingsByTask] = useState<Record<string, { condition: string; cause?: string; resolution?: string }>>({})
+  // Staged edit additions/deletions
+  const [editingAddedEntryPhotos, setEditingAddedEntryPhotos] = useState<PendingMediaFile[]>([])
+  const [editingAddedEntryVideos, setEditingAddedEntryVideos] = useState<PendingMediaFile[]>([])
+  const [editingAddedTaskPhotos, setEditingAddedTaskPhotos] = useState<Record<string, PendingMediaFile[]>>({})
+  const [editingAddedTaskVideos, setEditingAddedTaskVideos] = useState<Record<string, PendingMediaFile[]>>({})
+  const [editingDeletedMediaIds, setEditingDeletedMediaIds] = useState<string[]>([])
 
   useEffect(() => {
         setLocalEntries(entries)
@@ -159,11 +167,13 @@ export default function ItemEntriesDialog({
     setSelectedLocationId("")
     setConditionsByTask({})
     setRemarkText("")
-    setCauseText("")
-    setResolutionText("")
     setFormError(null)
     setPhotoFiles([])
     setVideoFiles([])
+    setTaskPhotoFiles({})
+    setTaskVideoFiles({})
+    setTaskCauseById({})
+    setTaskResolutionById({})
     if (mediaInputRef.current) mediaInputRef.current.value = ""
   }
 
@@ -171,11 +181,15 @@ export default function ItemEntriesDialog({
     setEditingEntryId(null)
     setEditingRemarkText("")
     setEditingCondition("")
-    setEditingCauseText("")
-    setEditingResolutionText("")
     setEditingError(null)
     setEditingSubmitting(false)
     setEditingMediaCaptions({})
+    setEditingFindingsByTask({})
+    setEditingAddedEntryPhotos([])
+    setEditingAddedEntryVideos([])
+    setEditingAddedTaskPhotos({})
+    setEditingAddedTaskVideos({})
+    setEditingDeletedMediaIds([])
   }
 
   const beginEditingEntry = (entry: DisplayEntry) => {
@@ -184,8 +198,6 @@ export default function ItemEntriesDialog({
     setEditingRemarkText(entry.remarks ?? "")
     const initialCondition = entry.condition ?? entry.task?.condition ?? "GOOD"
     setEditingCondition(initialCondition || "")
-    setEditingCauseText(entry.cause ?? "")
-    setEditingResolutionText(entry.resolution ?? "")
     setEditingError(null)
     const mediaCaptions: Record<string, string> = {}
     entry.media?.forEach((mediaItem) => {
@@ -207,6 +219,49 @@ export default function ItemEntriesDialog({
       setEditingConditionsByTask({})
       setEditingTasksForLocation([])
     }
+
+    // Initialize findings edit map from entry.findings
+    const nextFindings: Record<string, { condition: string; cause?: string; resolution?: string }> = {}
+    const fList = (entry as any)?.findings as any[] | undefined
+    if (Array.isArray(fList)) {
+      fList.forEach((f) => {
+        const details = (f?.details || {}) as any
+        const cnd = typeof details.condition === 'string' ? details.condition : ''
+        const cause = typeof details.cause === 'string' ? details.cause : undefined
+        const resolution = typeof details.resolution === 'string' ? details.resolution : undefined
+        if (f?.taskId) nextFindings[f.taskId] = { condition: cnd, cause, resolution }
+      })
+    }
+    setEditingFindingsByTask(nextFindings)
+  }
+
+  // Edit: staged add/delete handlers
+  const addEntryMedia = (files: File[]) => {
+    const photos: PendingMediaFile[] = []
+    const videos: PendingMediaFile[] = []
+    files.forEach((f) => {
+      if (f.type.startsWith('image/')) photos.push({ file: f, caption: '' })
+      else if (f.type.startsWith('video/')) videos.push({ file: f, caption: '' })
+    })
+    if (photos.length) setEditingAddedEntryPhotos((prev) => [...prev, ...photos])
+    if (videos.length) setEditingAddedEntryVideos((prev) => [...prev, ...videos])
+  }
+  const addFindingMedia = (taskId: string, files: File[]) => {
+    const photos: PendingMediaFile[] = []
+    const videos: PendingMediaFile[] = []
+    files.forEach((f) => {
+      if (f.type.startsWith('image/')) photos.push({ file: f, caption: '' })
+      else if (f.type.startsWith('video/')) videos.push({ file: f, caption: '' })
+    })
+    if (photos.length) setEditingAddedTaskPhotos((prev) => ({ ...prev, [taskId]: [ ...(prev[taskId] || []), ...photos ] }))
+    if (videos.length) setEditingAddedTaskVideos((prev) => ({ ...prev, [taskId]: [ ...(prev[taskId] || []), ...videos ] }))
+  }
+  const deleteExistingMedia = (mediaId: string) => {
+    setEditingDeletedMediaIds((prev) => (prev.includes(mediaId) ? prev : [...prev, mediaId]))
+    // Optimistically hide it in UI
+    setLocalEntries((prev) => prev.map((entry) => (
+      entry.id !== editingEntryId ? entry : { ...entry, media: (entry.media || []).filter((m: any) => m.id !== mediaId) as any }
+    )))
   }
 
   const handleUpdateRemark: React.FormEventHandler<HTMLFormElement> = async (event) => {
@@ -214,23 +269,10 @@ export default function ItemEntriesDialog({
     if (!editingEntryId) return
 
     const trimmedRemark = editingRemarkText.trim()
-    const trimmedCause = editingCauseText.trim()
-    const trimmedResolution = editingResolutionText.trim()
-    const normalizedCondition = editingCondition.trim().toUpperCase()
-
-    if (!normalizedCondition) {
-      setEditingError('Please select a status for this remark.')
-      return
-    }
-
-    const requiresRemark = normalizedCondition !== 'GOOD'
-      && normalizedCondition !== 'NOT_APPLICABLE'
-      && normalizedCondition !== 'UN_OBSERVABLE'
-
-    if (requiresRemark && trimmedRemark.length === 0) {
-      setEditingError('Remarks are required for this status.')
-      return
-    }
+    // Build findings payload from editingFindingsByTask (preferred)
+    const findings = Object.entries(editingFindingsByTask)
+      .map(([taskId, d]) => ({ taskId, condition: (d.condition || '').trim().toUpperCase(), cause: (d.cause || '').trim() || undefined, resolution: (d.resolution || '').trim() || undefined }))
+      .filter((f) => f.taskId && f.condition)
 
     const mediaUpdates: Array<{ id: string; caption: string | null }> = []
     const currentEntry = localEntries.find((entry) => entry.id === editingEntryId)
@@ -249,21 +291,34 @@ export default function ItemEntriesDialog({
     setEditingSubmitting(true)
     setEditingError(null)
     try {
-      const response = await fetch(`/api/checklist-items/remarks/${editingEntryId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          remark: trimmedRemark,
-          cause: trimmedCause,
-          resolution: trimmedResolution,
-          condition: normalizedCondition,
-          mediaUpdates,
-          // Bulk conditions for location-level remarks when provided
-          conditionsByTask: Object.entries(editingConditionsByTask)
-            .filter(([, c]) => (c || '').trim().length > 0)
-            .map(([taskId, condition]) => ({ taskId, condition })),
-        }),
-      })
+      // If we have staged files or deletions, use multipart; otherwise JSON
+      const hasAdds = editingAddedEntryPhotos.length + editingAddedEntryVideos.length + Object.values(editingAddedTaskPhotos).reduce((a, b) => a + b.length, 0) + Object.values(editingAddedTaskVideos).reduce((a, b) => a + b.length, 0)
+      const hasDeletes = editingDeletedMediaIds.length > 0
+      let response: Response
+      if (hasAdds || hasDeletes) {
+        const form = new FormData()
+        form.set('remark', trimmedRemark)
+        form.set('findings', JSON.stringify(findings))
+        form.set('mediaUpdates', JSON.stringify(mediaUpdates))
+        editingDeletedMediaIds.forEach((id) => form.append('deleteMediaIds', id))
+        // Entry-level adds
+        editingAddedEntryPhotos.forEach(({ file, caption }) => { form.append('photos', file); form.append('photoCaptions', caption || '') })
+        editingAddedEntryVideos.forEach(({ file, caption }) => { form.append('videos', file); form.append('videoCaptions', caption || '') })
+        // Task-level adds
+        Object.entries(editingAddedTaskPhotos).forEach(([taskId, files]) => {
+          files.forEach(({ file, caption }) => { form.append('taskPhotos', file); form.append('taskPhotoTaskIds', taskId); form.append('taskPhotoCaptions', caption || '') })
+        })
+        Object.entries(editingAddedTaskVideos).forEach(([taskId, files]) => {
+          files.forEach(({ file, caption }) => { form.append('taskVideos', file); form.append('taskVideoTaskIds', taskId); form.append('taskVideoCaptions', caption || '') })
+        })
+        response = await fetch(`/api/checklist-items/remarks/${editingEntryId}`, { method: 'PATCH', body: form })
+      } else {
+        response = await fetch(`/api/checklist-items/remarks/${editingEntryId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remark: trimmedRemark, findings, mediaUpdates }),
+        })
+      }
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
@@ -278,8 +333,6 @@ export default function ItemEntriesDialog({
           return {
             ...entry,
             remarks: typeof updated.remarks === 'string' ? updated.remarks : null,
-            cause: typeof updated.cause === 'string' ? updated.cause : null,
-            resolution: typeof updated.resolution === 'string' ? updated.resolution : null,
             condition: typeof updated.condition === 'string' ? updated.condition : updated.condition ?? null,
             includeInReport: typeof updated.includeInReport === 'boolean' ? updated.includeInReport : entry.includeInReport,
             inspector: updated.inspector ?? entry.inspector,
@@ -290,20 +343,11 @@ export default function ItemEntriesDialog({
         })
       )
 
-      // Update in-memory subtask conditions after bulk edit
-      if (Object.keys(editingConditionsByTask).length > 0) {
-        setLocalTasks((prev) => prev.map((task) => ({ ...task, condition: editingConditionsByTask[task.id] ?? task.condition })))
-      }
-
-      if (updated.task) {
-        const updatedTask = updated.task
-        setLocalTasks((prev) =>
-          prev.map((task) =>
-            task.id === updatedTask.id
-              ? { ...task, condition: updatedTask.condition ?? null }
-              : task
-          )
-        )
+      // Update in-memory subtask conditions from findings
+      if (findings.length > 0) {
+        const mapCond: Record<string, string> = {}
+        findings.forEach((f) => { mapCond[f.taskId] = f.condition })
+        setLocalTasks((prev) => prev.map((task) => ({ ...task, condition: mapCond[task.id] ?? task.condition })))
       }
 
       router.refresh()
@@ -367,6 +411,49 @@ export default function ItemEntriesDialog({
     setVideoFiles((prev) => prev.filter((_, i) => i !== index))
   }
 
+  // Per-task media handlers
+  const onTaskMediaSelection = (taskId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || [])
+    if (files.length === 0) return
+    const newPhotos: PendingMediaFile[] = []
+    const newVideos: PendingMediaFile[] = []
+    files.forEach((file) => {
+      if (file.type.startsWith('image/')) newPhotos.push({ file, caption: '' })
+      else if (file.type.startsWith('video/')) newVideos.push({ file, caption: '' })
+    })
+    if (newPhotos.length > 0) setTaskPhotoFiles((prev) => ({ ...prev, [taskId]: [...(prev[taskId] || []), ...newPhotos] }))
+    if (newVideos.length > 0) setTaskVideoFiles((prev) => ({ ...prev, [taskId]: [...(prev[taskId] || []), ...newVideos] }))
+    event.target.value = ''
+  }
+  const onTaskMediaClear = (taskId: string) => {
+    setTaskPhotoFiles((prev) => ({ ...prev, [taskId]: [] }))
+    setTaskVideoFiles((prev) => ({ ...prev, [taskId]: [] }))
+  }
+  const updateTaskPhotoCaption = (taskId: string, index: number, caption: string) => {
+    setTaskPhotoFiles((prev) => ({
+      ...prev,
+      [taskId]: (prev[taskId] || []).map((e, i) => (i === index ? { ...e, caption } : e))
+    }))
+  }
+  const updateTaskVideoCaption = (taskId: string, index: number, caption: string) => {
+    setTaskVideoFiles((prev) => ({
+      ...prev,
+      [taskId]: (prev[taskId] || []).map((e, i) => (i === index ? { ...e, caption } : e))
+    }))
+  }
+  const removeTaskPhotoAt = (taskId: string, index: number) => {
+    setTaskPhotoFiles((prev) => ({
+      ...prev,
+      [taskId]: (prev[taskId] || []).filter((_, i) => i !== index)
+    }))
+  }
+  const removeTaskVideoAt = (taskId: string, index: number) => {
+    setTaskVideoFiles((prev) => ({
+      ...prev,
+      [taskId]: (prev[taskId] || []).filter((_, i) => i !== index)
+    }))
+  }
+
   const handleSaveRemark: React.FormEventHandler<HTMLFormElement> = async (event) => {
     event.preventDefault()
     if (!selectedLocationId) {
@@ -375,26 +462,44 @@ export default function ItemEntriesDialog({
     }
 
     const trimmedRemark = remarkText.trim()
-    const trimmedCause = causeText.trim()
-    const trimmedResolution = resolutionText.trim()
 
     const selectedConditions = Object.values(conditionsByTask)
     if (selectedConditions.length === 0) {
       setFormError('No subtasks found for this location.')
       return
     }
+    // Ensure every task has a selected condition
+    const allHaveCondition = availableTasks.every((t) => (conditionsByTask[t.id] || '').trim().length > 0)
+    if (!allHaveCondition) {
+      setFormError('Please select a condition for each subtask.')
+      return
+    }
     const requiresRemark = selectedConditions.some((c) => c && c !== 'GOOD' && c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
-    const requiresPhoto = selectedConditions.some((c) => c && c !== 'NOT_APPLICABLE' && c !== 'UN_OBSERVABLE')
     const hasPhotos = photoFiles.length > 0
-
     if (!trimmedRemark && (requiresRemark || hasPhotos)) {
-      setFormError('Remarks are required for this status and whenever photos are attached.')
+      setFormError('Remarks are required when status is not GOOD, or when photos are attached.')
       return
     }
 
-    if (requiresPhoto && !hasPhotos) {
-      setFormError('Please attach at least one photo for this status.')
-      return
+    // Enforce per-task media and cause/resolution rules
+    for (const task of availableTasks) {
+      const cond = (conditionsByTask[task.id] || '').trim().toUpperCase()
+      if (!cond) continue
+      const tPhotos = taskPhotoFiles[task.id] || []
+      const tVideos = taskVideoFiles[task.id] || []
+      const total = tPhotos.length + tVideos.length
+      if (total === 0) {
+        setFormError('Each subtask condition requires at least one media file.')
+        return
+      }
+      if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
+        const c = (taskCauseById[task.id] || '').trim()
+        const r = (taskResolutionById[task.id] || '').trim()
+        if (!c || !r) {
+          setFormError('Cause and resolution are required for FAIR or UNSATISFACTORY conditions.')
+          return
+        }
+      }
     }
 
     setSubmitting(true)
@@ -403,16 +508,16 @@ export default function ItemEntriesDialog({
       const formData = new FormData()
       formData.set("locationId", selectedLocationId)
       formData.set("workOrderId", workOrderId)
-      const condArray = Object.entries(conditionsByTask).map(([taskId, condition]) => ({ taskId, condition }))
-      formData.set('conditionsByTask', JSON.stringify(condArray))
+      // Preferred payload: findings with per-task condition/cause/resolution
+      const findings = availableTasks.map((t) => ({
+        taskId: t.id,
+        condition: (conditionsByTask[t.id] || '').trim().toUpperCase(),
+        cause: (taskCauseById[t.id] || '').trim() || undefined,
+        resolution: (taskResolutionById[t.id] || '').trim() || undefined,
+      }))
+      formData.set('findings', JSON.stringify(findings))
       if (trimmedRemark.length > 0) {
         formData.set("remark", trimmedRemark)
-      }
-      if (trimmedCause.length > 0) {
-        formData.set('cause', trimmedCause)
-      }
-      if (trimmedResolution.length > 0) {
-        formData.set('resolution', trimmedResolution)
       }
       photoFiles.forEach(({ file, caption }) => {
         formData.append('photos', file)
@@ -422,6 +527,22 @@ export default function ItemEntriesDialog({
         formData.append('videos', file)
         formData.append('videoCaptions', caption || '')
       })
+
+      // Per-task media batches, aligned arrays
+      for (const task of availableTasks) {
+        const tPhotos = taskPhotoFiles[task.id] || []
+        const tVideos = taskVideoFiles[task.id] || []
+        tPhotos.forEach(({ file, caption }) => {
+          formData.append('taskPhotos', file)
+          formData.append('taskPhotoTaskIds', task.id)
+          formData.append('taskPhotoCaptions', caption || '')
+        })
+        tVideos.forEach(({ file, caption }) => {
+          formData.append('taskVideos', file)
+          formData.append('taskVideoTaskIds', task.id)
+          formData.append('taskVideoCaptions', caption || '')
+        })
+      }
 
       const response = await fetch(`/api/checklist-items/${itemId}/remarks`, {
         method: "POST",
@@ -583,10 +704,6 @@ export default function ItemEntriesDialog({
               setConditionsByTask={(next) => setConditionsByTask(next)}
               remarkText={remarkText}
               setRemarkText={(v) => setRemarkText(v)}
-              causeText={causeText}
-              setCauseText={(v) => setCauseText(v)}
-              resolutionText={resolutionText}
-              setResolutionText={(v) => setResolutionText(v)}
               submitting={submitting}
               formError={formError}
               onSubmit={handleSaveRemark}
@@ -600,6 +717,18 @@ export default function ItemEntriesDialog({
               onMediaSelection={handleMediaSelection}
               onClearMedia={handleClearMedia}
               mediaInputRef={mediaInputRef}
+              taskPhotoFiles={taskPhotoFiles}
+              taskVideoFiles={taskVideoFiles}
+              onTaskMediaSelection={onTaskMediaSelection}
+              onTaskMediaClear={onTaskMediaClear}
+              updateTaskPhotoCaption={updateTaskPhotoCaption}
+              updateTaskVideoCaption={updateTaskVideoCaption}
+              removeTaskPhotoAt={removeTaskPhotoAt}
+              removeTaskVideoAt={removeTaskVideoAt}
+              taskCauseById={taskCauseById}
+              setTaskCauseById={(updater) => setTaskCauseById((prev) => updater(prev))}
+              taskResolutionById={taskResolutionById}
+              setTaskResolutionById={(updater) => setTaskResolutionById((prev) => updater(prev))}
             />
           ) : null}
 
@@ -627,10 +756,6 @@ export default function ItemEntriesDialog({
                     setEditingCondition={setEditingCondition}
                     editingRemarkText={editingRemarkText}
                     setEditingRemarkText={setEditingRemarkText}
-                    editingCauseText={editingCauseText}
-                    setEditingCauseText={setEditingCauseText}
-                    editingResolutionText={editingResolutionText}
-                    setEditingResolutionText={setEditingResolutionText}
                     editingMediaCaptions={editingMediaCaptions}
                     setEditingMediaCaptions={setEditingMediaCaptions}
                     editingError={editingError}
@@ -638,6 +763,19 @@ export default function ItemEntriesDialog({
                     editingTasksForLocation={editingTasksForLocation}
                     editingConditionsByTask={editingConditionsByTask}
                     setEditingConditionsByTask={setEditingConditionsByTask}
+                    editingFindingsByTask={editingFindingsByTask}
+                    setEditingFindingsByTask={(updater) => setEditingFindingsByTask((prev) => updater(prev))}
+                    onAddEntryMedia={addEntryMedia}
+                    onAddFindingMedia={addFindingMedia}
+                    onDeleteMedia={deleteExistingMedia}
+                    editingAddedEntryPhotos={editingAddedEntryPhotos}
+                    editingAddedEntryVideos={editingAddedEntryVideos}
+                    setEditingAddedEntryPhotos={(updater) => setEditingAddedEntryPhotos((prev) => updater(prev))}
+                    setEditingAddedEntryVideos={(updater) => setEditingAddedEntryVideos((prev) => updater(prev))}
+                    editingAddedTaskPhotos={editingAddedTaskPhotos}
+                    editingAddedTaskVideos={editingAddedTaskVideos}
+                    setEditingAddedTaskPhotos={(updater) => setEditingAddedTaskPhotos((prev) => updater(prev))}
+                    setEditingAddedTaskVideos={(updater) => setEditingAddedTaskVideos((prev) => updater(prev))}
                   />
                 )
               })}
