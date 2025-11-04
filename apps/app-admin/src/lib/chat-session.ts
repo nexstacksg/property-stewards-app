@@ -61,6 +61,12 @@ export type ChatSessionState = {
   pendingMediaUploads?: PendingMediaUpload[]
   locationSubLocations?: Record<string, Array<{ id: string; name: string; status: string }>> // keyed by ContractChecklistItem ID
 
+  // Guided per-task follow-up queue for a location/sub-location
+  // When conditions are set for multiple tasks, we iterate 1-by-1 to
+  // capture cause/resolution (if required) and media for each task.
+  pendingTaskQueue?: string[]
+  pendingTaskIndex?: number
+
   // assistant/thread context
   threadId?: string
 

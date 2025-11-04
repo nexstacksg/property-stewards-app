@@ -147,7 +147,7 @@ export async function saveMediaForItem(itemId: string, inspectorId: string | nul
 }
 
 // Utility: append media to an existing item entry (per task)
-export async function saveMediaToItemEntry(entryId: string, publicUrl: string, mediaType: 'photo' | 'video', caption?: string) {
+export async function saveMediaToItemEntry(entryId: string, publicUrl: string, mediaType: 'photo' | 'video', caption?: string, taskIdForMedia?: string | null) {
   const entry = await prisma.itemEntry.update({
     where: { id: entryId },
     data: mediaType === 'photo'
@@ -161,6 +161,7 @@ export async function saveMediaToItemEntry(entryId: string, publicUrl: string, m
     await prisma.itemEntryMedia.create({
       data: {
         entryId,
+        taskId: (taskIdForMedia || entry.taskId) || undefined,
         url: publicUrl,
         caption: caption && caption.trim().length > 0 ? caption.trim() : null,
         type: mediaType === 'photo' ? 'PHOTO' : 'VIDEO',
