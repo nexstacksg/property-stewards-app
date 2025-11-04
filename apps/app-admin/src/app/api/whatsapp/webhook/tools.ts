@@ -513,6 +513,25 @@ You can omit any numbers you want to leave unset.`
         if (!workOrderId || !contractChecklistItemId || !subLocationId || !conditionsText) {
           return JSON.stringify({ success: false, error: 'Missing required parameters' })
         }
+        // Ensure a single location-level ItemEntry exists for this item+subLocation so
+        // per-task findings (including GOOD/UN_OBSERVABLE/NOT_APPLICABLE) can be attached.
+        let locationEntryId: string | null = null
+        try {
+          let inspectorId: string | null = null
+          if (sessionId) {
+            const s = await getSessionState(sessionId)
+            inspectorId = s?.inspectorId || null
+          }
+          const existingEntry = await prisma.itemEntry.findFirst({ where: { itemId: contractChecklistItemId, locationId: subLocationId }, orderBy: { createdOn: 'desc' } })
+          if (existingEntry) {
+            locationEntryId = existingEntry.id
+          } else {
+            const created = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, locationId: subLocationId, inspectorId: inspectorId || undefined } as any })
+            locationEntryId = created.id
+          }
+        } catch (e) {
+          console.error('setSubLocationConditions: failed to ensure location entry', e)
+        }
         // Load tasks for that sub-location in stable order
         const tasks = await prisma.checklistTask.findMany({
           where: { locationId: subLocationId },
@@ -580,6 +599,20 @@ You can omit any numbers you want to leave unset.`
             updates.push({ number: i, taskId: t.id, name: t.name, condition: cond })
           }
           i++
+        }
+        // Upsert per-task findings (store at least the condition) under the single location entry
+        if (locationEntryId) {
+          for (const u of updates) {
+            try {
+              const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: locationEntryId, taskId: u.taskId } } as any })
+              const base = existing?.details && typeof existing.details === 'object' ? (existing.details as any) : {}
+              const next = { ...base, condition: u.condition }
+              if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId: locationEntryId, taskId: u.taskId } } as any, data: { details: next } })
+              else await prisma.checklistTaskFinding.create({ data: { entryId: locationEntryId, taskId: u.taskId, details: next } })
+            } catch (e) {
+              console.error('setSubLocationConditions: failed to upsert finding for task', u.taskId, e)
+            }
+          }
         }
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         // Build a per-task queue to collect details + media 1-by-1
@@ -922,6 +955,16 @@ You can omit any numbers you want to leave unset.`
             const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'media'
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
             dbg('completeTask:set_condition', { taskId, condition, nextStage })
+            // Ensure a per-task finding exists with at least the condition
+            try {
+              if (entryId && taskId) {
+                const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId, taskId } } as any })
+                const base = existing?.details && typeof existing.details === 'object' ? (existing.details as any) : {}
+                const next = { ...base, condition }
+                if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId, taskId } } as any, data: { details: next } })
+                else await prisma.checklistTaskFinding.create({ data: { entryId, taskId, details: next } })
+              }
+            } catch (e) { console.error('completeTask:set_condition upsert finding failed', e) }
             if (nextStage === 'cause') {
               return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please send BOTH in one message using either format:\n• 1: <cause>\n  2: <resolution>\n• Cause: <your cause>\n  Resolution: <your resolution>' })
             }
