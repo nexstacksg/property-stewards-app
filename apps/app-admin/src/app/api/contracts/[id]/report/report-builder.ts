@@ -181,15 +181,6 @@ function appendSignOffSection(doc: any, contract: any) {
     // Title
     doc.font('Helvetica-Bold').fontSize(10)
     doc.text('Remarks', remarksX + 10, remarksY + 8, { width: remarksWidth - 20 })
-
-    // Guide lines for handwriting/notes
-    const lineLeft = remarksX + 10
-    const lineRight = remarksX + remarksWidth - 10
-    let lineY = remarksY + 26
-    while (lineY < remarksY + remarksHeight - 12) {
-      doc.moveTo(lineLeft, lineY).lineTo(lineRight, lineY).stroke()
-      lineY += 18
-    }
   } finally {
     doc.restore()
   }
