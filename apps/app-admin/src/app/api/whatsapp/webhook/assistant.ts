@@ -79,7 +79,6 @@ function filterToolsByNames(names: string[]) {
 }
 
 // Legacy compatibility no-ops
-export function getCachedThreadId(phone: string) { return phone }
 export async function postAssistantMessageIfThread(phone: string, content: string) {
   const hist = await loadHistory(phone)
   hist.push({ role: 'assistant', content })
@@ -391,8 +390,17 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }, undefined, phoneNumber)
           let data: any = null
           try { data = JSON.parse(out) } catch {}
-          if (data?.success) {
-            return data.message || 'Conditions updated. If any item is Fair or Un-Satisfactory, please provide the cause and resolution in ONE message (e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."). Otherwise, please enter the remarks for this sub-location.'
+        if (data?.success) {
+            return (
+              data.message || [
+                'Conditions updated.',
+                'If any item is Fair or Un‑Satisfactory, please provide BOTH cause and resolution in ONE message:',
+                '1: <cause>  2: <resolution>',
+                'Cause: <your cause>  Resolution: <your resolution>',
+                '',
+                'Otherwise, please enter the remarks for this sub‑location.'
+              ].join('\\n')
+            )
           }
           // If parsing failed, show helpful hint
           return 'I could not detect valid conditions. Please reply like "1 Good, 2 Good, 3 Fair" or "Good Good Fair".'
@@ -414,7 +422,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
           return 'I could not save those remarks. Please try again.'
         }
-        // Cause text (sub-location or per-task)
+        // Cause+Resolution combined (sub-location or per-task)
         if (meta.taskFlowStage === 'cause' && raw && !numAny) {
           if (meta.currentSubLocationId && !meta.currentTaskId) {
             // Try combined cause+resolution first
@@ -430,6 +438,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             try { data = JSON.parse(out) } catch {}
             if (data?.success) return data?.message || 'Thanks. Please provide the resolution (you can also send both in one message as "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ...").'
           } else {
+            // Per-task: prefer combined message first
+            {
+              const both = await executeTool('completeTask', { phase: 'set_cause_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, text: raw }, undefined, phoneNumber)
+              let j: any = null
+              try { j = JSON.parse(both) } catch {}
+              if (j?.success) return j?.message || 'Thanks. Cause and resolution saved. Please send photos/videos for this task (media is required).'
+            }
             const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
             let data: any = null
             try { data = JSON.parse(out) } catch {}
@@ -467,6 +482,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         if (meta.taskFlowStage === 'media' && meta.currentTaskId && (lower === 'skip' || lower === 'no')) {
           return 'Media is required for this task. Please send at least one photo or video.'
         }
+        // Sub-location media skip: allow skipping location-level media and proceed to completion prompt
+        if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && (lower === 'skip' || lower === 'no')) {
+          const whereName = meta.currentSubLocationName || meta.currentLocation || 'this sub-location'
+          return `Okay, skipping media for ${whereName}.\n\nReply [1] to mark this sub-location complete, or [2] to add more photos/videos.`
+        }
         // Sub-location media confirmation: [1] complete sub-location, [2] keep adding
         if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && numAny) {
           const pick = Number(numAny[1])
@@ -503,14 +523,32 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             let f: any = null
             try { f = JSON.parse(finalize) } catch {}
             if (!f?.success && typeof f?.error === 'string') {
-              return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
+              const err = String(f.error)
+              if (/cause and resolution/i.test(err)) {
+                return [
+                  err,
+                  '',
+                  'Please send BOTH in one message using either format:',
+                  '1: <cause>  2: <resolution>',
+                  'Cause: <your cause>  Resolution: <your resolution>'
+                ].join('\\n')
+              }
+              if (/media is required/i.test(err)) {
+                return 'Media is required for this task. Please send at least one photo or video.'
+              }
+              return err
             }
             // If the tool returned a nextTask (queued per-task follow-up), continue with it
             if (f?.nextTask && f.nextTask.id) {
               const name = f.nextTask.name || 'the next task'
               const cond = String(f.nextTask.condition || '').toUpperCase()
               if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
-                return `Next: ${name} requires details. Please provide the cause for this issue.`
+                return [
+                  `Next: ${name} requires details.`,
+                  'Please send BOTH in one message using either format:',
+                  '1: <cause>  2: <resolution>',
+                  'Cause: <your cause>  Resolution: <your resolution>'
+                ].join('\\n')
               }
               return `Next: ${name} — please send photos/videos (media is required for all conditions).`
             }
@@ -819,11 +857,12 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           ].join('\n')
         }
         // If awaiting cause/resolution text, keep their text; otherwise re-prompt
-        if (meta?.taskFlowStage === 'cause') {
-          return 'Please describe the cause for this issue (a short sentence is fine).'
-        }
-        if (meta?.taskFlowStage === 'resolution') {
-          return 'Please describe the resolution (a short sentence is fine).'
+        if (meta?.taskFlowStage === 'cause' || meta?.taskFlowStage === 'resolution') {
+          return [
+            'Please send BOTH in one message using either format:',
+            '1: <cause>  2: <resolution>',
+            'Cause: <your cause>  Resolution: <your resolution>'
+          ].join('\\n')
         }
         // If in job confirmation
         if (meta?.jobStatus === 'confirming' || meta?.lastMenu === 'confirm') {

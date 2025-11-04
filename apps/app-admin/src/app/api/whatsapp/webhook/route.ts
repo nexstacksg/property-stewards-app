@@ -177,4 +177,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// fast-path helpers exist in ./fast-path.ts but are intentionally not used here
+// Note: deprecated fast-path helpers removed; this route always uses assistant.ts
