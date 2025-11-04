@@ -276,9 +276,20 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
         try {
           const cond = (metadata.currentTaskCondition || '').toUpperCase()
           if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
-            const entry = await prisma.itemEntry.findUnique({ where: { id: currentTaskEntryId }, select: { cause: true, resolution: true } })
-            const cause = (entry?.cause || metadata.pendingTaskCause || '').trim()
-            const resolution = (entry?.resolution || metadata.pendingTaskResolution || '').trim()
+            // Prefer ChecklistTaskFinding.details over ItemEntry fields
+            let cause = (metadata.pendingTaskCause || '').trim()
+            let resolution = (metadata.pendingTaskResolution || '').trim()
+            try {
+              const finding = await prisma.checklistTaskFinding.findUnique({
+                where: { entryId_taskId: { entryId: currentTaskEntryId, taskId: activeTaskId! } } as any,
+                select: { details: true }
+              })
+              const det = finding?.details && typeof finding.details === 'object' ? (finding.details as any) : null
+              if (det) {
+                if (!cause && typeof det.cause === 'string') cause = det.cause.trim()
+                if (!resolution && typeof det.resolution === 'string') resolution = det.resolution.trim()
+              }
+            } catch {}
             if (cause || resolution) crLine = `\n📝 Cause: ${cause || '-'} | Resolution: ${resolution || '-'}`
           }
         } catch {}
