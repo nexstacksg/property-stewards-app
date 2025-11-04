@@ -14,6 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, Loader2, Save, User, MapPin } from "lucide-react"
 import { DatePicker } from "@/components/ui/date-picker"
+import { fromInstantToBusinessDateTimeParts, toBusinessZonedISOString } from "@/lib/client-time"
 
 interface WorkOrder {
   id: string
@@ -114,25 +115,25 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
       const workOrder: WorkOrder = await response.json()
       
       // Parse dates and times
-      const scheduledStart = new Date(workOrder.scheduledStartDateTime)
-      const scheduledEnd = new Date(workOrder.scheduledEndDateTime)
+      const startParts = fromInstantToBusinessDateTimeParts(workOrder.scheduledStartDateTime)
+      const endParts = fromInstantToBusinessDateTimeParts(workOrder.scheduledEndDateTime)
       
       setInspectorIds((workOrder.inspectors || []).map(i => i.id))
-      setScheduledStartDate(scheduledStart.toISOString().split('T')[0])
-      setScheduledStartTime(scheduledStart.toTimeString().slice(0, 5))
-      setScheduledEndDate(scheduledEnd.toISOString().split('T')[0])
-      setScheduledEndTime(scheduledEnd.toTimeString().slice(0, 5))
+      setScheduledStartDate(startParts.date)
+      setScheduledStartTime(startParts.time)
+      setScheduledEndDate(endParts.date)
+      setScheduledEndTime(endParts.time)
       
       if (workOrder.actualStart) {
-        const actualStart = new Date(workOrder.actualStart)
-        setActualStartDate(actualStart.toISOString().split('T')[0])
-        setActualStartTime(actualStart.toTimeString().slice(0, 5))
+        const parts = fromInstantToBusinessDateTimeParts(workOrder.actualStart)
+        setActualStartDate(parts.date)
+        setActualStartTime(parts.time)
       }
       
       if (workOrder.actualEnd) {
-        const actualEnd = new Date(workOrder.actualEnd)
-        setActualEndDate(actualEnd.toISOString().split('T')[0])
-        setActualEndTime(actualEnd.toTimeString().slice(0, 5))
+        const parts = fromInstantToBusinessDateTimeParts(workOrder.actualEnd)
+        setActualEndDate(parts.date)
+        setActualEndTime(parts.time)
       }
       
       setStatus(workOrder.status)
@@ -168,17 +169,17 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
 
     try {
       // Combine dates and times
-      const scheduledStartDateTime = new Date(`${scheduledStartDate}T${scheduledStartTime}:00`)
-      const scheduledEndDateTime = new Date(`${scheduledEndDate}T${scheduledEndTime}:00`)
+      const scheduledStartIso = toBusinessZonedISOString(scheduledStartDate, scheduledStartTime)
+      const scheduledEndIso = toBusinessZonedISOString(scheduledEndDate, scheduledEndTime)
       
-      let actualStart = null
+      let actualStart = null as string | null
       if (actualStartDate && actualStartTime) {
-        actualStart = new Date(`${actualStartDate}T${actualStartTime}:00`).toISOString()
+        actualStart = toBusinessZonedISOString(actualStartDate, actualStartTime)
       }
       
-      let actualEnd = null
+      let actualEnd = null as string | null
       if (actualEndDate && actualEndTime) {
-        actualEnd = new Date(`${actualEndDate}T${actualEndTime}:00`).toISOString()
+        actualEnd = toBusinessZonedISOString(actualEndDate, actualEndTime)
       }
 
       const response = await fetch(`/api/work-orders/${workOrderId}`, {
@@ -186,8 +187,8 @@ export default function EditWorkOrderPage({ params }: { params: Promise<{ id: st
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           inspectorIds,
-          scheduledStartDateTime: scheduledStartDateTime.toISOString(),
-          scheduledEndDateTime: scheduledEndDateTime.toISOString(),
+          scheduledStartDateTime: scheduledStartIso,
+          scheduledEndDateTime: scheduledEndIso,
           actualStart,
           actualEnd,
           status,
