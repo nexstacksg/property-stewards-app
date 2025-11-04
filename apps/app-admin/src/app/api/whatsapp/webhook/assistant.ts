@@ -414,7 +414,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           }
           return 'I could not save those remarks. Please try again.'
         }
-        // Cause text (sub-location or per-task)
+        // Cause+Resolution combined (sub-location or per-task)
         if (meta.taskFlowStage === 'cause' && raw && !numAny) {
           if (meta.currentSubLocationId && !meta.currentTaskId) {
             // Try combined cause+resolution first
@@ -430,6 +430,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             try { data = JSON.parse(out) } catch {}
             if (data?.success) return data?.message || 'Thanks. Please provide the resolution (you can also send both in one message as "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ...").'
           } else {
+            // Per-task: prefer combined message first
+            {
+              const both = await executeTool('completeTask', { phase: 'set_cause_resolution', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, text: raw }, undefined, phoneNumber)
+              let j: any = null
+              try { j = JSON.parse(both) } catch {}
+              if (j?.success) return j?.message || 'Thanks. Cause and resolution saved. Please send photos/videos for this task (media is required).'
+            }
             const out = await executeTool('completeTask', { phase: 'set_cause', workOrderId: meta.workOrderId, taskId: meta.currentTaskId, cause: raw }, undefined, phoneNumber)
             let data: any = null
             try { data = JSON.parse(out) } catch {}
@@ -466,6 +473,11 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         // Media is required for all task conditions in the new flow; no skip allowed
         if (meta.taskFlowStage === 'media' && meta.currentTaskId && (lower === 'skip' || lower === 'no')) {
           return 'Media is required for this task. Please send at least one photo or video.'
+        }
+        // Sub-location media skip: allow skipping location-level media and proceed to completion prompt
+        if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && (lower === 'skip' || lower === 'no')) {
+          const whereName = meta.currentSubLocationName || meta.currentLocation || 'this sub-location'
+          return `Okay, skipping media for ${whereName}.\n\nReply [1] to mark this sub-location complete, or [2] to add more photos/videos.`
         }
         // Sub-location media confirmation: [1] complete sub-location, [2] keep adding
         if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && numAny) {
