@@ -114,19 +114,14 @@ async function getWorkOrder(id: string) {
   return workOrder
 }
 
+import { formatDateLocal, formatDateTimeLocal } from "@/lib/time"
+
 function formatDate(date: Date | string | null) {
-  if (!date) return 'N/A'
-  return new Date(date).toLocaleDateString('en-SG', {
-    dateStyle: 'medium'
-  })
+  return formatDateLocal(date)
 }
 
 function formatDateTime(date: Date | string | null) {
-  if (!date) return 'N/A'
-  return new Date(date).toLocaleString('en-SG', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  })
+  return formatDateTimeLocal(date)
 }
 
 function getWorkOrderStatusVariant(status: string): any {

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import { formatDateLocal, formatDateTimeLocal } from "@/lib/time"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -69,18 +70,11 @@ async function getInspector(id: string) {
 }
 
 function formatDate(date: Date | string | null) {
-  if (!date) return 'N/A'
-  return new Date(date).toLocaleDateString('en-SG', {
-    dateStyle: 'medium'
-  })
+  return formatDateLocal(date)
 }
 
 function formatDateTime(date: Date | string | null) {
-  if (!date) return 'N/A'
-  return new Date(date).toLocaleString('en-SG', {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  })
+  return formatDateTimeLocal(date)
 }
 
 function getWorkOrderStatusVariant(status: string): any {

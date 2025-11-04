@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useEffect, useMemo, useState } from "react"
+import { BUSINESS_TZ } from "@/lib/client-time"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -156,7 +157,8 @@ export default function WorkOrdersPage() {
     return new Intl.DateTimeFormat('en-SG', {
       day: 'numeric',
       month: 'short',
-      year: 'numeric'
+      year: 'numeric',
+      timeZone: BUSINESS_TZ,
     }).format(date)
   }
 
@@ -165,7 +167,8 @@ export default function WorkOrdersPage() {
     return new Intl.DateTimeFormat('en-SG', {
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true
+      hour12: true,
+      timeZone: BUSINESS_TZ,
     }).format(date).toLowerCase()
   }
 

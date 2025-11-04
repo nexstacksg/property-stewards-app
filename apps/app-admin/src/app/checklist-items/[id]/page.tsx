@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { formatDateLocal, formatDateTimeLocal } from '@/lib/time'
 import Link from 'next/link'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -17,13 +18,11 @@ import {
 } from 'lucide-react'
 
 function formatDate(value: Date | string | null | undefined) {
-  if (!value) return 'N/A'
-  return new Date(value).toLocaleDateString('en-SG', { dateStyle: 'medium' })
+  return formatDateLocal(value)
 }
 
 function formatDateTime(value: Date | string | null | undefined) {
-  if (!value) return 'N/A'
-  return new Date(value).toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short' })
+  return formatDateTimeLocal(value)
 }
 
 async function getChecklistItem(id: string) {
