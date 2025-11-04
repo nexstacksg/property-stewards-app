@@ -241,15 +241,18 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
   if (isTaskFlowMedia && (activeTaskId || currentTaskEntryId)) {
     try {
       if (!currentTaskEntryId && activeTaskItemId) {
-        if (resolvedInspectorId) {
+        const locId = currentSubLocationId || activeTaskLocationId || undefined
+        // Prefer single location-level entry (shared across tasks) when sub-location context exists
+        if (locId) {
+          const locationEntry = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, locationId: locId }, orderBy: { createdOn: 'desc' } })
+          if (locationEntry) currentTaskEntryId = locationEntry.id
+        }
+        if (!currentTaskEntryId && resolvedInspectorId) {
           const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
-          if (orphan) {
-            await prisma.itemEntry.update({ where: { id: orphan.id }, data: { taskId: activeTaskId, locationId: (currentSubLocationId || activeTaskLocationId || undefined) as any, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
-            currentTaskEntryId = orphan.id
-          }
+          if (orphan) currentTaskEntryId = orphan.id
         }
         if (!currentTaskEntryId) {
-          const created = await prisma.itemEntry.create({ data: { taskId: activeTaskId, itemId: activeTaskItemId, inspectorId: resolvedInspectorId, locationId: (currentSubLocationId || activeTaskLocationId || undefined) as any, condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
+          const created = await prisma.itemEntry.create({ data: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, locationId: (locId as any), condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
           currentTaskEntryId = created.id
         }
         await updateSessionState(phoneNumber, { currentTaskEntryId })
