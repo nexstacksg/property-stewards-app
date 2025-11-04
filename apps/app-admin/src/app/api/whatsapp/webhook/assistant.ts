@@ -515,7 +515,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             let f: any = null
             try { f = JSON.parse(finalize) } catch {}
             if (!f?.success && typeof f?.error === 'string') {
-              return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
+              const err = String(f.error)
+              if (/cause and resolution/i.test(err)) {
+                return `${err}\n\nPlease send both in ONE message, e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."`
+              }
+              if (/media is required/i.test(err)) {
+                return 'Media is required for this task. Please send at least one photo or video.'
+              }
+              return err
             }
             // If the tool returned a nextTask (queued per-task follow-up), continue with it
             if (f?.nextTask && f.nextTask.id) {

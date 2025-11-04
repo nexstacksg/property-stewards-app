@@ -1119,6 +1119,28 @@ You can omit any numbers you want to leave unset.`
           let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true, name: true } })
           let targetItemId = task?.itemId || taskItemId
 
+          // Validate required cause+resolution for FAIR / UNSATISFACTORY
+          try {
+            const condUpper = String(condition || '').toUpperCase()
+            if (condUpper === 'FAIR' || condUpper === 'UNSATISFACTORY') {
+              let checkEntryId = entryId
+              if (!checkEntryId && inspectorId) {
+                const found = await prisma.itemEntry.findFirst({ where: { taskId, inspectorId }, orderBy: { createdOn: 'desc' } })
+                checkEntryId = found?.id || null
+              }
+              if (!checkEntryId) {
+                return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
+              }
+              const finding = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: checkEntryId, taskId } } as any })
+              const details: any = finding?.details || {}
+              const causeOk = typeof details.cause === 'string' && details.cause.trim().length > 0
+              const resOk = typeof details.resolution === 'string' && details.resolution.trim().length > 0
+              if (!causeOk || !resOk) {
+                return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
+              }
+            }
+          } catch (e) { console.error('finalize: failed cause/resolution check', e) }
+
           if (task) {
             await prisma.checklistTask.update({
               where: { id: taskId },
