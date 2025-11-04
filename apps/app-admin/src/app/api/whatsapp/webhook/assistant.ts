@@ -463,16 +463,9 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             }
           }
         }
-        // Media stage skip (task flow only)
+        // Media is required for all task conditions in the new flow; no skip allowed
         if (meta.taskFlowStage === 'media' && meta.currentTaskId && (lower === 'skip' || lower === 'no')) {
-          const cond = String(meta.currentTaskCondition || '').toUpperCase()
-          if (cond !== 'NOT_APPLICABLE') {
-            return 'Media is required for this condition. Please send at least one photo (you can add remarks as a caption).'
-          }
-          const out = await executeTool('completeTask', { phase: 'skip_media', workOrderId: meta.workOrderId, taskId: meta.currentTaskId }, undefined, phoneNumber)
-          let data: any = null
-          try { data = JSON.parse(out) } catch {}
-          if (data?.success) return data?.message || 'Okay, skipping media for this Not Applicable condition. Reply [1] if this task is complete, [2] otherwise.'
+          return 'Media is required for this task. Please send at least one photo or video.'
         }
         // Sub-location media confirmation: [1] complete sub-location, [2] keep adding
         if (meta.taskFlowStage === 'media' && meta.currentSubLocationId && !meta.currentTaskId && numAny) {
@@ -512,7 +505,22 @@ export async function processWithAssistant(phoneNumber: string, message: string)
             if (!f?.success && typeof f?.error === 'string') {
               return `${f.error}\n\nNext: send the required media or add a remark, or type 'skip' to continue without media.`
             }
-            // Refresh tasks list to show updated state
+            // If the tool returned a nextTask (queued per-task follow-up), continue with it
+            if (f?.nextTask && f.nextTask.id) {
+              const name = f.nextTask.name || 'the next task'
+              const cond = String(f.nextTask.condition || '').toUpperCase()
+              if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
+                return `Next: ${name} requires details. Please provide the cause for this issue.`
+              }
+              return `Next: ${name} — please send photos/videos (media is required for all conditions).`
+            }
+            // Otherwise, if we're in a sub-location context and no next task, prompt for a sub-location remark
+            const latestAfter = await getSessionState(phoneNumber)
+            if (!f?.nextTask && latestAfter?.currentSubLocationId && !latestAfter?.currentTaskId && latestAfter?.taskFlowStage === 'remarks') {
+              const whereName = latestAfter.currentSubLocationName || latestAfter.currentLocation || 'this area'
+              return `All tasks in ${whereName} are handled. Please enter your remarks for this sub-location (a short sentence is fine).`
+            }
+            // Otherwise refresh tasks list to show updated state
             const tasksRes = await executeTool('getTasksForLocation', { workOrderId: meta.workOrderId, location: meta.currentLocation, contractChecklistItemId: meta.currentLocationId, subLocationId: meta.currentSubLocationId }, undefined, phoneNumber)
             let data: any = null
             try { data = JSON.parse(tasksRes) } catch {}

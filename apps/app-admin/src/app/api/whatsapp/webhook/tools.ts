@@ -582,11 +582,28 @@ You can omit any numbers you want to leave unset.`
           i++
         }
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
-        const hasIssues = updates.some(u => u.condition === 'FAIR' || u.condition === 'UNSATISFACTORY')
-        if (sessionId) {
-          await updateSessionState(sessionId, { taskFlowStage: hasIssues ? 'cause' : 'remarks', currentTaskId: undefined, currentTaskName: undefined, currentTaskEntryId: undefined, currentTaskItemId: contractChecklistItemId })
+        // Build a per-task queue to collect details + media 1-by-1
+        const queue = updates.map(u => u.taskId)
+        let nextTaskId: string | undefined = undefined
+        let nextTaskName: string | undefined = undefined
+        let nextCond: string | undefined = undefined
+        if (queue.length > 0) {
+          nextTaskId = queue[0]
+          const f = updates.find(u => u.taskId === nextTaskId)
+          nextTaskName = f?.name
+          nextCond = (f?.condition || '').toUpperCase()
         }
-        // Resolve sub-location name for a nicer message
+        if (sessionId) {
+          await updateSessionState(sessionId, {
+            currentTaskId: nextTaskId,
+            currentTaskName: nextTaskName,
+            currentTaskItemId: contractChecklistItemId,
+            pendingTaskQueue: queue,
+            pendingTaskIndex: 0,
+            taskFlowStage: (nextCond === 'FAIR' || nextCond === 'UNSATISFACTORY') ? 'cause' : 'media'
+          })
+        }
+        // Resolve sub-location name for nicer message
         let subName = ''
         try {
           const loc = await prisma.contractChecklistLocation.findUnique({ where: { id: subLocationId }, select: { name: true } })
@@ -598,15 +615,16 @@ You can omit any numbers you want to leave unset.`
           for (const u of updates) lines.push(`- [${u.number}] ${u.name}: ${u.condition}`)
         }
         lines.push('')
-        if (hasIssues) {
-          lines.push('Please provide the cause and resolution in ONE message. For example:')
-          lines.push('1: misaligned hinges, 2: re-adjusted and tightened hinges')
-          lines.push('or')
-          lines.push('Cause: misaligned hinges  Resolution: re-adjusted and tightened hinges')
+        if (nextTaskId) {
+          if (nextCond === 'FAIR' || nextCond === 'UNSATISFACTORY') {
+            lines.push(`Next: ${nextTaskName || 'the next task'} requires details. Please provide the cause first.`)
+          } else {
+            lines.push(`Next: ${nextTaskName || 'the next task'} — please send photos/videos (media is required for all conditions).`)
+          }
         } else {
-          lines.push('Next: please enter your remarks for this sub-location (a short sentence is fine).')
+          lines.push('No tasks were updated with conditions.')
         }
-        return JSON.stringify({ success: true, updatedCount: updates.length, requiresCause: hasIssues, message: lines.join('\\n') })
+        return JSON.stringify({ success: true, updatedCount: updates.length, message: lines.join('\\n'), nextTaskId, nextCondition: nextCond })
       }
       case 'setSubLocationCauseResolution': {
         const { workOrderId, contractChecklistItemId, subLocationId, text } = args
@@ -901,8 +919,8 @@ You can omit any numbers you want to leave unset.`
           }
 
           if (sessionId) {
-            // If FAIR or UNSATISFACTORY, branch to cause -> resolution -> remarks -> media
-            const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'remarks'
+            // If FAIR or UNSATISFACTORY: cause -> resolution -> media, otherwise straight to media
+            const nextStage = (condition === 'FAIR' || condition === 'UNSATISFACTORY') ? 'cause' : 'media'
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
             dbg('completeTask:set_condition', { taskId, condition, nextStage })
             if (nextStage === 'cause') {
@@ -910,7 +928,7 @@ You can omit any numbers you want to leave unset.`
             }
           }
 
-          return JSON.stringify({ success: true, taskFlowStage: 'remarks', condition })
+          return JSON.stringify({ success: true, taskFlowStage: 'media', condition, message: 'Please send photos/videos for this task (media is required).' })
         }
 
         if (phase === 'set_cause') {
@@ -925,14 +943,20 @@ You can omit any numbers you want to leave unset.`
             if (taskId && taskItemId) {
               if (!entryId) {
                 const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
-                const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: locId, condition: (latest.currentTaskCondition as any) || undefined, cause: causeRaw } as any })
+                const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: locId, condition: (latest.currentTaskCondition as any) || undefined } as any })
                 entryId = created.id
-              } else {
-                await prisma.itemEntry.update({ where: { id: entryId }, data: { cause: causeRaw } })
               }
+              // Upsert finding details with cause
+              try {
+                const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId, taskId } } as any })
+                const base = existing?.details && typeof existing.details === 'object' ? existing.details as any : {}
+                const next = { ...base, cause: causeRaw, condition: latest.currentTaskCondition || base.condition }
+                if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId, taskId } } as any, data: { details: next } })
+                else await prisma.checklistTaskFinding.create({ data: { entryId, taskId, details: next } })
+              } catch (e) { console.error('Failed to upsert ChecklistTaskFinding (cause)', e) }
               await updateSessionState(sessionId, { currentTaskEntryId: entryId })
             }
-          } catch (e) { console.error('Failed to persist cause to item entry', e) }
+          } catch (e) { console.error('Failed to persist cause for task finding', e) }
           await updateSessionState(sessionId, { pendingTaskCause: causeRaw, taskFlowStage: 'resolution' })
           return JSON.stringify({ success: true, taskFlowStage: 'resolution', message: 'Thanks. Please provide the resolution.' })
         }
@@ -952,7 +976,7 @@ You can omit any numbers you want to leave unset.`
             const orphan = await prisma.itemEntry.findFirst({ where: { itemId: taskItemId, inspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
             if (orphan) entryId = orphan.id
           }
-          // Create or update entry with explicit fields only; do not inject default 'Cause'/'Resolution' text into remarks.
+          // Ensure entry exists
           if (!entryId) {
             const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
             const created = await prisma.itemEntry.create({
@@ -962,34 +986,24 @@ You can omit any numbers you want to leave unset.`
                 inspectorId: inspectorId || undefined,
                 locationId: locId,
                 condition: (latest.currentTaskCondition as any) || undefined,
-                // Persist resolution and optional cause separately
-                cause: latest.pendingTaskCause || undefined,
-                resolution: resolutionRaw
               } as any
             })
             entryId = created.id
-          } else {
-            const updateData: any = { resolution: resolutionRaw }
-            if (latest.pendingTaskCause) updateData.cause = latest.pendingTaskCause
-            await prisma.itemEntry.update({ where: { id: entryId }, data: updateData })
           }
-          await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'remarks' })
-          const condUpper = String(latest.currentTaskCondition || '').toUpperCase()
-          const msg = condUpper === 'NOT_APPLICABLE'
-            ? 'Resolution saved. Please add any remarks for this task (or type \"skip\").'
-            : 'Resolution saved. Please add remarks for this task.'
-          return JSON.stringify({ success: true, taskFlowStage: 'remarks', message: msg })
+          // Upsert per-task finding details JSON with resolution
+          try {
+            const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId, taskId } } as any })
+            const base = existing?.details && typeof existing.details === 'object' ? existing.details as any : {}
+            const next = { ...base, resolution: resolutionRaw, cause: base.cause || latest.pendingTaskCause || undefined, condition: latest.currentTaskCondition || base.condition }
+            if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId, taskId } } as any, data: { details: next } })
+            else await prisma.checklistTaskFinding.create({ data: { entryId, taskId, details: next } })
+          } catch (e) { console.error('Failed to upsert ChecklistTaskFinding (resolution)', e) }
+          await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Resolution saved. Please send photos/videos for this task (media is required).' })
         }
 
         if (phase === 'skip_media') {
-          if (!sessionId) return JSON.stringify({ success: false, error: 'Session required to skip media.' })
-          const latest = await getSessionState(sessionId)
-          const cond = (latest.currentTaskCondition || '').toUpperCase()
-          if (cond !== 'NOT_APPLICABLE') {
-            return JSON.stringify({ success: false, error: 'Media is required for this condition. Please send at least one photo (you can add remarks as a caption).' })
-          }
-          await updateSessionState(sessionId, { taskFlowStage: 'confirm', pendingTaskRemarks: undefined })
-          return JSON.stringify({ success: true, taskFlowStage: 'confirm', mediaSkipped: true, message: 'Okay, skipping media for this Not Applicable condition.\n\nNext: reply [1] if this task is complete, [2] if you still have more to do for it.' })
+          return JSON.stringify({ success: false, error: 'Media is required for this task. Please send at least one photo or video.' })
         }
 
         if (phase === 'set_remarks') {
@@ -1225,15 +1239,27 @@ You can omit any numbers you want to leave unset.`
             })
           }
 
+          // Require at least one media for this task (either per-task media row or task photos/videos arrays)
+          try {
+            const [mediaCount, taskMedia] = await Promise.all([
+              prisma.itemEntryMedia.count({ where: { taskId } }),
+              prisma.checklistTask.findUnique({ where: { id: taskId }, select: { photos: true, videos: true } })
+            ])
+            const hasAny = (mediaCount > 0) || Boolean(taskMedia && ((taskMedia.photos?.length || 0) + (taskMedia.videos?.length || 0) > 0))
+            if (!hasAny) {
+              return JSON.stringify({ success: false, error: 'Media is required for this task. Please send at least one photo or video before finalizing.' })
+            }
+          } catch (e) { console.error('finalize: media check failed', e) }
+
           // Invalidate memcache so next task listing reflects completion immediately
           try { await cacheDel('mc:contract-checklist-items:all') } catch {}
 
           const taskName = task?.name || session.currentTaskName || 'Task'
           if (completed) {
-            return JSON.stringify({ success: true, taskCompleted: true, message: `✅ ${taskName} marked complete.` })
+            return JSON.stringify({ success: true, taskCompleted: true, message: `✅ ${taskName} marked complete.`, nextTask })
           }
 
-          return JSON.stringify({ success: true, taskCompleted: false, message: `✅ ${taskName} updated.` })
+          return JSON.stringify({ success: true, taskCompleted: false, message: `✅ ${taskName} updated.`, nextTask })
         }
 
         return JSON.stringify({ success: false, error: `Unknown phase: ${phase}` })
