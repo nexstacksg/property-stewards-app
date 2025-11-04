@@ -1254,6 +1254,34 @@ You can omit any numbers you want to leave unset.`
           // Invalidate memcache so next task listing reflects completion immediately
           try { await cacheDel('mc:contract-checklist-items:all') } catch {}
 
+          // Determine if there is a next task in the pending queue
+          let nextTask: { id: string; name?: string | null; condition?: string | null } | null = null
+          if (sessionId) {
+            try {
+              const s2 = await getSessionState(sessionId)
+              const queue = Array.isArray(s2.pendingTaskQueue) ? s2.pendingTaskQueue : []
+              const idx = typeof s2.pendingTaskIndex === 'number' ? s2.pendingTaskIndex! : 0
+              const nextIdx = idx + 1
+              if (queue.length > 0 && nextIdx < queue.length) {
+                const nextId = queue[nextIdx]
+                const dbNext = await prisma.checklistTask.findUnique({ where: { id: nextId }, select: { id: true, name: true, condition: true } })
+                nextTask = dbNext || { id: nextId }
+                // Advance queue pointer and set next task context
+                await updateSessionState(sessionId, {
+                  pendingTaskIndex: nextIdx,
+                  currentTaskId: nextId,
+                  currentTaskName: dbNext?.name || undefined,
+                  currentTaskEntryId: undefined,
+                  currentTaskCondition: (dbNext?.condition as any) || undefined,
+                  taskFlowStage: ((dbNext?.condition || '').toUpperCase() === 'FAIR' || (dbNext?.condition || '').toUpperCase() === 'UNSATISFACTORY') ? 'cause' : 'media'
+                })
+              } else {
+                // No more tasks in queue → ask for sub-location remarks next
+                await updateSessionState(sessionId, { pendingTaskQueue: undefined, pendingTaskIndex: undefined, currentTaskId: undefined, currentTaskName: undefined, taskFlowStage: 'remarks' })
+              }
+            } catch (e) { console.error('finalize: failed to advance queue', e) }
+          }
+
           const taskName = task?.name || session.currentTaskName || 'Task'
           if (completed) {
             return JSON.stringify({ success: true, taskCompleted: true, message: `✅ ${taskName} marked complete.`, nextTask })
