@@ -616,11 +616,11 @@ You can omit any numbers you want to leave unset.`
         }
         lines.push('')
         if (nextTaskId) {
-          if (nextCond === 'FAIR' || nextCond === 'UNSATISFACTORY') {
-            lines.push(`Next: ${nextTaskName || 'the next task'} requires details. Please provide the cause first.`)
-          } else {
-            lines.push(`Next: ${nextTaskName || 'the next task'} — please send photos/videos (media is required for all conditions).`)
-          }
+            if (nextCond === 'FAIR' || nextCond === 'UNSATISFACTORY') {
+              lines.push(`Next: ${nextTaskName || 'the next task'} requires details. Please provide the cause and resolution in ONE message, e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."`)
+            } else {
+              lines.push(`Next: ${nextTaskName || 'the next task'} — please send photos/videos (media is required for all conditions).`)
+            }
         } else {
           lines.push('No tasks were updated with conditions.')
         }
@@ -695,23 +695,14 @@ You can omit any numbers you want to leave unset.`
         }
         // Create a new ItemEntry at item level, tagged in the remarks header with the sub-location name
         const prefix = subLocationName ? `[${subLocationName}] ` : ''
-        // If cause/resolution were captured earlier in the sub-location flow, persist them on creation
-        let cause: string | undefined
-        let resolution: string | undefined
-        try {
-          if (sessionId) {
-            const s = await getSessionState(sessionId)
-            cause = s.pendingTaskCause || undefined
-            resolution = s.pendingTaskResolution || undefined
-          }
-        } catch {}
-        const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}`, cause, resolution } as any })
+        // Do not store cause/resolution at ItemEntry (location) level; keep them per-task in ChecklistTaskFinding
+        const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         if (sessionId) {
           await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
         }
         const whereName = subLocationName || 'this sub-location'
-        return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media).` })
+        return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media), or type 'skip' to continue.` })
       }
       case 'markLocationComplete': {
         const { workOrderId, contractChecklistItemId } = args
@@ -924,7 +915,7 @@ You can omit any numbers you want to leave unset.`
             await updateSessionState(sessionId, { currentTaskEntryId: entryId || undefined, currentTaskCondition: condition, taskFlowStage: nextStage, pendingTaskCause: undefined, pendingTaskResolution: undefined })
             dbg('completeTask:set_condition', { taskId, condition, nextStage })
             if (nextStage === 'cause') {
-              return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please describe the cause for this issue.' })
+              return JSON.stringify({ success: true, taskFlowStage: 'cause', message: 'Please provide the cause and resolution in ONE message, e.g., "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."' })
             }
           }
 
@@ -959,6 +950,58 @@ You can omit any numbers you want to leave unset.`
           } catch (e) { console.error('Failed to persist cause for task finding', e) }
           await updateSessionState(sessionId, { pendingTaskCause: causeRaw, taskFlowStage: 'resolution' })
           return JSON.stringify({ success: true, taskFlowStage: 'resolution', message: 'Thanks. Please provide the resolution.' })
+        }
+
+        if (phase === 'set_cause_resolution') {
+          if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing cause and resolution' })
+          const raw = String(args.text ?? args.cause ?? args.remarks ?? '').trim()
+          if (!raw) return JSON.stringify({ success: false, error: 'Please provide both cause and resolution in one message.' })
+          const extract = () => {
+            // Prefer explicit labels first
+            let causeMatch = /cause\s*[:\-]\s*([^]+?)(?=resolution\s*[:\-]|$)/i.exec(raw)
+            let resMatch = /resolution\s*[:\-]\s*([^]+)$/i.exec(raw)
+            let cause = causeMatch ? causeMatch[1].trim() : undefined
+            let resolution = resMatch ? resMatch[1].trim() : undefined
+            // Support numeric labels: 1: <cause>, 2: <resolution>
+            if (!cause || !resolution) {
+              const nCause = /(?:^|[\s,;])1\s*[:\-]\s*([^]+?)(?=(?:^|[\s,;])2\s*[:\-]|$)/i.exec(raw)
+              const nRes = /(?:^|[\s,;])2\s*[:\-]\s*([^]+)$/i.exec(raw)
+              if (nCause && !cause) cause = nCause[1].trim()
+              if (nRes && !resolution) resolution = nRes[1].trim()
+            }
+            // Fallback: split by comma/semicolon/newline into two parts
+            if ((!cause || !resolution)) {
+              const parts = raw.split(/[\n;]+|,(?=(?:\s*[^\)]*\)|[^\(]*$))/).map(s => s.trim()).filter(Boolean)
+              if (parts.length >= 2) {
+                if (!cause) cause = parts[0]
+                if (!resolution) resolution = parts[1]
+              }
+            }
+            return { cause, resolution }
+          }
+          const { cause, resolution } = extract()
+          if (!cause || !resolution) {
+            return JSON.stringify({ success: false, error: 'Please send both in one message. Try "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."' })
+          }
+          const latest = await getSessionState(sessionId)
+          const taskId = latest.currentTaskId
+          const taskItemId = latest.currentTaskItemId
+          if (!taskId || !taskItemId) return JSON.stringify({ success: false, error: 'Task context missing. Please restart the task completion flow.' })
+          let entryId = latest.currentTaskEntryId
+          if (!entryId) {
+            const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
+            const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: locId, condition: (latest.currentTaskCondition as any) || undefined } as any })
+            entryId = created.id
+          }
+          try {
+            const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId, taskId } } as any })
+            const base = existing?.details && typeof existing.details === 'object' ? existing.details as any : {}
+            const next = { ...base, cause, resolution, condition: latest.currentTaskCondition || base.condition }
+            if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId, taskId } } as any, data: { details: next } })
+            else await prisma.checklistTaskFinding.create({ data: { entryId, taskId, details: next } })
+          } catch (e) { console.error('Failed to upsert ChecklistTaskFinding (both)', e) }
+          await updateSessionState(sessionId, { currentTaskEntryId: entryId, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
+          return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Thanks. Cause and resolution saved. Please send photos/videos for this task (media is required).' })
         }
 
         if (phase === 'set_resolution') {
@@ -1446,3 +1489,4 @@ You can omit any numbers you want to leave unset.`
     return JSON.stringify({ success: false, error: 'Tool execution failed' })
   }
 }
+ 
