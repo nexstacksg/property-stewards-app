@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import { formatDateLocal } from "@/lib/time"
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -46,10 +47,7 @@ async function getChecklist(id: string) {
 
 
 function formatDate(date: Date | string | null) {
-  if (!date) return 'N/A'
-  return new Date(date).toLocaleDateString('en-SG', {
-    dateStyle: 'medium'
-  })
+  return formatDateLocal(date)
 }
 
 export default async function ChecklistDetailPage({ params }: { params: Promise<{ id: string }> }) {

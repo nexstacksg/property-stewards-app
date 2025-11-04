@@ -14,6 +14,7 @@ import { InspectorMultiSelect } from "@/components/work-orders/new/inspector-mul
 import { InspectorSchedule } from "@/components/work-orders/new/inspector-schedule"
 import { WorkOrderSummary } from "@/components/work-orders/new/work-order-summary"
 import type { Contract, Inspector } from "@/components/work-orders/new/types"
+import { toBusinessZonedISOString } from "@/lib/client-time"
 
 const DEFAULT_SCHEDULE_START_TIME = "09:00"
 const DEFAULT_SCHEDULE_END_TIME = "17:00"
@@ -205,8 +206,8 @@ function NewWorkOrderPageContent() {
     setLoading(true)
 
     try {
-      const startDateTime = new Date(`${scheduledStartDateTime}T${scheduledStartTime}:00`)
-      const endDateTime = new Date(`${scheduledEndDateTime}T${scheduledEndTime}:00`)
+      const startIso = toBusinessZonedISOString(scheduledStartDateTime, scheduledStartTime)
+      const endIso = toBusinessZonedISOString(scheduledEndDateTime, scheduledEndTime)
 
       const response = await fetch("/api/work-orders", {
         method: "POST",
@@ -214,8 +215,8 @@ function NewWorkOrderPageContent() {
         body: JSON.stringify({
           contractId: selectedContract.id,
           inspectorIds: selectedInspectorIds,
-          scheduledStartDateTime: startDateTime.toISOString(),
-          scheduledEndDateTime: endDateTime.toISOString(),
+          scheduledStartDateTime: startIso,
+          scheduledEndDateTime: endIso,
           remarks
         })
       })
