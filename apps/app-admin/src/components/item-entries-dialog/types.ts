@@ -15,6 +15,7 @@ export type EntryMedia = {
   caption?: string | null
   type: 'PHOTO' | 'VIDEO'
   order?: number | null
+  taskId?: string | null
 }
 
 export type Entry = {
@@ -31,6 +32,11 @@ export type Entry = {
   videos?: string[] | null
   media?: EntryMedia[] | null
   location?: any
+  findings?: Array<{
+    id: string
+    taskId: string
+    details?: any | null
+  }> | null
 }
 
 export type DisplayEntry = Entry & {
@@ -43,4 +49,3 @@ export type PendingMediaFile = {
   file: File
   caption: string
 }
-

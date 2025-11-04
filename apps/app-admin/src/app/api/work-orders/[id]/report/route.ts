@@ -58,9 +58,15 @@ async function getWorkOrder(id: string) {
                           },
                           media: {
                             orderBy: { order: 'asc' }
-                          }
+                          },
+                          findings: true,
                         },
                         orderBy: { createdOn: "asc" }
+                      },
+                      findings: {
+                        include: {
+                          entry: { select: { includeInReport: true, createdOn: true } }
+                        }
                       }
                     },
                     orderBy: { createdOn: "asc" }

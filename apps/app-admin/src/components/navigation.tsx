@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useEffect, useState } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import BrandLogo from "@/components/brand-logo"
 
 type SessionUser = {
   id: string
@@ -154,8 +155,8 @@ export function Navigation() {
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex flex-col fixed left-0 top-0 w-64 h-full bg-card border-r">
         <div className="p-6">
-          <h1 className="text-2xl font-bold text-primary">Property Stewards</h1>
-          <p className="text-sm text-muted-foreground mt-1">Admin Portal</p>
+          <BrandLogo className="w-40" />
+          <p className="text-sm text-muted-foreground mt-2">Admin Portal</p>
         </div>
         
         <nav className="flex-1 px-4 pb-4">
@@ -201,8 +202,8 @@ export function Navigation() {
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-card border-b">
         <div className="flex items-center justify-between p-4">
-          <div>
-            <h1 className="text-xl font-bold text-primary">Property Stewards</h1>
+          <div className="flex items-center">
+            <BrandLogo className="w-40" />
           </div>
           <Button
             variant="ghost"

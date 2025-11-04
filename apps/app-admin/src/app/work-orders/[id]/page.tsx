@@ -61,6 +61,7 @@ async function getWorkOrder(id: string) {
                       media: {
                         orderBy: { order: 'asc' }
                       },
+                      findings: true,
                       task: {
                         select: {
                           id: true,

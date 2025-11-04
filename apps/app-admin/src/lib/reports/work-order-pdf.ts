@@ -275,16 +275,12 @@ function formatEntryLine(entry: EntryLike) {
   lines.push(`Recorded by: ${resolveEntryAuthor(entry)}`)
 
   const condition = formatEnum(entry.condition) || "N/A"
-  // lines.push(`Condition: ${condition}`)
+  // Keep condition out of remark details; shown in table columns
 
   const remarks = entry.remarks?.trim() ?? ""
   lines.push(`Remarks: ${remarks.length > 0 ? remarks : '—'}`)
 
-  const cause = entry.cause?.trim() ?? ""
-  lines.push(`Cause: ${cause.length > 0 ? cause : '—'}`)
-
-  const resolution = entry.resolution?.trim() ?? ""
-  lines.push(`Resolution: ${resolution.length > 0 ? resolution : '—'}`)
+  // Do not print cause/resolution in remark rows; these move to Condition column
 
   return lines.join("\n")
 }
@@ -616,25 +612,58 @@ async function buildTableRows(
         if (locationSegments.length && taskIdx === 0) {
           rowSegments.push(...locationSegments)
         }
-        // Include task-level media when not entry-only (row exists only if task condition allowed)
-        if (!entryOnly) {
-          const taskMediaSegment = await buildRemarkSegment({
-            text: undefined,
-            photoEntries: mergePhotoEntries(
-              fromMedia((task as any)?.media),
-              toPhotoEntries(task.photos)
-            ),
-            videoUrls: Array.isArray(task.videos) ? task.videos : [],
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
-          if (taskMediaSegment && (taskMediaSegment.text || taskMediaSegment.photos?.length)) {
-            rowSegments.push(taskMediaSegment)
+        // Do not include task-level media on each task row; we'll render
+        // a consolidated row per location that contains all subtask photos.
+
+        // Compute condition column text with latest cause/resolution when available
+        const conditionBase = formatEnum(task.condition ?? undefined) || "N/A"
+
+        const pickLatestCauseResolution = (): { cause?: string | null; resolution?: string | null } => {
+          // 1) Prefer entries marked for report; else any entries linked to this task
+          const candidates = (filteredEntries.length > 0 ? filteredEntries : entries) as any[]
+          for (let i = candidates.length - 1; i >= 0; i -= 1) {
+            const e = candidates[i] || {}
+            const findings = Array.isArray((e as any).findings) ? (e as any).findings : []
+            const found = findings.find((f: any) => f && (f.taskId === task.id))
+            const det = found && typeof found.details === 'object' && found.details !== null ? found.details as any : null
+            const causeFromFinding = typeof det?.cause === 'string' ? det.cause.trim() : ''
+            const resFromFinding = typeof det?.resolution === 'string' ? det.resolution.trim() : ''
+            if (causeFromFinding || resFromFinding) {
+              return { cause: causeFromFinding || null, resolution: resFromFinding || null }
+            }
+            const legacyCause = typeof (e as any).cause === 'string' ? (e as any).cause.trim() : ''
+            const legacyRes = typeof (e as any).resolution === 'string' ? (e as any).resolution.trim() : ''
+            if (legacyCause || legacyRes) {
+              return { cause: legacyCause || null, resolution: legacyRes || null }
+            }
           }
+          // 2) If none from task-linked entries, check task-level findings (handles location-bulk remarks)
+          const tf = Array.isArray((task as any).findings) ? (task as any).findings : []
+          if (tf.length > 0) {
+            // Prefer ones whose parent entry is included-in-report; else take the newest by createdOn
+            const withMeta = tf.map((row: any) => ({
+              cause: typeof row?.details?.cause === 'string' ? row.details.cause.trim() : '',
+              resolution: typeof row?.details?.resolution === 'string' ? row.details.resolution.trim() : '',
+              included: Boolean(row?.entry?.includeInReport),
+              createdOn: row?.entry?.createdOn ? new Date(row.entry.createdOn).getTime() : 0,
+            }))
+            const filt = withMeta.filter((r: any) => r.cause || r.resolution)
+            if (filt.length > 0) {
+              const prefer = filt.filter((r: any) => r.included)
+              const pool = prefer.length > 0 ? prefer : filt
+              pool.sort((a: any, b: any) => a.createdOn - b.createdOn)
+              const last = pool[pool.length - 1]
+              return { cause: last.cause || null, resolution: last.resolution || null }
+            }
+          }
+          return {}
         }
 
-        const conditionText = formatEnum(task.condition ?? undefined) || "N/A"
+        const { cause: latestCause, resolution: latestResolution } = pickLatestCauseResolution()
+        const condLines: string[] = [conditionBase]
+        if (latestCause) condLines.push(`• Causes: ${latestCause}`)
+        if (latestResolution) condLines.push(`• Resolution: ${latestResolution}`)
+        const conditionText = condLines.join('\n')
         const taskNumber = `${locationNumber}.${taskIdx + 1}`
         const subtaskLabel = `${taskNumber} ${task.name || 'Subtask'}`
 
@@ -683,37 +712,94 @@ async function buildTableRows(
         return Array.from(map.values()) as EntryLike[]
       })()
 
-      if (combinedGroupEntries.length > 0) {
-        const combinedPhotos = mergePhotoEntries(
-          ...combinedGroupEntries.map((e: any) => entryPhotoEntries(e))
-        )
-        const combinedVideos: string[] = ([] as string[]).concat(
-          ...combinedGroupEntries.map((e: any) => Array.isArray((e as any).videos) ? (e as any).videos : [])
-        )
-
-        // Add a clear title so the section is attributable to the sub-location
-        const title = `${group.label} — Remarks & Media`
-        const mediaSegment = await buildRemarkSegment({
-          text: title,
-          photoEntries: combinedPhotos,
-          videoUrls: combinedVideos,
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (mediaSegment && (mediaSegment.photos?.length || mediaSegment.videos?.length)) {
-          rows.push({
-            cells: [
-              { text: '' },
-              { text: '' },
-              { text: '' },
-              { text: '' }
-            ],
-            summaryMedia: mediaSegment,
-            mediaOnly: true
-          })
+      {
+        // Build two separate media rows under this location group:
+        // 1) ItemEntry media (location-level remarks)
+        // 2) ChecklistTask media (subtask-level)
+        // Gather photos from ItemEntryMedia only
+        const entryPhotoRows: Array<{ url: string; caption: string | null }> = []
+        const taskPhotoEntriesList: Array<{ url: string; caption: string | null }> = []
+        // Map task id -> numbering and name for captions
+        const taskMeta = new Map<string, { num: string; name: string }>()
+        for (let tIndex = 0; tIndex < locationTasks.length; tIndex += 1) {
+          const t = locationTasks[tIndex]
+          const tNum = `${locationNumber}.${tIndex + 1}`
+          const tName = typeof t?.name === 'string' ? t.name.trim() : ''
+          if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName })
+        }
+        // Flatten ItemEntry.media and split by taskId presence
+        for (const e of combinedGroupEntries as any[]) {
+          const media = Array.isArray((e as any)?.media) ? (e as any).media : []
+          const photos = media
+            .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
+            .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
+          for (const m of photos) {
+            const url = String(m.url).trim()
+            const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
+            const taskId = (m as any)?.taskId || null
+            if (!taskId) {
+              // Entry-level photo row; prefix with location number
+              const cap = `• ${locationNumber}${rawCaption ? ` ${rawCaption}` : ''}`
+              entryPhotoRows.push({ url, caption: cap })
+            } else if (taskMeta.has(taskId)) {
+              const meta = taskMeta.get(taskId)!
+              const base = rawCaption ? ` ${rawCaption}` : (meta.name ? ` ${meta.name}` : '')
+              const cap = `• ${meta.num}${base}`
+              taskPhotoEntriesList.push({ url, caption: cap })
+            }
+          }
         }
 
+        // Build and append rows only when there are photos
+        if (entryPhotoRows.length > 0) {
+          const title = `${group.label} — Remarks & Media`
+          const entryMediaSegment = await buildRemarkSegment({
+            text: title,
+            photoEntries: entryPhotoRows,
+            videoUrls: [],
+            imageCache,
+            seenPhotos: seenItemPhotos,
+            seenVideos: seenItemVideos
+          })
+          if (entryMediaSegment && (entryMediaSegment.photos?.length || entryMediaSegment.videos?.length)) {
+            rows.push({
+              cells: [
+                { text: '' },
+                { text: '' },
+                { text: '' },
+                { text: '' }
+              ],
+              summaryMedia: entryMediaSegment,
+              mediaOnly: true
+            })
+          }
+        }
+
+        if (taskPhotoEntriesList.length > 0) {
+          const taskMediaSegment = await buildRemarkSegment({
+            text: undefined,
+            photoEntries: taskPhotoEntriesList,
+            videoUrls: [],
+            imageCache,
+            seenPhotos: seenItemPhotos,
+            seenVideos: seenItemVideos
+          })
+          if (taskMediaSegment && (taskMediaSegment.photos?.length || taskMediaSegment.videos?.length)) {
+            rows.push({
+              cells: [
+                { text: '' },
+                { text: '' },
+                { text: '' },
+                { text: '' }
+              ],
+              summaryMedia: taskMediaSegment,
+              mediaOnly: true
+            })
+          }
+        }
+      }
+
+      if (combinedGroupEntries.length > 0) {
         const entrySegments: (CellSegment | null)[] = []
         for (const entry of combinedGroupEntries as EntryLike[]) {
           const entrySegment = await buildRemarkSegment({
@@ -750,32 +836,63 @@ async function buildTableRows(
       ? (reportEntries as any[]).filter((e: any) => !e?.locationId && !(e?.location && e.location?.id))
       : []
     if (generalEntries.length > 0) {
-      const combinedPhotos = mergePhotoEntries(
-        ...generalEntries.map((e: any) => entryPhotoEntries(e as EntryLike))
-      )
-      const combinedVideos: string[] = ([] as string[]).concat(
-        ...generalEntries.map((e: any) => Array.isArray((e as any).videos) ? (e as any).videos : [])
-      )
-
-      const mediaSegment = await buildRemarkSegment({
-        text: 'General — Remarks & Media',
-        photoEntries: combinedPhotos,
-        videoUrls: combinedVideos,
-        imageCache,
-        seenPhotos: seenItemPhotos,
-        seenVideos: seenItemVideos
-      })
-      if (mediaSegment && (mediaSegment.photos?.length || mediaSegment.videos?.length)) {
-        rows.push({
-          cells: [
-            { text: '' },
-            { text: '' },
-            { text: '' },
-            { text: '' }
-          ],
-          summaryMedia: mediaSegment,
-          mediaOnly: true
+      // Split general photos into two rows: without taskId first, then with taskId
+      const mediaNoTask: Array<{ url: string; caption: string | null }> = []
+      const mediaWithTask: Array<{ url: string; caption: string | null }> = []
+      // Build task index across all item tasks for numbering (fallback only)
+      const allTasks = tasks
+      const taskIndex = new Map<string, { num: string; name: string }>()
+      for (let tIdx = 0; tIdx < allTasks.length; tIdx += 1) {
+        const t = allTasks[tIdx]
+        const num = `${itemNumber}.${tIdx + 1}`
+        const tName = typeof t?.name === 'string' ? t.name.trim() : ''
+        if (t?.id) taskIndex.set(t.id, { num, name: tName })
+      }
+      for (const e of generalEntries as any[]) {
+        const med = Array.isArray((e as any)?.media) ? (e as any).media : []
+        const photos = med
+          .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
+          .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
+        for (const m of photos) {
+          const url = String(m.url).trim()
+          const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
+          const taskId = (m as any)?.taskId || null
+          if (!taskId) {
+            mediaNoTask.push({ url, caption: `• ${itemNumber}${rawCaption ? ` ${rawCaption}` : ''}` })
+          } else if (taskIndex.has(taskId)) {
+            const meta = taskIndex.get(taskId)!
+            const base = rawCaption ? ` ${rawCaption}` : (meta.name ? ` ${meta.name}` : '')
+            mediaWithTask.push({ url, caption: `• ${meta.num}${base}` })
+          } else {
+            mediaWithTask.push({ url, caption: `• ${rawCaption || ''}`.trim() || null })
+          }
+        }
+      }
+      if (mediaNoTask.length > 0) {
+        const seg = await buildRemarkSegment({
+          text: 'General — Remarks & Media',
+          photoEntries: mediaNoTask,
+          videoUrls: [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
         })
+        if (seg && (seg.photos?.length || seg.videos?.length)) {
+          rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg, mediaOnly: true })
+        }
+      }
+      if (mediaWithTask.length > 0) {
+        const seg2 = await buildRemarkSegment({
+          text: undefined,
+          photoEntries: mediaWithTask,
+          videoUrls: [],
+          imageCache,
+          seenPhotos: seenItemPhotos,
+          seenVideos: seenItemVideos
+        })
+        if (seg2 && (seg2.photos?.length || seg2.videos?.length)) {
+          rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg2, mediaOnly: true })
+        }
       }
 
       const entrySegments: (CellSegment | null)[] = []

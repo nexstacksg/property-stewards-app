@@ -8,7 +8,6 @@ interface ToastOptions {
 }
 
 const TOAST_CONTAINER_ID = "ps-toast-container"
-
 function ensureContainer() {
   let container = document.getElementById(TOAST_CONTAINER_ID)
   if (!container) {

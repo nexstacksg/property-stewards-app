@@ -40,9 +40,16 @@ export async function getContractWithWorkOrders(id: string) {
                       },
                       media: {
                         orderBy: { order: 'asc' }
-                      }
+                      },
+                      findings: true,
                     },
                     orderBy: { createdOn: "asc" }
+                  },
+                  // Also include task-level findings for cases where remarks were saved at location-level
+                  findings: {
+                    include: {
+                      entry: { select: { includeInReport: true, createdOn: true } }
+                    }
                   },
                   location: true
                 },
