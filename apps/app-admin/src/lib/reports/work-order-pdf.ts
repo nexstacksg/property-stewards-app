@@ -1000,7 +1000,7 @@ function drawTableRow(
       doc.save()
       try {
         doc.fillColor(options.background)
-        if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+        if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
         doc.rect(TABLE_MARGIN, y, getTableWidth(doc), rowHeight).fill()
       } finally {
         if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
@@ -1017,8 +1017,13 @@ function drawTableRow(
 
     if (header) {
       doc.save()
-      doc.rect(x, y, width, rowHeight).fill("#e2e8f0")
-      doc.restore()
+      try {
+        if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
+        doc.rect(x, y, width, rowHeight).fill("#e2e8f0")
+      } finally {
+        if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+        doc.restore()
+      }
       doc.rect(x, y, width, rowHeight).stroke()
       doc.font("Helvetica-Bold")
     } else {
@@ -1028,11 +1033,11 @@ function drawTableRow(
           doc.save()
           try {
             doc.fillColor(options.background)
-            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
             doc.rect(x, y, width, rowHeight).fill()
           } finally {
             if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-            doc.restore
+            doc.restore()
           }
         }
         // Draw per-cell border only when not merged
@@ -1660,13 +1665,13 @@ export async function appendWorkOrderSection(
             if (currentTaskBackground) {
               doc.save()
               try {
-                doc.fillColor(currentTaskBackground)
-                if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-                doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
-              } finally {
-                if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-                doc.restore()
-              }
+            doc.fillColor(currentTaskBackground)
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
+            doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
+          } finally {
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+            doc.restore()
+          }
             }
             const consumed = drawMediaBlocks(doc, y, chunk)
             y += consumed
@@ -1703,13 +1708,13 @@ export async function appendWorkOrderSection(
           if (currentTaskBackground) {
             doc.save()
             try {
-              doc.fillColor(currentTaskBackground)
-              if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-              doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
-            } finally {
-              if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-              doc.restore()
-            }
+            doc.fillColor(currentTaskBackground)
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
+            doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
+          } finally {
+            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+            doc.restore()
+          }
           }
 
           // Draw and advance pointers
