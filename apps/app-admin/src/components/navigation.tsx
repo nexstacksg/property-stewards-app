@@ -80,6 +80,9 @@ export function Navigation() {
       try {
         const res = await fetch('/api/auth/session', { credentials: 'include', cache: 'no-store' })
         if (!res.ok) {
+          // Session invalid or user missing — redirect to login
+          router.replace('/login')
+          router.refresh()
           throw new Error(`Failed to load session: ${res.status}`)
         }
         const data = await res.json()
