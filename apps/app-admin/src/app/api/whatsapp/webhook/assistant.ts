@@ -528,7 +528,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
               const name = f.nextTask.name || 'the next task'
               const cond = String(f.nextTask.condition || '').toUpperCase()
               if (cond === 'FAIR' || cond === 'UNSATISFACTORY') {
-                return `Next: ${name} requires details. Please provide the cause for this issue.`
+                return [
+                  `Next: ${name} requires details.`,
+                  'Please provide BOTH the cause and the resolution in ONE message.',
+                  'Examples:',
+                  '  • 1: <cause>, 2: <resolution>',
+                  '  • Cause: <text>  Resolution: <text>'
+                ].join('\\n')
               }
               return `Next: ${name} — please send photos/videos (media is required for all conditions).`
             }
