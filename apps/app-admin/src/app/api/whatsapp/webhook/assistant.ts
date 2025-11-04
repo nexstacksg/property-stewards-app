@@ -395,8 +395,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
               data.message || [
                 'Conditions updated.',
                 'If any item is Fair or Un‑Satisfactory, please provide BOTH cause and resolution in ONE message:',
-                '• 1: <cause>\\n  2: <resolution>',
-                '• Cause: <your cause>\\n  Resolution: <your resolution>',
+                '1: <cause>  2: <resolution>',
+                'Cause: <your cause>  Resolution: <your resolution>',
                 '',
                 'Otherwise, please enter the remarks for this sub‑location.'
               ].join('\\n')
@@ -529,8 +529,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
                   err,
                   '',
                   'Please send BOTH in one message using either format:',
-                  '• 1: <cause>\\n  2: <resolution>',
-                  '• Cause: <your cause>\\n  Resolution: <your resolution>'
+                  '1: <cause>  2: <resolution>',
+                  'Cause: <your cause>  Resolution: <your resolution>'
                 ].join('\\n')
               }
               if (/media is required/i.test(err)) {
@@ -546,8 +546,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
                 return [
                   `Next: ${name} requires details.`,
                   'Please send BOTH in one message using either format:',
-                  '• 1: <cause>\n  2: <resolution>',
-                  '• Cause: <your cause>\n  Resolution: <your resolution>'
+                  '1: <cause>  2: <resolution>',
+                  'Cause: <your cause>  Resolution: <your resolution>'
                 ].join('\\n')
               }
               return `Next: ${name} — please send photos/videos (media is required for all conditions).`
@@ -860,8 +860,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
         if (meta?.taskFlowStage === 'cause' || meta?.taskFlowStage === 'resolution') {
           return [
             'Please send BOTH in one message using either format:',
-            '• 1: <cause>\n  2: <resolution>',
-            '• Cause: <your cause>\n  Resolution: <your resolution>'
+            '1: <cause>  2: <resolution>',
+            'Cause: <your cause>  Resolution: <your resolution>'
           ].join('\\n')
         }
         // If in job confirmation
