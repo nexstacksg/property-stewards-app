@@ -14,67 +14,54 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 async function getDashboardStats() {
-  
   try {
-    // Execute queries sequentially to avoid connection overload on Vercel
-    const customerCount = await prisma.customer.count({ where: { status: 'ACTIVE' } })
-    const inspectorCount = await prisma.inspector.count({ where: { status: 'ACTIVE' } })
-    const contractCount = await prisma.contract.count()
-    const workOrderCount = await prisma.workOrder.count()
-    
-    const activeContracts = await prisma.contract.count({ where: { status: { in: ['CONFIRMED', 'SCHEDULED'] } } })
-    const completedWorkOrders = await prisma.workOrder.count({ where: { status: 'COMPLETED' } })
-    const scheduledWorkOrders = await prisma.workOrder.count({ where: { status: 'SCHEDULED' } })
-    
-    const totalRevenue = await prisma.contract.aggregate({
-      _sum: { value: true },
-      where: { status: { not: 'CANCELLED' } }
-    })
-    
-    const recentWorkOrders = await prisma.workOrder.findMany({
-      take: 5,
-      orderBy: { scheduledStartDateTime: 'desc' },
-      include: {
-        contract: {
-          include: {
-            customer: true,
-            address: true
-          }
+    // Run independent queries in parallel to reduce total RTT
+    const [
+      customerCount,
+      inspectorCount,
+      contractCount,
+      workOrderCount,
+      activeContracts,
+      completedWorkOrders,
+      scheduledWorkOrders,
+      totalRevenue,
+      recentWorkOrders,
+      openFollowUpItems,
+      openFollowUpCount,
+      totalFollowUpCount,
+    ] = await Promise.all([
+      prisma.customer.count({ where: { status: 'ACTIVE' } }),
+      prisma.inspector.count({ where: { status: 'ACTIVE' } }),
+      prisma.contract.count(),
+      prisma.workOrder.count(),
+      prisma.contract.count({ where: { status: { in: ['CONFIRMED', 'SCHEDULED'] } } }),
+      prisma.workOrder.count({ where: { status: 'COMPLETED' } }),
+      prisma.workOrder.count({ where: { status: 'SCHEDULED' } }),
+      prisma.contract.aggregate({ _sum: { value: true }, where: { status: { not: 'CANCELLED' } } }),
+      prisma.workOrder.findMany({
+        take: 5,
+        orderBy: { scheduledStartDateTime: 'desc' },
+        include: {
+          contract: { include: { customer: true, address: true } },
+          inspectors: true,
         },
-        inspectors: true
-      }
-    })
-
-    const openFollowUpItems = await prisma.contractRemark.findMany({
-      where: {
-        status: ContractRemarkStatus.OPEN
-      },
-      take: 5,
-      orderBy: { createdOn: 'desc' },
-      include: {
-        contract: {
-          select: {
-            id: true,
-            customer: {
-              select: {
-                id: true,
-                name: true
-              }
-            }
-          }
-        }
-      }
-    })
-
-    const openFollowUpCount = await prisma.contractRemark.count({
-      where: {
-        status: ContractRemarkStatus.OPEN
-      }
-    })
-
-    const totalFollowUpCount = await prisma.contractRemark.count({
-      where: { type: ContractRemarkType.FOLLOW_UP }
-    })
+      }),
+      prisma.contractRemark.findMany({
+        where: { status: ContractRemarkStatus.OPEN },
+        take: 5,
+        orderBy: { createdOn: 'desc' },
+        include: {
+          contract: {
+            select: {
+              id: true,
+              customer: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+      prisma.contractRemark.count({ where: { status: ContractRemarkStatus.OPEN } }),
+      prisma.contractRemark.count({ where: { type: ContractRemarkType.FOLLOW_UP } }),
+    ])
 
     return {
       customerCount,
@@ -84,7 +71,7 @@ async function getDashboardStats() {
       activeContracts,
       completedWorkOrders,
       scheduledWorkOrders,
-      totalRevenue: totalRevenue._sum.value || 0,
+      totalRevenue: (totalRevenue as any)._sum.value || 0,
       recentWorkOrders,
       totalFollowUpCount,
       openFollowUpCount,
@@ -99,7 +86,7 @@ async function getDashboardStats() {
           customer: remark.contract.customer,
         },
       })),
-      fetchedAt: new Date().toISOString()
+      fetchedAt: new Date().toISOString(),
     }
   } catch (error) {
     console.error('Dashboard stats error:', error)
