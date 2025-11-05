@@ -24,8 +24,7 @@ async function loadHistory(phone: string): Promise<ChatMessage[]> {
 }
 async function saveHistory(phone: string, messages: ChatMessage[]) {
   // Trim history to a small, WhatsApp-friendly maximum to reduce token usage
-  // Keep WhatsApp context lean for latency; default to 6
-  const cap = Number(process.env.WHATSAPP_HISTORY_MAX ?? 6)
+  const cap = Number(process.env.WHATSAPP_HISTORY_MAX ?? 8)
   const trimmed = messages.slice(-cap)
   try { await cacheSetJSON(HISTORY_KEY(phone), trimmed, { ttlSeconds: HISTORY_TTL }) } catch {}
 }
@@ -95,7 +94,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       try { return await fn() } finally { if (perfOn) perfEvents.push({ name, ms: Date.now() - t0 }) }
     }
     debugLog('start', { phoneNumber, len: message?.length })
-    // Use gpt-5-nano by default as requested; no automatic fallback
+
     const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-5-nano').trim()
 
     // Minimal stateful guard: when the user is in a strict step, translate
@@ -960,8 +959,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
 
     // Loop for tool calls
     let rounds = 0
-    // Cap tool rounds to reduce extra OpenAI calls; default 2 for speed
-    const maxRounds = Number(process.env.WHATSAPP_TOOL_ROUNDS_MAX ?? 2)
+    const maxRounds = Number(process.env.WHATSAPP_TOOL_ROUNDS_MAX ?? 8)
     let lastAssistantMsg: any = null
     while (rounds < maxRounds) {
       let completion: any
