@@ -18,6 +18,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const versionLabel = versionParam ? (versionParam.startsWith("v") ? versionParam : `v${versionParam}`) : "v0.0 (Preview)"
   const workOrderId = searchParams.get('wo')
   const entryOnly = searchParams.get('entryOnly') === '0' ? false : true
+  const includePhotos = searchParams.get('photos') === '0' ? false : true
   const url = new URL(requestUrl)
   const noCache = url.searchParams.get('nocache') === '1'
   const checkOnly = url.searchParams.get('check') === '1'
@@ -93,7 +94,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
   const dataEpoch = timestamps.length ? Math.max(...timestamps) : new Date(contract.createdOn || Date.now()).getTime()
   const condSig = allowedConditions.slice().sort().join('|')
   const normalizedTitle = (customTitle || '').trim()
-  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}:${entryOnly ? 'entry' : 'full'}:${condSig}`
+  const previewSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}:${entryOnly ? 'entry' : 'full'}:${includePhotos ? 'photos' : 'no-photos'}:${condSig}`
 
   const nameSeg = sanitizeSegment(contract.customer?.name) || "contract"
   const postalSeg = sanitizeSegment(contract.address?.postalCode) || contract.id.slice(-8)
@@ -123,6 +124,7 @@ async function buildPreviewFile(id: string, requestUrl: string) {
       versionLabel,
       generatedOn,
       entryOnly,
+      includePhotos,
       filterByWorkOrderId: workOrderId,
       allowedConditions,
     }) as Buffer

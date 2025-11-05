@@ -64,7 +64,7 @@ const CONDITION_VALUES = new Set(Object.values(Condition))
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params
-  const body = await request.json().catch(() => ({})) as { title?: string; conditions?: unknown }
+  const body = await request.json().catch(() => ({})) as { title?: string; conditions?: unknown; includePhotos?: boolean }
   const titleInput = typeof body.title === "string" ? body.title.trim() : ""
 
   const conditionsInput = Array.isArray(body.conditions)
@@ -104,6 +104,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     generatedOn,
     allowedConditions,
     entryOnly: true,
+    includePhotos: body.includePhotos !== false,
   })
 
   const storageKey = buildStorageKey(contract, nextVersion)

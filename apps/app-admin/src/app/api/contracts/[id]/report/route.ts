@@ -24,6 +24,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   const customTitle = searchParams.get("title")
   const versionParam = searchParams.get("version")
   const versionLabel = versionParam ? (versionParam.startsWith("v") ? versionParam : `v${versionParam}`) : "v0.0 (Preview)"
+  const includePhotos = searchParams.get('photos') === '0' ? false : true
   const generatedOn = new Date()
 
   const buffer = await createContractReportBuffer(contract, {
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     versionLabel,
     generatedOn,
     entryOnly: true,
+    includePhotos,
   })
 
   const fileName = buildContractReportFilename(contract.customer?.name, contract.address?.postalCode, contract.id)
