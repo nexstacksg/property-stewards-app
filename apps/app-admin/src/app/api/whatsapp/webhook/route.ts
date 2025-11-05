@@ -5,8 +5,9 @@ import { handleMediaMessage, finalizePendingMediaWithRemark } from './media'
 import { getSessionState } from '@/lib/chat-session'
 import { getMemcacheClient } from '@/lib/memcache'
 
-export const runtime = 'nodejs' 
-// export const preferredRegion = ['sin1']
+// Ensure we run close to Singapore infra for lower latency
+export const runtime = 'nodejs'
+export const preferredRegion = ['sin1']
 
 // Per-instance idempotency to prevent duplicate responses
 const processedMessages = new Map<string, { timestamp: number; responseId: string; responded: boolean }>()

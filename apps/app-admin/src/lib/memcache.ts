@@ -8,38 +8,20 @@ import memjs from 'memjs'
 // - MEMCACHIER_TLS (optional, default true)
 
 let client: memjs.Client | null = null
-let warnedDisabled = false
-let warnedMissingEnv = false
 
 export function getMemcacheClient(): memjs.Client | null {
   if (client) return client
-
-  // Allow explicitly disabling memcache in environments where the
-  // service is unreachable (e.g., Proxmox without outbound access).
-  const disabled = (process.env.MEMCACHE_DISABLED ?? '').toLowerCase()
-  if (disabled === '1' || disabled === 'true') {
-    if (!warnedDisabled) {
-      console.warn('[memcache] Disabled via MEMCACHE_DISABLED env; skipping client init')
-      warnedDisabled = true
-    }
-    return null
-  }
 
   const servers = process.env.MEMCACHIER_SERVERS
   const username = process.env.MEMCACHIER_USERNAME
   const password = process.env.MEMCACHIER_PASSWORD
 
   if (!servers || !username || !password) {
-    if (!warnedMissingEnv) {
-      console.warn('[memcache] MEMCACHIER env vars missing; cache disabled')
-      warnedMissingEnv = true
-    }
+    console.warn('[memcache] MEMCACHIER env vars missing; cache disabled')
     return null
   }
 
   const useTLS = (process.env.MEMCACHIER_TLS ?? 'true').toLowerCase() !== 'false'
-  const timeoutMs = Number(process.env.MEMCACHE_TIMEOUT_MS ?? 1000) / 1000 // memjs expects seconds
-  const retries = Number(process.env.MEMCACHIER_RETRIES ?? 0)
 
   client = memjs.Client.create(servers, {
     username,
@@ -48,8 +30,8 @@ export function getMemcacheClient(): memjs.Client | null {
     // @ts-expect-error memjs types don’t include tls, but it’s supported at runtime
     tls: useTLS,
     // Small timeouts to avoid blocking critical paths
-    timeout: timeoutMs,
-    retries,
+    timeout: 1.5,
+    retries: 1,
   })
 
   return client

@@ -27,12 +27,6 @@ export async function middleware(req: NextRequest) {
   const session = req.cookies.get('session')?.value
   if (!session) return NextResponse.next()
 
-  // Short-circuit: if we validated very recently, skip network call.
-  const recentlyValidated = req.cookies.get('sv')?.value === '1'
-  if (recentlyValidated) {
-    return NextResponse.next()
-  }
-
   // Always check for protected paths when a session cookie exists
 
   // Validate session against DB via existing API (avoids Prisma in middleware)
@@ -60,16 +54,7 @@ export async function middleware(req: NextRequest) {
       return redirect
     }
 
-    // Mark session as validated for a short window to avoid repeated DB hits
-    const ok = NextResponse.next()
-    ok.cookies.set('sv', '1', {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: 60, // 1 minute TTL
-    })
-    return ok
+    return NextResponse.next()
   } catch {
     // In case of network or unexpected error, allow navigation (fail-open)
     return NextResponse.next()
