@@ -964,7 +964,14 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     while (rounds < maxRounds) {
       let completion: any
       try {
-        completion = await timeIt('openai_completion', () => openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
+        // Some models (e.g., gpt-5-nano) do not support custom temperature values.
+        // Omit the temperature parameter to use the model default and avoid 400 errors.
+        completion = await timeIt('openai_completion', () => openai.chat.completions.create({
+          model,
+          messages,
+          tools,
+          tool_choice: 'auto' as any,
+        }))
       } catch (e: any) {
         // No model fallback — surface the error to outer handler
         throw e
@@ -1002,7 +1009,6 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           messages,
           tools,
           tool_choice: 'none' as any,
-          temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2)
         }))
         finalText = (finalPass.choices?.[0]?.message?.content || '').toString().trim()
       } catch (e) {
