@@ -6,29 +6,16 @@ const globalForPrisma = globalThis as unknown as {
   prismaInstanceCount?: number
 }
 
-// Configure connection URL with environment-tunable pooling and PgBouncer support
+// Configure connection URL with environment-tunable pooling
 const databaseUrl = process.env.DATABASE_URL
 const connLimit = Number(process.env.PRISMA_CONNECTION_LIMIT || '30')
 const poolTimeout = Number(process.env.PRISMA_POOL_TIMEOUT || '30') // seconds
 const connectTimeout = Number(process.env.PRISMA_CONNECT_TIMEOUT || '10') // seconds
 const statementTimeout = Number(process.env.PRISMA_STATEMENT_TIMEOUT || '60000') // ms
-const usePgBouncer = (process.env.PRISMA_PGBOUNCER ?? '').toLowerCase() === 'true' || (process.env.PRISMA_PGBOUNCER ?? '') === '1'
 
-const connectionUrl = (() => {
-  if (!databaseUrl) return undefined
-  const params: string[] = [
-    `connection_limit=${connLimit}`,
-    `pool_timeout=${poolTimeout}`,
-    `connect_timeout=${connectTimeout}`,
-    `statement_timeout=${statementTimeout}`,
-  ]
-  if (usePgBouncer) {
-    // Disable prepared statements for PgBouncer transaction pooling
-    params.push('pgbouncer=true')
-  }
-  const sep = databaseUrl.includes('?') ? '&' : '?'
-  return `${databaseUrl}${sep}${params.join('&')}`
-})()
+const connectionUrl = databaseUrl
+  ? `${databaseUrl}${databaseUrl.includes('?') ? '&' : '?'}connection_limit=${connLimit}&pool_timeout=${poolTimeout}&connect_timeout=${connectTimeout}&statement_timeout=${statementTimeout}`
+  : undefined
 
 // Track instance creation for debugging (per-process)
 globalForPrisma.prismaInstanceCount = globalForPrisma.prismaInstanceCount ?? 0
