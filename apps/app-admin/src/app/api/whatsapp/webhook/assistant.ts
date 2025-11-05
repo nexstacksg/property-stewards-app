@@ -538,6 +538,13 @@ export async function processWithAssistant(phoneNumber: string, message: string)
               }
               return err
             }
+            // If user chose not to complete ([2]), keep collecting media on the same task
+            if (f && f.taskCompleted === false) {
+              return (typeof f.message === 'string' && f.message.trim().length > 0)
+                ? f.message
+                : 'Okay — you can send more photos/videos for this task.'
+            }
+
             // If the tool returned a nextTask (queued per-task follow-up), continue with it
             if (f?.nextTask && f.nextTask.id) {
               const name = f.nextTask.name || 'the next task'
