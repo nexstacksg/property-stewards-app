@@ -133,6 +133,29 @@ const connectionUrl = databaseUrl ?
   undefined
 ```
 
+### 5.1 Enable PgBouncer (Connection Pooling)
+
+Using DigitalOcean’s connection pooler (PgBouncer) reduces connection overhead and improves latency on long‑distance hosts.
+
+Steps:
+
+1. Enable Connection Pooling on your DO Postgres cluster and copy the pooled connection string (transaction pooling port).
+2. Set `DATABASE_URL` on the Proxmox host to the pooled endpoint (keep `?sslmode=require`).
+3. Set Prisma PgBouncer compatibility and tune limits:
+
+```bash
+# Proxmox / Production env
+export PRISMA_PGBOUNCER=true
+export PRISMA_CONNECTION_LIMIT=10   # typical 5–10 with PgBouncer
+export PRISMA_POOL_TIMEOUT=10       # seconds
+export PRISMA_CONNECT_TIMEOUT=5     # seconds
+export PRISMA_STATEMENT_TIMEOUT=30000 # ms
+```
+
+Notes:
+- `PRISMA_PGBOUNCER=true` automatically appends `pgbouncer=true` to the connection URL at runtime (see `src/lib/prisma.ts`).
+- For schema migrations, use a direct (non‑pooled) connection or temporarily unset `PRISMA_PGBOUNCER`.
+
 ### 6. Deploy Commands
 
 ```bash
