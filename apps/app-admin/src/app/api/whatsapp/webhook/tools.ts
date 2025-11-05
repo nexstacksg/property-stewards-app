@@ -513,8 +513,7 @@ You can omit any numbers you want to leave unset.`
         if (!workOrderId || !contractChecklistItemId || !subLocationId || !conditionsText) {
           return JSON.stringify({ success: false, error: 'Missing required parameters' })
         }
-        // Ensure a single location-level ItemEntry exists for this item+subLocation so
-        // per-task findings (including GOOD/UN_OBSERVABLE/NOT_APPLICABLE) can be attached.
+        // Start a NEW inspection run: create a fresh ItemEntry for this item+subLocation
         let locationEntryId: string | null = null
         try {
           let inspectorId: string | null = null
@@ -522,15 +521,13 @@ You can omit any numbers you want to leave unset.`
             const s = await getSessionState(sessionId)
             inspectorId = s?.inspectorId || null
           }
-          const existingEntry = await prisma.itemEntry.findFirst({ where: { itemId: contractChecklistItemId, locationId: subLocationId }, orderBy: { createdOn: 'desc' } })
-          if (existingEntry) {
-            locationEntryId = existingEntry.id
-          } else {
-            const created = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, locationId: subLocationId, inspectorId: inspectorId || undefined } as any })
-            locationEntryId = created.id
+          const created = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, locationId: subLocationId, inspectorId: inspectorId || undefined } as any })
+          locationEntryId = created.id
+          if (sessionId) {
+            await updateSessionState(sessionId, { currentTaskEntryId: locationEntryId })
           }
         } catch (e) {
-          console.error('setSubLocationConditions: failed to ensure location entry', e)
+          console.error('setSubLocationConditions: failed to create new location entry', e)
         }
         // Load tasks for that sub-location in stable order
         const tasks = await prisma.checklistTask.findMany({
@@ -729,14 +726,19 @@ You can omit any numbers you want to leave unset.`
             inspectorId = await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId)
           }
         }
-        // Upsert a single ItemEntry for this item+sub-location (shared across tasks)
+        // If the current run already created an entry, update it; otherwise create a new one
         const prefix = subLocationName ? `[${subLocationName}] ` : ''
-        let entry = await prisma.itemEntry.findFirst({ where: { itemId: contractChecklistItemId, locationId: subLocationId }, orderBy: { createdOn: 'desc' } })
-        if (entry) {
-          entry = await prisma.itemEntry.update({ where: { id: entry.id }, data: { remarks: `${prefix}${remarks}` } })
+        let entryIdToUse: string | null = null
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          entryIdToUse = s?.currentTaskEntryId || null
+        }
+        let entry
+        if (entryIdToUse) {
+          entry = await prisma.itemEntry.update({ where: { id: entryIdToUse }, data: { remarks: `${prefix}${remarks}` } })
         } else {
-          // Do not store cause/resolution at ItemEntry (location) level; keep them per-task in ChecklistTaskFinding
           entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
+          if (sessionId) await updateSessionState(sessionId, { currentTaskEntryId: entry.id })
         }
         try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         if (sessionId) {
@@ -1379,7 +1381,7 @@ You can omit any numbers you want to leave unset.`
             })
           }
 
-          if (sessionId) {
+          if (sessionId && completed) {
             await updateSessionState(sessionId, {
               taskFlowStage: undefined,
               currentTaskId: undefined,

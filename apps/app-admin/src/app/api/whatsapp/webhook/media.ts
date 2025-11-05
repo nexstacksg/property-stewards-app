@@ -50,7 +50,13 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     // Extract media URL
     let mediaUrl: string | undefined
     let mediaType: 'photo' | 'video' = 'photo'
-    const mediaDownloadPath = data.media?.file?.download || data.media?.links?.download || data.links?.download
+    const mediaDownloadPath =
+      data.media?.file?.download ||
+      data.media?.links?.download ||
+      data.links?.download ||
+      // Fallback: some payloads expose a resource link that serves the binary
+      data.media?.links?.resource ||
+      data.media?.file?.resource
 
     if (data.type === 'image' || data.message?.imageMessage?.url) {
       mediaUrl = data.url || data.message?.imageMessage?.url
@@ -96,6 +102,7 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     })
     if (!response.ok) throw new Error(`Failed to download media: ${response.status} ${response.statusText}`)
 
+    const contentLengthHeader = response.headers.get('content-length')
     const buffer = await response.arrayBuffer()
     const uint8Array = new Uint8Array(buffer)
     debugLog('📦 Downloaded media buffer size:', buffer.byteLength, 'bytes')
@@ -112,7 +119,24 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     debugLog('📤 Uploading to DigitalOcean Spaces:', key)
 
     // Upload to DO Spaces
-    const uploadParams = { Bucket: BUCKET_NAME, Key: key, Body: uint8Array, ContentType: mediaType === 'video' ? 'video/mp4' : 'image/jpeg', ACL: 'public-read' as const, Metadata: { workOrderId, location: roomName, mediaType, originalName: filename, uploadedAt: new Date().toISOString(), source: 'whatsapp' } }
+    const uploadParams = {
+      Bucket: BUCKET_NAME,
+      Key: key,
+      Body: uint8Array,
+      ContentType: mediaType === 'video' ? 'video/mp4' : 'image/jpeg',
+      ACL: 'public-read' as const,
+      // If content-length is known from source, pass it to S3; this can
+      // help some gateways optimize transfer and avoid chunked overhead.
+      ...(contentLengthHeader ? { ContentLength: Number(contentLengthHeader) } : {}),
+      Metadata: {
+        workOrderId,
+        location: roomName,
+        mediaType,
+        originalName: filename,
+        uploadedAt: new Date().toISOString(),
+        source: 'whatsapp'
+      }
+    }
     const tUp0 = Date.now()
     await s3Client.send(new PutObjectCommand(uploadParams))
     if (perfOn) console.log('[perf][media] uploadMs=', Date.now() - tUp0)
@@ -242,19 +266,9 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
     try {
       if (!currentTaskEntryId && activeTaskItemId) {
         const locId = currentSubLocationId || activeTaskLocationId || undefined
-        // Prefer single location-level entry (shared across tasks) when sub-location context exists
-        if (locId) {
-          const locationEntry = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, locationId: locId }, orderBy: { createdOn: 'desc' } })
-          if (locationEntry) currentTaskEntryId = locationEntry.id
-        }
-        if (!currentTaskEntryId && resolvedInspectorId) {
-          const orphan = await prisma.itemEntry.findFirst({ where: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, taskId: null }, orderBy: { createdOn: 'desc' } })
-          if (orphan) currentTaskEntryId = orphan.id
-        }
-        if (!currentTaskEntryId) {
-          const created = await prisma.itemEntry.create({ data: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId, locationId: (locId as any), condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
-          currentTaskEntryId = created.id
-        }
+        // For a new run, create a new entry explicitly
+        const created = await prisma.itemEntry.create({ data: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId || undefined, locationId: (locId as any), condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
+        currentTaskEntryId = created.id
         await updateSessionState(phoneNumber, { currentTaskEntryId })
       }
       if (currentTaskEntryId) {

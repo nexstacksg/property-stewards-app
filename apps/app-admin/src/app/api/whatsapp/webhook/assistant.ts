@@ -94,6 +94,7 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       try { return await fn() } finally { if (perfOn) perfEvents.push({ name, ms: Date.now() - t0 }) }
     }
     debugLog('start', { phoneNumber, len: message?.length })
+
     const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-5-nano').trim()
 
     // Minimal stateful guard: when the user is in a strict step, translate
@@ -963,19 +964,17 @@ export async function processWithAssistant(phoneNumber: string, message: string)
     while (rounds < maxRounds) {
       let completion: any
       try {
-        completion = await timeIt('openai_completion', () => openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
+        // Some models (e.g., gpt-5-nano) do not support custom temperature values.
+        // Omit the temperature parameter to use the model default and avoid 400 errors.
+        completion = await timeIt('openai_completion', () => openai.chat.completions.create({
+          model,
+          messages,
+          tools,
+          tool_choice: 'auto' as any,
+        }))
       } catch (e: any) {
-        // Fallback if model unsupported for chat
-        if (String(e?.code || '').includes('unsupported') || String(e?.message || '').includes('model')) {
-          if (model !== 'gpt-4o-mini') {
-            debugLog('model unsupported for chat; falling back to gpt-4o-mini')
-            completion = await timeIt('openai_completion_fallback', () => openai.chat.completions.create({ model: 'gpt-4o-mini', messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
-          } else {
-            throw e
-          }
-        } else {
-          throw e
-        }
+        // No model fallback — surface the error to outer handler
+        throw e
       }
       const choice = completion.choices?.[0]?.message
       if (!choice) break
@@ -1010,7 +1009,6 @@ export async function processWithAssistant(phoneNumber: string, message: string)
           messages,
           tools,
           tool_choice: 'none' as any,
-          temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2)
         }))
         finalText = (finalPass.choices?.[0]?.message?.content || '').toString().trim()
       } catch (e) {
