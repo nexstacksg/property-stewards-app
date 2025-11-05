@@ -52,9 +52,10 @@ function buildVersionedKey(contract: any, version: string) {
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params
-  const body = await request.json().catch(() => ({})) as { title?: string; conditions?: unknown; entryOnly?: boolean }
+  const body = await request.json().catch(() => ({})) as { title?: string; conditions?: unknown; entryOnly?: boolean; includePhotos?: boolean }
   const titleInput = typeof body.title === "string" ? body.title.trim() : ""
   const entryOnly = body.entryOnly !== false // default true
+  const includePhotos = body.includePhotos !== false // default true
 
   // Normalize conditions (must match preview build)
   const allConditions = new Set(Object.values(Condition))
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const normalizedTitle = (titleInput || '').trim()
   const versionLabel = 'v0.0 (Preview)'
   const workOrderId = null
-  const expectedSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}:${entryOnly ? 'entry' : 'full'}:${condSig}`
+  const expectedSignature = `${contract.id}:${dataEpoch}:${versionLabel}:${normalizedTitle}:${workOrderId || 'all'}:${entryOnly ? 'entry' : 'full'}:${includePhotos ? 'photos' : 'no-photos'}:${condSig}`
 
   // Ensure preview file exists and, if possible, matches our signature
   const previewKey = buildPreviewKey(contract)

@@ -42,12 +42,14 @@ export function GenerateContractReportButton({
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState(defaultTitle)
   const [selectedConditions, setSelectedConditions] = useState<string[]>(CONDITION_OPTIONS.map((option) => option.value))
+  const [includePhotos, setIncludePhotos] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (open) {
       setTitle(defaultTitle)
       setSelectedConditions(CONDITION_OPTIONS.map((option) => option.value))
+      setIncludePhotos(true)
     }
   }, [open, defaultTitle])
 
@@ -83,6 +85,7 @@ export function GenerateContractReportButton({
       }
       // Append all selected conditions as repeated params for precise filtering
       selectedConditions.forEach((c) => url.searchParams.append('conditions', c))
+      url.searchParams.set('photos', includePhotos ? '1' : '0')
 
       let fileUrl: string | undefined
       try {
@@ -122,7 +125,7 @@ export function GenerateContractReportButton({
       const commitResp = await fetch(`/api/contracts/${contractId}/reports/commit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, conditions: selectedConditions, entryOnly: true })
+        body: JSON.stringify({ title, conditions: selectedConditions, entryOnly: true, includePhotos })
       })
       if (!commitResp.ok) {
         const msg = `Commit failed (${commitResp.status})`
@@ -178,22 +181,34 @@ export function GenerateContractReportButton({
               placeholder="Inspection Report"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Include conditions</Label>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {CONDITION_OPTIONS.map((option) => (
-                <label key={option.value} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded-sm border border-input text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    checked={selectedConditions.includes(option.value)}
-                    onChange={() => toggleCondition(option.value)}
-                  />
-                  <span>{option.label}</span>
-                </label>
-              ))}
-            </div>
+        <div className="space-y-2">
+          <Label>Include conditions</Label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {CONDITION_OPTIONS.map((option) => (
+              <label key={option.value} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded-sm border border-input text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  checked={selectedConditions.includes(option.value)}
+                  onChange={() => toggleCondition(option.value)}
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
           </div>
+        </div>
+        <div className="space-y-2">
+          <Label>Options</Label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded-sm border border-input text-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              checked={includePhotos}
+              onChange={(e) => setIncludePhotos(e.target.checked)}
+            />
+            <span>Include photos</span>
+          </label>
+        </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={submitting}>
               Cancel

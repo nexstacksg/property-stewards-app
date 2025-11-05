@@ -27,6 +27,7 @@ export type ReportBuildOptions = {
   // "No remarks recorded." rows.
   entryOnly?: boolean
   filterByWorkOrderId?: string | null
+  includePhotos?: boolean
 }
 
 function applyWatermark(doc: any, logoBuffer?: Buffer) {
@@ -315,6 +316,7 @@ async function writeContractReport(doc: any, contract: any, options: ReportBuild
     filterByWorkOrderId: options.filterByWorkOrderId ?? null,
     allowedConditions: options.allowedConditions ?? undefined,
     entryOnly: options.entryOnly ?? false,
+    includePhotos: options.includePhotos !== false,
   })
 
 
