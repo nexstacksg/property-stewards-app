@@ -95,8 +95,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       try { return await fn() } finally { if (perfOn) perfEvents.push({ name, ms: Date.now() - t0 }) }
     }
     debugLog('start', { phoneNumber, len: message?.length })
-    // Default to a widely supported, fast model to avoid fallback penalty
-    const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-4o-mini').trim()
+    // Use gpt-5-nano by default as requested; no automatic fallback
+    const model = (process.env.WHATSAPP_ASSISTANT_MODEL || 'gpt-5-nano').trim()
 
     // Minimal stateful guard: when the user is in a strict step, translate
     // the message directly into the corresponding tool call to keep session
@@ -968,17 +968,8 @@ export async function processWithAssistant(phoneNumber: string, message: string)
       try {
         completion = await timeIt('openai_completion', () => openai.chat.completions.create({ model, messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
       } catch (e: any) {
-        // Fallback if model unsupported for chat
-        if (String(e?.code || '').includes('unsupported') || String(e?.message || '').includes('model')) {
-          if (model !== 'gpt-4o-mini') {
-            debugLog('model unsupported for chat; falling back to gpt-4o-mini')
-            completion = await timeIt('openai_completion_fallback', () => openai.chat.completions.create({ model: 'gpt-4o-mini', messages, tools, tool_choice: 'auto' as any, temperature: Number(process.env.WHATSAPP_TEMPERATURE ?? 0.2) }))
-          } else {
-            throw e
-          }
-        } else {
-          throw e
-        }
+        // No model fallback — surface the error to outer handler
+        throw e
       }
       const choice = completion.choices?.[0]?.message
       if (!choice) break
