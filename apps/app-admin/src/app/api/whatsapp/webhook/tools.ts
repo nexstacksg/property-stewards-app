@@ -1379,7 +1379,7 @@ You can omit any numbers you want to leave unset.`
             })
           }
 
-          if (sessionId) {
+          if (sessionId && completed) {
             await updateSessionState(sessionId, {
               taskFlowStage: undefined,
               currentTaskId: undefined,
