@@ -419,7 +419,8 @@ async function buildTableRows(
   items: any[],
   imageCache: Map<string, Buffer>,
   allowedConditions?: Set<string>,
-  entryOnly: boolean = false
+  entryOnly: boolean = false,
+  includePhotos: boolean = true
 ): Promise<TableRowInfo[]> {
   const rows: TableRowInfo[] = []
 
@@ -751,11 +752,11 @@ async function buildTableRows(
         }
 
         // Build and append rows only when there are photos
-        if (entryPhotoRows.length > 0) {
+        if (includePhotos && entryPhotoRows.length > 0) {
           const title = `${group.label} — Remarks & Media`
           const entryMediaSegment = await buildRemarkSegment({
             text: title,
-            photoEntries: entryPhotoRows,
+            photoEntries: includePhotos ? entryPhotoRows : [],
             videoUrls: [],
             imageCache,
             seenPhotos: seenItemPhotos,
@@ -775,10 +776,10 @@ async function buildTableRows(
           }
         }
 
-        if (taskPhotoEntriesList.length > 0) {
+        if (includePhotos && taskPhotoEntriesList.length > 0) {
           const taskMediaSegment = await buildRemarkSegment({
             text: undefined,
-            photoEntries: taskPhotoEntriesList,
+            photoEntries: includePhotos ? taskPhotoEntriesList : [],
             videoUrls: [],
             imageCache,
             seenPhotos: seenItemPhotos,
@@ -868,10 +869,10 @@ async function buildTableRows(
           }
         }
       }
-      if (mediaNoTask.length > 0) {
+      if (includePhotos && mediaNoTask.length > 0) {
         const seg = await buildRemarkSegment({
           text: 'General — Remarks & Media',
-          photoEntries: mediaNoTask,
+          photoEntries: includePhotos ? mediaNoTask : [],
           videoUrls: [],
           imageCache,
           seenPhotos: seenItemPhotos,
@@ -881,10 +882,10 @@ async function buildTableRows(
           rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg, mediaOnly: true })
         }
       }
-      if (mediaWithTask.length > 0) {
+      if (includePhotos && mediaWithTask.length > 0) {
         const seg2 = await buildRemarkSegment({
           text: undefined,
-          photoEntries: mediaWithTask,
+          photoEntries: includePhotos ? mediaWithTask : [],
           videoUrls: [],
           imageCache,
           seenPhotos: seenItemPhotos,
@@ -1460,6 +1461,7 @@ export async function appendWorkOrderSection(
     filterByWorkOrderId?: string | null
     allowedConditions?: string[] | null
     entryOnly?: boolean
+    includePhotos?: boolean
   } = {}
 ) {
   if (options.startOnNewPage) {
@@ -1514,7 +1516,7 @@ export async function appendWorkOrderSection(
     ? new Set(options.allowedConditions.map((value) => value.toUpperCase()))
     : undefined
 
-  const tableRows = await buildTableRows(scopedItems, imageCache, allowedConditionSet, options.entryOnly === true)
+  const tableRows = await buildTableRows(scopedItems, imageCache, allowedConditionSet, options.entryOnly === true, options.includePhotos !== false)
 
   if (tableRows.length === 0) {
     doc.text("No checklist items found for this work order.", { italic: true })
