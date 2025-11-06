@@ -726,7 +726,7 @@ You can omit any numbers you want to leave unset.`
             inspectorId = await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId)
           }
         }
-        // If the current run already created an entry, update it; otherwise create a new one
+        // If the current run already created an entry, update it; otherwise create new for this run
         const prefix = subLocationName ? `[${subLocationName}] ` : ''
         let entryIdToUse: string | null = null
         if (sessionId) {
