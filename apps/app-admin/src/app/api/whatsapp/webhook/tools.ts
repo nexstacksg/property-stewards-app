@@ -431,7 +431,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentSubLocationName: undefined,
             currentTaskId: undefined,
             currentTaskName: undefined,
-            currentTaskEntryId: undefined,
+            // keep currentTaskEntryId untouched; will be set at run start (setSubLocationConditions)
             currentTaskCondition: undefined,
             // enter sub-location condition collection by default
             taskFlowStage: 'condition',
@@ -1429,7 +1429,7 @@ You can omit any numbers you want to leave unset.`
                     pendingTaskIndex: nextIdx,
                     currentTaskId: nextId,
                     currentTaskName: dbNext?.name || undefined,
-                    currentTaskEntryId: undefined,
+                    // keep currentTaskEntryId for the run
                     currentTaskCondition: (dbNext?.condition as any) || undefined,
                     taskFlowStage: ((dbNext?.condition || '').toUpperCase() === 'FAIR' || (dbNext?.condition || '').toUpperCase() === 'UNSATISFACTORY') ? 'cause' : 'media'
                   })
