@@ -136,11 +136,11 @@ export async function POST(request: NextRequest) {
     // Create contract
     const normalizedContractType = contractType === 'REPAIR' ? 'REPAIR' : 'INSPECTION'
 
-    let normalizedMarketingSourceId: string | null = null
-    if (typeof marketingSourceId === 'string' && marketingSourceId.trim().length > 0) {
-      const ms = await prisma.marketingSource.findUnique({ where: { id: marketingSourceId } })
-      normalizedMarketingSourceId = ms ? ms.id : null
-    }
+    // Trust provided marketingSourceId and let FK enforce validity (saves one round trip)
+    const normalizedMarketingSourceId: string | undefined =
+      typeof marketingSourceId === 'string' && marketingSourceId.trim().length > 0
+        ? marketingSourceId.trim()
+        : undefined
 
     const sanitizedReferenceIds = Array.isArray(referenceIds)
       ? referenceIds.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0)
@@ -170,20 +170,27 @@ export async function POST(request: NextRequest) {
       servicePackage,
       remarks,
       contractType: normalizedContractType,
-      marketingSourceId: normalizedMarketingSourceId ?? undefined,
+      marketingSourceId: normalizedMarketingSourceId,
       referenceIds: sanitizedReferenceIds,
       status: 'DRAFT' as const,
       contactPersons: sanitizedContactPersons.length > 0 ? (sanitizedContactPersons as any) : undefined
     }
 
-    const contractInclude = {
-      customer: true,
-      address: true,
-      basedOnChecklist: true,
-      // contactPersons is scalar JSON; no include needed
-    }
+    // Optionally return a minimal response to reduce extra selects over high RTT links
+    const minimalResponse = (process.env.CONTRACT_CREATE_MINIMAL_RESPONSE ?? '').toLowerCase() === 'true'
+    const contractInclude = minimalResponse
+      ? undefined
+      : ({ customer: true, address: true, basedOnChecklist: true } as const)
 
     let contract: Awaited<ReturnType<typeof prisma.contract.create>> | null = null
+
+    // Pre-fetch checklist template (if any) in parallel to contract creation to overlap latency
+    const checklistPromise = basedOnChecklistId
+      ? prisma.checklist.findUnique({
+          where: { id: basedOnChecklistId },
+          select: { id: true, items: { select: { name: true, order: true } } },
+        })
+      : null
 
     for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
       try {
@@ -194,15 +201,18 @@ export async function POST(request: NextRequest) {
               data: {
                 ...baseContractData,
                 id: generatedId,
-              },
-              include: contractInclude,
+              }, 
+              include: contractInclude as any,
             })
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          // Use ReadCommitted for lower contention; retry on unique conflicts
+          { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         )
         break
-      } catch (transactionError) {
-        if (isRetryableTransactionError(transactionError) && attempt < MAX_TRANSACTION_ATTEMPTS - 1) {
+      } catch (transactionError: any) {
+        const isUniqueConflict =
+          transactionError instanceof Prisma.PrismaClientKnownRequestError && transactionError.code === 'P2002'
+        if ((isRetryableTransactionError(transactionError) || isUniqueConflict) && attempt < MAX_TRANSACTION_ATTEMPTS - 1) {
           continue
         }
         throw transactionError
@@ -213,24 +223,19 @@ export async function POST(request: NextRequest) {
       throw new Error('Unable to create contract after retrying transaction')
     }
 
-    // If a checklist template is specified, create contract checklist
+    // If a checklist template is specified, fetch it in parallel while creating the contract
+    // (if not already fetched). Then create contract checklist with nested items.
     if (basedOnChecklistId) {
-      const checklistTemplate = await prisma.checklist.findUnique({
-        where: { id: basedOnChecklistId },
-        include: { items: true }
-      })
+      const checklistTemplate = checklistPromise ? await checklistPromise : null
 
-      if (checklistTemplate) {
+      if (checklistTemplate && checklistTemplate.items.length > 0) {
         await prisma.contractChecklist.create({
           data: {
             contractId: contract.id,
             items: {
-              create: checklistTemplate.items.map(item => ({
-                name: item.name,
-                order: item.order
-              }))
-            }
-          }
+              create: checklistTemplate.items.map((item) => ({ name: item.name, order: item.order })),
+            },
+          },
         })
       }
     }
