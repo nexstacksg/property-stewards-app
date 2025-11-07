@@ -54,10 +54,16 @@ async function getChecklistItem(id: string) {
                 orderBy: { order: 'asc' }
               }
             },
-            orderBy: { createdOn: 'asc' }
+            orderBy: [
+              { order: 'asc' },
+              { createdOn: 'asc' }
+            ]
           }as any
         },
-        orderBy: { createdOn: 'asc' }
+        orderBy: [
+          { order: 'asc' },
+          { createdOn: 'asc' }
+        ]
       },
       locations: {
         include: {
@@ -67,7 +73,10 @@ async function getChecklistItem(id: string) {
                 select: { id: true }
               }
             },
-            orderBy: { createdOn: 'asc' }
+            orderBy: [
+              { order: 'asc' },
+              { createdOn: 'asc' }
+            ]
           }
         },
         orderBy: { order: 'asc' }

@@ -166,7 +166,10 @@ export async function warmMemcacheAll(): Promise<{ ok: boolean; results: Record<
             status: true,
             order: true,
             tasks: {
-              orderBy: { createdOn: 'asc' },
+              orderBy: [
+                { order: 'asc' },
+                { createdOn: 'asc' }
+              ],
               select: {
                 id: true,
                 name: true,

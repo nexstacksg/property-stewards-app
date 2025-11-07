@@ -325,6 +325,7 @@ model ChecklistTask {
   locationId  String?
   inspectorId String?
   name        String
+  order       Int      @default(0)
   status      ChecklistTaskStatus @default(PENDING)
   condition   Condition?
   photos      String[] @default([])

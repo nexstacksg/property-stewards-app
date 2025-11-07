@@ -74,14 +74,15 @@ export async function PATCH(
 
         if (parsedTasks.length > 0) {
           await tx.checklistTask.createMany({
-            data: parsedTasks.map(({ itemId, name, status }) => ({ itemId, name, status }))
+            data: parsedTasks.map(({ itemId, name, status, order }) => ({ itemId, name, status, order }))
           })
         } else {
           await tx.checklistTask.create({
             data: {
               itemId: id,
               name: updatedItem.name || 'Inspection task',
-              status: 'PENDING'
+              status: 'PENDING',
+              order: 1
             }
           })
         }

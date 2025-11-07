@@ -62,7 +62,10 @@ async function getContract(contractId: string) {
                     orderBy: { order: 'asc' },
                     include: {
                       tasks: {
-                        orderBy: { createdOn: 'asc' }
+                        orderBy: [
+                          { order: 'asc' },
+                          { createdOn: 'asc' }
+                        ]
                       }
                     }
                   }
