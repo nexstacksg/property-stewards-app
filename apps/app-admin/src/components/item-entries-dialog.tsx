@@ -13,7 +13,7 @@ import {
 import AddRemarkForm from "@/components/item-entries-dialog/add-remark-form"
 import EntryCard from "@/components/item-entries-dialog/entry-card"
 import { DisplayEntry, Entry, PendingMediaFile, Task } from "@/components/item-entries-dialog/types"
-import { extractEntryMedia, mergeMediaLists, stringsToAttachments } from "@/lib/media-utils"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments, stringsToAttachmentsWithTask } from "@/lib/media-utils"
 import { useRouter } from "next/navigation"
 
 type Props = {
@@ -28,6 +28,8 @@ type Props = {
   }>
   itemName?: string
   triggerLabel?: string | ((count: number) => string)
+  // Optional: checklist item number used for index labeling (e.g., 6.4.1)
+  itemNumber?: number
 }
 
 export default function ItemEntriesDialog({
@@ -38,6 +40,7 @@ export default function ItemEntriesDialog({
   locations = [],
   itemName,
   triggerLabel,
+  itemNumber,
 }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -621,11 +624,11 @@ export default function ItemEntriesDialog({
         task,
         photos: mergeMediaLists([
           extractEntryMedia(entry, 'PHOTO'),
-          stringsToAttachments(task?.photos)
+          stringsToAttachmentsWithTask(task?.photos, task?.id)
         ]),
         videos: mergeMediaLists([
           extractEntryMedia(entry, 'VIDEO'),
-          stringsToAttachments(task?.videos)
+          stringsToAttachmentsWithTask(task?.videos, task?.id)
         ]),
       } as any
     })
@@ -654,7 +657,7 @@ export default function ItemEntriesDialog({
           {triggerText}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl max-h-[72vh] overflow-auto">
+      <DialogContent className="sm:max-w-4xl md:max-w-5xl w-full max-h-[82vh] overflow-auto">
         <DialogHeader>
           <DialogTitle>{itemName ? `${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
           <DialogDescription>
@@ -729,6 +732,7 @@ export default function ItemEntriesDialog({
               setTaskCauseById={(updater) => setTaskCauseById((prev) => updater(prev))}
               taskResolutionById={taskResolutionById}
               setTaskResolutionById={(updater) => setTaskResolutionById((prev) => updater(prev))}
+              itemNumber={itemNumber}
             />
           ) : null}
 
@@ -743,6 +747,7 @@ export default function ItemEntriesDialog({
                     itemId={itemId}
                     workOrderId={workOrderId}
                     itemName={itemName}
+                    itemNumber={itemNumber}
                     locationOptions={locationOptions}
                     isEditing={isEditing}
                     submitting={submitting}
