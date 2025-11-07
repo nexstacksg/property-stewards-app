@@ -43,6 +43,8 @@ type Props = {
   updateAddedTaskVideoCaption: (taskId: string, index: number, caption: string) => void
   removeAddedTaskPhotoAt: (taskId: string, index: number) => void
   removeAddedTaskVideoAt: (taskId: string, index: number) => void
+  // Optional: checklist item number used to prefix indices
+  itemNumber?: number
 }
 
 export default function EditRemarkForm({
@@ -78,6 +80,7 @@ export default function EditRemarkForm({
   updateAddedTaskVideoCaption,
   removeAddedTaskPhotoAt,
   removeAddedTaskVideoAt,
+  itemNumber,
 }: Props) {
   // Global task order across all locations (preserves location order, then subtask order)
   const taskOrder = useMemo(() => {
@@ -106,6 +109,17 @@ export default function EditRemarkForm({
     return g
   }, [entry.media])
 
+  // Quick lookup for index prefix by task id (location position + task position)
+  const indexByTaskId = useMemo(() => {
+    const map = new Map<string, { loc: number; idx: number }>()
+    locationOptions.forEach((loc, locPos) => {
+      (loc.tasks || []).forEach((t, tPos) => {
+        if (t?.id) map.set(t.id, { loc: locPos + 1, idx: tPos + 1 })
+      })
+    })
+    return map
+  }, [locationOptions])
+
   const entryMediaInputRef = useRef<HTMLInputElement>(null)
   const findingMediaInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const setFindingRef = (taskId: string, el: HTMLInputElement | null) => { findingMediaInputRefs.current[taskId] = el }
@@ -133,11 +147,13 @@ export default function EditRemarkForm({
               const causeValue = current.cause || ''
               const resolutionValue = current.resolution || ''
               const media = mediaByTaskId.get(taskId) || []
+              const ix = indexByTaskId.get(taskId)
+              const prefix = ix ? (itemNumber ? `${ix.loc}.${itemNumber}.${ix.idx}` : `${ix.loc}.${ix.idx}`) : null
               const showCR = condValue === 'FAIR' || condValue === 'UNSATISFACTORY'
               return (
                 <div key={f.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium w-60" title={taskName}>{taskName}</div>
+                    <div className="text-sm font-medium w-60" title={taskName}>{prefix ? `${prefix} ${taskName}` : taskName}</div>
                     <select
                       className="h-8 w-56 rounded-md border text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
                       value={condValue}

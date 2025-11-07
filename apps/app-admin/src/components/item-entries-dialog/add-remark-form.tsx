@@ -46,6 +46,8 @@ type Props = {
   setTaskCauseById: (updater: (prev: Record<string, string>) => Record<string, string>) => void
   taskResolutionById: Record<string, string>
   setTaskResolutionById: (updater: (prev: Record<string, string>) => Record<string, string>) => void
+  // Optional: checklist item number for index label (e.g., 6.4.1)
+  itemNumber?: number
 }
 
 export default function AddRemarkForm({
@@ -84,6 +86,7 @@ export default function AddRemarkForm({
   setTaskCauseById,
   taskResolutionById,
   setTaskResolutionById,
+  itemNumber,
 }: Props) {
   const needsCauseResolution = (cond: string | undefined) => cond === 'FAIR' || cond === 'UNSATISFACTORY'
   return (
@@ -113,18 +116,22 @@ export default function AddRemarkForm({
             <p className="text-sm text-muted-foreground">No subtasks for this location.</p>
           ) : (
             <div className="space-y-3">
-              {availableTasks.map((task) => {
+              {availableTasks.map((task, idx) => {
                 const cond = conditionsByTask[task.id] ?? ''
                 const tPhotos = taskPhotoFiles[task.id] || []
                 const tVideos = taskVideoFiles[task.id] || []
                 const cause = taskCauseById[task.id] || ''
                 const resolution = taskResolutionById[task.id] || ''
                 const inputId = `task-media-${itemId}-${task.id}`
+                // Compute index label: locationIndex.itemNumber.taskIndex
+                const locIdx = Math.max(0, locationOptions.findIndex((l) => l.id === selectedLocationId)) + 1
+                const taskIdx = idx + 1
+                const indexLabel = itemNumber ? `${locIdx}.${itemNumber}.${taskIdx}` : `${locIdx}.${taskIdx}`
                 return (
                   <div key={task.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-medium w-60" title={task.name || 'Untitled subtask'}>
-                        {task.name || 'Untitled subtask'}
+                        {indexLabel} {task.name || 'Untitled subtask'}
                       </span>
                       <select
                         className="h-8 w-56 rounded-md border text-sm focus:outline-none focus:ring-0 focus:border-gray-300"

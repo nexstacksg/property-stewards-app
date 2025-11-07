@@ -41,8 +41,8 @@ export type Entry = {
 
 export type DisplayEntry = Entry & {
   task: Task | undefined
-  photos: import("@/components/work-order-item-media").MediaAttachment[]
-  videos: import("@/components/work-order-item-media").MediaAttachment[]
+  photos: import("@/lib/media-utils").MediaAttachment[]
+  videos: import("@/lib/media-utils").MediaAttachment[]
 }
 
 export type PendingMediaFile = {
