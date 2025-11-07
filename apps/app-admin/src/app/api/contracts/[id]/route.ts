@@ -27,12 +27,18 @@ export async function GET(
                   orderBy: { order: 'asc' },
                   include: {
                     tasks: {
-                      orderBy: { createdOn: 'asc' }
+                      orderBy: [
+                        { order: 'asc' },
+                        { createdOn: 'asc' }
+                      ]
                     }
                   }
                 },
                 checklistTasks: {
-                  orderBy: { createdOn: 'asc' },
+                  orderBy: [
+                    { order: 'asc' },
+                    { createdOn: 'asc' }
+                  ],
                   include: {
                     location: true,
                   }

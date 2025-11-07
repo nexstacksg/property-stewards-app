@@ -16,7 +16,10 @@ export async function GET(
         media: { orderBy: { order: 'asc' } },
         task: true,
       },
-      orderBy: { createdOn: 'asc' }
+      orderBy: [
+        { order: 'asc' },
+        { createdOn: 'asc' }
+      ]
     })
     return NextResponse.json({ contributions })
   } catch (error) {

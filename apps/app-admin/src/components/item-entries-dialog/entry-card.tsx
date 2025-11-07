@@ -114,7 +114,7 @@ export default function EntryCard({
         if (t?.id) taskNameById.set(t.id, t.name || 'Subtask')
       })
     })
-    findingSummaries = entryFindings.map((f) => {
+    const rawSummaries = entryFindings.map((f) => {
       const name = taskNameById.get(f.taskId) || 'Subtask'
       const details = (f?.details && typeof f.details === 'object') ? f.details as any : {}
       const condRaw: string | null = typeof details.condition === 'string' ? details.condition : null
@@ -123,6 +123,30 @@ export default function EntryCard({
       const resolution = typeof details.resolution === 'string' && details.resolution.trim().length > 0 ? details.resolution.trim() : null
       return { taskName: name, conditionLabel: condLabel, cause, resolution }
     })
+
+    // Sort summaries by the contract checklist subtask order for this location
+    const sortLocationId = (entry as any)?.location?.id || entry.task?.location?.id || locationIdFromEntry
+    let loc = locationOptions.find((l) => l.id === sortLocationId)
+    if (!loc) {
+      // Infer location by best overlap between entryFinding taskIds and location.tasks
+      const findingIds = new Set(entryFindings.map((f) => f.taskId).filter(Boolean))
+      let best: { loc: typeof locationOptions[number] | null; score: number } = { loc: null, score: -1 }
+      locationOptions.forEach((candidate) => {
+        const ids = new Set((candidate.tasks || []).map((t) => t.id))
+        let score = 0
+        findingIds.forEach((id) => { if (ids.has(id)) score++ })
+        if (score > best.score) best = { loc: candidate, score }
+      })
+      if (best.loc && best.score > 0) loc = best.loc
+    }
+    if (loc && Array.isArray(loc.tasks) && loc.tasks.length > 0) {
+      const orderIndex = new Map<string, number>()
+      loc.tasks.forEach((t, idx) => { if (t?.id) orderIndex.set(t.id, idx) })
+      const pairs = entryFindings.map((f, i) => ({ s: rawSummaries[i], idx: orderIndex.get(f.taskId) ?? Number.MAX_SAFE_INTEGER }))
+      findingSummaries = pairs.sort((a, b) => a.idx - b.idx).map(p => p.s)
+    } else {
+      findingSummaries = rawSummaries
+    }
   }
 
   const createdBy = entry.inspector?.name || entry.user?.username || entry.user?.email || null
@@ -138,7 +162,7 @@ export default function EntryCard({
         <div>
           <p className="text-sm font-medium">{headline}</p>
           {locationName ? (
-            <p className="text-xs text-muted-foreground mt-0.5">Location: {locationName}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Item: {locationName}</p>
           ) : null}
           {Array.isArray(findingSummaries) && findingSummaries.length > 0 ? (
             <div className="mt-0.5 space-y-1">

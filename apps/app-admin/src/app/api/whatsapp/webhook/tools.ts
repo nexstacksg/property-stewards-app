@@ -532,7 +532,10 @@ You can omit any numbers you want to leave unset.`
         // Load tasks for that sub-location in stable order
         const tasks = await prisma.checklistTask.findMany({
           where: { locationId: subLocationId },
-          orderBy: { createdOn: 'asc' },
+          orderBy: [
+            { order: 'asc' },
+            { createdOn: 'asc' }
+          ],
           select: { id: true, name: true }
         })
         if (tasks.length === 0) return JSON.stringify({ success: false, error: 'No tasks found for this sub-location.' })

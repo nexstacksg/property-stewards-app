@@ -75,6 +75,10 @@ async function getWorkOrder(id: string) {
                     }
                   },
                   checklistTasks: {
+                    orderBy: [
+                      { order: 'asc' },
+                      { createdOn: 'asc' }
+                    ],
                     include: {
                       entries: {
                         select: { id: true }
@@ -86,7 +90,10 @@ async function getWorkOrder(id: string) {
                     orderBy: { order: 'asc' },
                     include: {
                       tasks: {
-                        orderBy: { createdOn: 'asc' }
+                        orderBy: [
+                          { order: 'asc' },
+                          { createdOn: 'asc' }
+                        ]
                       }
                     }
                   }
@@ -604,7 +611,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                         <TableHeader>
                           <TableRow>
                             <TableHead className="w-16">#</TableHead>
-                            <TableHead>Item</TableHead>
+                            <TableHead>Locations</TableHead>
                             <TableHead className="w-40">Status</TableHead>
                             <TableHead className="w-48">Media</TableHead>
                             <TableHead className="w-40">Remarks</TableHead>

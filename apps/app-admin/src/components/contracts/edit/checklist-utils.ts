@@ -57,15 +57,25 @@ export const parseActionToTasks = (action?: string | null) => {
 }
 
 export const extractActionTasksFromItem = (item: any): NonNullable<ChecklistDraftItem["tasks"]> => {
+  // 1) Prefer structured locations -> tasks. Force a stable sort by location.order, then by task.createdOn
   const locationEntries = Array.isArray(item?.locations)
-    ? item.locations
+    ? [...item.locations]
+        .sort((a: any, b: any) => ((a?.order ?? 0) - (b?.order ?? 0)))
         .map((location: any) => {
           const name = typeof location?.name === "string" ? location.name.trim() : ""
-          const subtaskNames = Array.isArray(location?.tasks)
-            ? location.tasks
-                .map((task: any) => (typeof task?.name === "string" ? task.name.trim() : ""))
-                .filter((entry: string) => entry.length > 0)
-            : []
+          const rawTasks = Array.isArray(location?.tasks) ? [...location.tasks] : []
+          // Sort subtasks by explicit order, then createdOn as a tiebreaker
+          rawTasks.sort((a: any, b: any) => {
+            const oa = typeof a?.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER
+            const ob = typeof b?.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER
+            if (oa !== ob) return oa - ob
+            const at = a?.createdOn ? new Date(a.createdOn).getTime() : 0
+            const bt = b?.createdOn ? new Date(b.createdOn).getTime() : 0
+            return at - bt
+          })
+          const subtaskNames = rawTasks
+            .map((task: any) => (typeof task?.name === "string" ? task.name.trim() : ""))
+            .filter((entry: string) => entry.length > 0)
 
           return {
             name,
@@ -81,14 +91,24 @@ export const extractActionTasksFromItem = (item: any): NonNullable<ChecklistDraf
   }
 
   if (Array.isArray(item?.checklistTasks) && item.checklistTasks.length > 0) {
-    const grouped = new Map<string, string[]>()
+    // Stable fallback: sort tasks by (location.order, createdOn), then group by location name
+    const sortedTasks = [...item.checklistTasks].sort((a: any, b: any) => {
+      const la = a?.location?.order ?? 0
+      const lb = b?.location?.order ?? 0
+      if (la !== lb) return la - lb
+      const oa = typeof a?.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER
+      const ob = typeof b?.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER
+      if (oa !== ob) return oa - ob
+      const at = a?.createdOn ? new Date(a.createdOn).getTime() : 0
+      const bt = b?.createdOn ? new Date(b.createdOn).getTime() : 0
+      return at - bt
+    })
 
-    for (const rawTask of item.checklistTasks) {
+    const grouped = new Map<string, string[]>()
+    for (const rawTask of sortedTasks) {
       const subtaskName = typeof rawTask?.name === "string" ? rawTask.name.trim() : ""
       if (!subtaskName) continue
-      const locationName = typeof rawTask?.location?.name === "string"
-        ? rawTask.location.name.trim()
-        : item.name
+      const locationName = typeof rawTask?.location?.name === "string" ? rawTask.location.name.trim() : item.name
       const key = locationName && locationName.length > 0 ? locationName : item.name
       const existing = grouped.get(key) ?? []
       existing.push(subtaskName)
@@ -138,4 +158,3 @@ export const mapTemplateItemToDraft = (item: any, index: number): ChecklistDraft
     tasks,
   }
 }
-

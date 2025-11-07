@@ -79,6 +79,15 @@ export default function EditRemarkForm({
   removeAddedTaskPhotoAt,
   removeAddedTaskVideoAt,
 }: Props) {
+  // Global task order across all locations (preserves location order, then subtask order)
+  const taskOrder = useMemo(() => {
+    const map = new Map<string, number>()
+    let pos = 0
+    locationOptions.forEach((loc) => {
+      (loc.tasks || []).forEach((t) => { if (t?.id && !map.has(t.id)) map.set(t.id, pos++) })
+    })
+    return map
+  }, [locationOptions])
   const taskNameById = useMemo(() => {
     const map = new Map<string, string>()
     locationOptions.forEach((loc) => (loc.tasks || []).forEach((t) => { if (t?.id) map.set(t.id, t.name || 'Subtask') }))
@@ -112,7 +121,10 @@ export default function EditRemarkForm({
         <div className="space-y-3">
           <Label>Conditions for subtasks</Label>
           <div className="space-y-3">
-            {((entry as any).findings as any[]).map((f) => {
+            {((entry as any).findings as any[])
+              .slice()
+              .sort((a, b) => (taskOrder.get(a.taskId) ?? Number.MAX_SAFE_INTEGER) - (taskOrder.get(b.taskId) ?? Number.MAX_SAFE_INTEGER))
+              .map((f) => {
               const taskId = f.taskId as string
               const taskName = taskNameById.get(taskId) || 'Subtask'
               const details = (f.details || {}) as any
