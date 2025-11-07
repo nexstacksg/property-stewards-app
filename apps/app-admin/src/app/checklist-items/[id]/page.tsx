@@ -542,9 +542,7 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             })}
           </div>
         </section>
-      )}
-
-   
+      )} 
     </div>
   )
 }
