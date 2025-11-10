@@ -714,13 +714,7 @@ async function buildTableRows(
       })()
 
       {
-        // Build two separate media rows under this location group:
-        // 1) ItemEntry media (location-level remarks)
-        // 2) ChecklistTask media (subtask-level)
-        // Gather photos from ItemEntryMedia only
-        const entryPhotoRows: Array<{ url: string; caption: string | null }> = []
-        const taskPhotoEntriesList: Array<{ url: string; caption: string | null }> = []
-        // Map task id -> numbering and name for captions
+        // Group per entry by recorded date and recorder; render two rows per group (heading once)
         const taskMeta = new Map<string, { num: string; name: string }>()
         for (let tIndex = 0; tIndex < locationTasks.length; tIndex += 1) {
           const t = locationTasks[tIndex]
@@ -728,74 +722,54 @@ async function buildTableRows(
           const tName = typeof t?.name === 'string' ? t.name.trim() : ''
           if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName })
         }
-        // Flatten ItemEntry.media and split by taskId presence
+
+        type G = { key: string; title: string; noTask: Array<{ url: string; caption: string | null }>; task: Array<{ url: string; caption: string | null }> }
+        const groups: Map<string, G> = new Map()
+        const keyFor = (e: any) => {
+          const dateOnly = formatDate(e?.createdOn) || ''
+          const by = resolveEntryAuthor(e)
+          const title = dateOnly ? `Recorded on: ${dateOnly}${by ? `, recorded by ${by}` : ''}` : (by ? `Recorded by ${by}` : 'Recorded')
+          const key = `${dateOnly}|${by}`
+          return { key, title }
+        }
+
         for (const e of combinedGroupEntries as any[]) {
           const media = Array.isArray((e as any)?.media) ? (e as any).media : []
           const photos = media
             .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
             .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
+          const { key, title } = keyFor(e)
+          if (!groups.has(key)) groups.set(key, { key, title, noTask: [], task: [] })
           for (const m of photos) {
             const url = String(m.url).trim()
             const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
             const taskId = (m as any)?.taskId || null
             if (!taskId) {
-              // Entry-level photo row; formatted as: 1.1 {Level 2 name}: {Caption}
               const cap = `${locationNumber} ${group.label}${rawCaption ? `: ${rawCaption}` : ''}`
-              entryPhotoRows.push({ url, caption: cap })
+              groups.get(key)!.noTask.push({ url, caption: cap })
             } else if (taskMeta.has(taskId)) {
               const meta = taskMeta.get(taskId)!
-              // Task-level photo row; formatted as: 1.1.1 {Level 3 name}: {Caption}
               const cap = `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}`.trim()
-              taskPhotoEntriesList.push({ url, caption: cap })
+              groups.get(key)!.task.push({ url, caption: cap })
             }
           }
         }
 
-        // Build and append rows only when there are photos
-        if (includePhotos && entryPhotoRows.length > 0) {
-          const title = `${group.label} — Remarks & Media`
-          const entryMediaSegment = await buildRemarkSegment({
-            text: title,
-            photoEntries: includePhotos ? entryPhotoRows : [],
-            videoUrls: [],
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
-          if (entryMediaSegment && (entryMediaSegment.photos?.length || entryMediaSegment.videos?.length)) {
-            rows.push({
-              cells: [
-                { text: '' },
-                { text: '' },
-                { text: '' },
-                { text: '' }
-              ],
-              summaryMedia: entryMediaSegment,
-              mediaOnly: true
-            })
-          }
-        }
-
-        if (includePhotos && taskPhotoEntriesList.length > 0) {
-          const taskMediaSegment = await buildRemarkSegment({
-            text: undefined,
-            photoEntries: includePhotos ? taskPhotoEntriesList : [],
-            videoUrls: [],
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
-          if (taskMediaSegment && (taskMediaSegment.photos?.length || taskMediaSegment.videos?.length)) {
-            rows.push({
-              cells: [
-                { text: '' },
-                { text: '' },
-                { text: '' },
-                { text: '' }
-              ],
-              summaryMedia: taskMediaSegment,
-              mediaOnly: true
-            })
+        if (includePhotos) {
+          const ordered = Array.from(groups.values()).sort((a, b) => a.key.localeCompare(b.key))
+          for (const g of ordered) {
+            if (g.noTask.length > 0) {
+              const seg1 = await buildRemarkSegment({ text: g.title, photoEntries: g.noTask, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+              if (seg1 && (seg1.photos?.length || seg1.videos?.length)) {
+                rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg1, mediaOnly: true })
+              }
+            }
+            if (g.task.length > 0) {
+              const seg2 = await buildRemarkSegment({ text: undefined, photoEntries: g.task, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+              if (seg2 && (seg2.photos?.length || seg2.videos?.length)) {
+                rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg2, mediaOnly: true })
+              }
+            }
           }
         }
       }
@@ -837,10 +811,7 @@ async function buildTableRows(
       ? (reportEntries as any[]).filter((e: any) => !e?.locationId && !(e?.location && e.location?.id))
       : []
     if (generalEntries.length > 0) {
-      // Split general photos into two rows: without taskId first, then with taskId
-      const mediaNoTask: Array<{ url: string; caption: string | null }> = []
-      const mediaWithTask: Array<{ url: string; caption: string | null }> = []
-      // Build task index across all item tasks for numbering (fallback only)
+      // Group general entry photos by recorded date/author; render heading once then task photos
       const allTasks = tasks
       const taskIndex = new Map<string, { num: string; name: string }>()
       for (let tIdx = 0; tIdx < allTasks.length; tIdx += 1) {
@@ -849,50 +820,48 @@ async function buildTableRows(
         const tName = typeof t?.name === 'string' ? t.name.trim() : ''
         if (t?.id) taskIndex.set(t.id, { num, name: tName })
       }
+
+      type G = { key: string; title: string; noTask: Array<{ url: string; caption: string | null }>; task: Array<{ url: string; caption: string | null }> }
+      const groups: Map<string, G> = new Map()
+      const keyFor = (e: any) => {
+        const dateOnly = formatDate(e?.createdOn) || ''
+        const by = resolveEntryAuthor(e)
+        const title = dateOnly ? `Recorded on: ${dateOnly}${by ? `, recorded by ${by}` : ''}` : (by ? `Recorded by ${by}` : 'Recorded')
+        const key = `${dateOnly}|${by}`
+        return { key, title }
+      }
       for (const e of generalEntries as any[]) {
         const med = Array.isArray((e as any)?.media) ? (e as any).media : []
         const photos = med
           .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
           .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
+        const { key, title } = keyFor(e)
+        if (!groups.has(key)) groups.set(key, { key, title, noTask: [], task: [] })
         for (const m of photos) {
           const url = String(m.url).trim()
           const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
           const taskId = (m as any)?.taskId || null
           if (!taskId) {
-            // Use item number and name for general entry captions: 1 {Item name}: {Caption}
-            mediaNoTask.push({ url, caption: `${itemNumber} ${itemName}${rawCaption ? `: ${rawCaption}` : ''}` })
+            groups.get(key)!.noTask.push({ url, caption: `${itemNumber} ${itemName}${rawCaption ? `: ${rawCaption}` : ''}` })
           } else if (taskIndex.has(taskId)) {
             const meta = taskIndex.get(taskId)!
-            mediaWithTask.push({ url, caption: `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}` })
+            groups.get(key)!.task.push({ url, caption: `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}` })
           } else {
-            mediaWithTask.push({ url, caption: `${rawCaption || ''}`.trim() || null })
+            groups.get(key)!.task.push({ url, caption: (rawCaption || '').trim() || null })
           }
         }
       }
-      if (includePhotos && mediaNoTask.length > 0) {
-        const seg = await buildRemarkSegment({
-          text: 'General — Remarks & Media',
-          photoEntries: includePhotos ? mediaNoTask : [],
-          videoUrls: [],
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (seg && (seg.photos?.length || seg.videos?.length)) {
-          rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg, mediaOnly: true })
-        }
-      }
-      if (includePhotos && mediaWithTask.length > 0) {
-        const seg2 = await buildRemarkSegment({
-          text: undefined,
-          photoEntries: includePhotos ? mediaWithTask : [],
-          videoUrls: [],
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (seg2 && (seg2.photos?.length || seg2.videos?.length)) {
-          rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg2, mediaOnly: true })
+      if (includePhotos) {
+        const ordered = Array.from(groups.values()).sort((a, b) => a.key.localeCompare(b.key))
+        for (const g of ordered) {
+          if (g.noTask.length > 0) {
+            const s1 = await buildRemarkSegment({ text: g.title, photoEntries: g.noTask, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+            if (s1 && (s1.photos?.length || s1.videos?.length)) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: s1, mediaOnly: true })
+          }
+          if (g.task.length > 0) {
+            const s2 = await buildRemarkSegment({ text: undefined, photoEntries: g.task, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+            if (s2 && (s2.photos?.length || s2.videos?.length)) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: s2, mediaOnly: true })
+          }
         }
       }
 
