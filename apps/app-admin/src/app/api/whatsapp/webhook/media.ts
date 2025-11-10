@@ -12,6 +12,7 @@ const debugLog = (...args: unknown[]) => {
 export async function handleMediaMessage(data: any, phoneNumber: string): Promise<string | null> {
   try {
     const perfOn = (process.env.WHATSAPP_PERF_LOG || '').toLowerCase() === 'true'
+    const defer = (process.env.WHATSAPP_DEFER_WRITES || '').toLowerCase() === 'true'
     const t0 = Date.now()
     debugLog('🔄 Processing WhatsApp media message for phone:', phoneNumber)
 
@@ -168,7 +169,8 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
     }
     const mediaRemark = extractCaption(data) || ''
 
-    if (requiresRemarkForPhoto && !mediaRemark && !isTaskFlowMedia) {
+    // In deferred mode, always queue media for later commit at task/sub-location finalize
+    if (defer) {
       const pendingUploads = Array.isArray(metadata.pendingMediaUploads) ? metadata.pendingMediaUploads : []
       const pendingEntry: PendingMediaUpload = {
         url: publicUrl,
@@ -184,12 +186,14 @@ export async function handleMediaMessage(data: any, phoneNumber: string): Promis
         taskItemId: activeTaskItemId || null,
         taskEntryId: activeTaskEntryId || null,
         taskName: activeTaskName || null,
+        caption: mediaRemark || null,
         uploadedAt: new Date().toISOString(),
         condition: normalizedCondition || null
       }
       const nextPending = [...pendingUploads.filter((entry: PendingMediaUpload) => entry.url !== publicUrl), pendingEntry]
       await updateSessionState(phoneNumber, { pendingMediaUploads: nextPending })
-      return 'Please add a quick remark describing this photo so I can log it properly—I’ll save it once I have your note.'
+      const whereName = currentSubLocationName || currentLocation || activeTaskLocationName || 'this task'
+      return `✅ ${mediaType === 'photo' ? 'Photo' : 'Video'} received${whereName ? ` for ${whereName}` : ''}.\n\nI will attach it when you finalize this ${isTaskFlowMedia ? 'task' : 'area'}.`
     }
 
     const tPersist0 = Date.now()
