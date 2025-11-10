@@ -14,6 +14,7 @@ export type PendingMediaUpload = {
   taskItemId?: string | null
   taskEntryId?: string | null
   taskName?: string | null
+  caption?: string | null
   uploadedAt: string
   condition?: string | null
 }
@@ -59,6 +60,13 @@ export type ChatSessionState = {
   pendingTaskCause?: string | null
   pendingTaskResolution?: string | null
   pendingMediaUploads?: PendingMediaUpload[]
+  // Deferred-write buffers (when WHATSAPP_DEFER_WRITES=true)
+  pendingConditions?: Array<{
+    itemId: string
+    subLocationId?: string | null
+    tasks: Array<{ taskId: string; condition: string }>
+  }>
+  pendingFindings?: Record<string, { cause?: string; resolution?: string }>
   locationSubLocations?: Record<string, Array<{ id: string; name: string; status: string }>> // keyed by ContractChecklistItem ID
 
   // Guided per-task follow-up queue for a location/sub-location
