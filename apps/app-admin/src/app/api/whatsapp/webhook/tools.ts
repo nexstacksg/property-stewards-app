@@ -20,7 +20,7 @@ import {
   refreshChecklistItemCache,
   refreshChecklistItemsForWorkOrder
 } from '@/lib/services/inspectorService'
-import { resolveInspectorIdForSession, saveMediaToItemEntry } from './utils'
+import { resolveInspectorIdForSession } from './utils'
 
 export const assistantTools = [
   {
@@ -431,7 +431,7 @@ export async function executeTool(toolName: string, args: any, threadId?: string
             currentSubLocationName: undefined,
             currentTaskId: undefined,
             currentTaskName: undefined,
-            // keep currentTaskEntryId untouched; will be set at run start (setSubLocationConditions)
+            currentTaskEntryId: undefined,
             currentTaskCondition: undefined,
             // enter sub-location condition collection by default
             taskFlowStage: 'condition',
@@ -513,32 +513,26 @@ You can omit any numbers you want to leave unset.`
         if (!workOrderId || !contractChecklistItemId || !subLocationId || !conditionsText) {
           return JSON.stringify({ success: false, error: 'Missing required parameters' })
         }
-        const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
-        // Start a NEW inspection run: create a fresh ItemEntry for this item+subLocation (unless deferring writes)
+        // Start a NEW inspection run: create a fresh ItemEntry for this item+subLocation
         let locationEntryId: string | null = null
-        if (!defer) {
-          try {
-            let inspectorId: string | null = null
-            if (sessionId) {
-              const s = await getSessionState(sessionId)
-              inspectorId = s?.inspectorId || null
-            }
-            const created = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, locationId: subLocationId, inspectorId: inspectorId || undefined } as any })
-            locationEntryId = created.id
-            if (sessionId) {
-              await updateSessionState(sessionId, { currentTaskEntryId: locationEntryId })
-            }
-          } catch (e) {
-            console.error('setSubLocationConditions: failed to create new location entry', e)
+        try {
+          let inspectorId: string | null = null
+          if (sessionId) {
+            const s = await getSessionState(sessionId)
+            inspectorId = s?.inspectorId || null
           }
+          const created = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, locationId: subLocationId, inspectorId: inspectorId || undefined } as any })
+          locationEntryId = created.id
+          if (sessionId) {
+            await updateSessionState(sessionId, { currentTaskEntryId: locationEntryId })
+          }
+        } catch (e) {
+          console.error('setSubLocationConditions: failed to create new location entry', e)
         }
         // Load tasks for that sub-location in stable order
         const tasks = await prisma.checklistTask.findMany({
           where: { locationId: subLocationId },
-          orderBy: [
-            { order: 'asc' },
-            { createdOn: 'asc' }
-          ],
+          orderBy: { createdOn: 'asc' },
           select: { id: true, name: true }
         })
         if (tasks.length === 0) return JSON.stringify({ success: false, error: 'No tasks found for this sub-location.' })
@@ -598,15 +592,13 @@ You can omit any numbers you want to leave unset.`
         for (const t of tasks) {
           if (byIndex.has(i)) {
             const cond = byIndex.get(i)!
-            if (!defer) {
-              try { await prisma.checklistTask.update({ where: { id: t.id }, data: { condition: cond as any } }) } catch (e) { console.error('setSubLocationConditions: update failed', e) }
-            }
+            try { await prisma.checklistTask.update({ where: { id: t.id }, data: { condition: cond as any } }) } catch (e) { console.error('setSubLocationConditions: update failed', e) }
             updates.push({ number: i, taskId: t.id, name: t.name, condition: cond })
           }
           i++
         }
-        // Upsert per-task findings immediately only when not deferring
-        if (!defer && locationEntryId) {
+        // Upsert per-task findings (store at least the condition) under the single location entry
+        if (locationEntryId) {
           for (const u of updates) {
             try {
               const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: locationEntryId, taskId: u.taskId } } as any })
@@ -619,7 +611,7 @@ You can omit any numbers you want to leave unset.`
             }
           }
         }
-        if (!defer) { try { await refreshChecklistItemCache(contractChecklistItemId) } catch {} }
+        try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         // Build a per-task queue to collect details + media 1-by-1
         const queue = updates.map(u => u.taskId)
         let nextTaskId: string | undefined = undefined
@@ -632,15 +624,6 @@ You can omit any numbers you want to leave unset.`
           nextCond = (f?.condition || '').toUpperCase()
         }
         if (sessionId) {
-          // Persist deferred condition updates for this sub-location
-          if (defer) {
-            const s = await getSessionState(sessionId)
-            const existing = Array.isArray(s.pendingConditions) ? s.pendingConditions : []
-            const remaining = existing.filter(e => !(e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null)))
-            const tasksPending = updates.map(u => ({ taskId: u.taskId, condition: u.condition }))
-            const nextPending = [...remaining, { itemId: contractChecklistItemId, subLocationId, tasks: tasksPending }]
-            await updateSessionState(sessionId, { pendingConditions: nextPending })
-          }
           await updateSessionState(sessionId, {
             currentTaskId: nextTaskId,
             currentTaskName: nextTaskName,
@@ -708,21 +691,11 @@ You can omit any numbers you want to leave unset.`
           return JSON.stringify({ success: false, error: 'Please send both in one message. Try "1: <cause>, 2: <resolution>" or "Cause: ... Resolution: ..."' })
         }
         if (sessionId) {
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
           await updateSessionState(sessionId, {
             pendingTaskCause: cause || undefined,
             pendingTaskResolution: resolution || undefined,
             taskFlowStage: 'remarks'
           })
-          if (defer) {
-            const s = await getSessionState(sessionId)
-            const tId = s.currentTaskId
-            if (tId) {
-              const pf = s.pendingFindings || {}
-              pf[tId] = { ...(pf[tId] || {}), cause: cause || pf[tId]?.cause, resolution: resolution || pf[tId]?.resolution }
-              await updateSessionState(sessionId, { pendingFindings: pf })
-            }
-          }
         }
         return JSON.stringify({ success: true, message: 'Thanks. Cause and resolution saved. Please enter the remarks for this sub-location.' })
       }
@@ -730,17 +703,7 @@ You can omit any numbers you want to leave unset.`
         const { workOrderId, contractChecklistItemId, subLocationId, cause } = args
         if (!workOrderId || !contractChecklistItemId || !subLocationId || !cause) return JSON.stringify({ success: false, error: 'Missing required parameters' })
         if (sessionId) {
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
           await updateSessionState(sessionId, { pendingTaskCause: String(cause).trim(), taskFlowStage: 'resolution' })
-          if (defer) {
-            const s = await getSessionState(sessionId)
-            const tId = s.currentTaskId
-            if (tId) {
-              const pf = s.pendingFindings || {}
-              pf[tId] = { ...(pf[tId] || {}), cause: String(cause).trim() }
-              await updateSessionState(sessionId, { pendingFindings: pf })
-            }
-          }
         }
         return JSON.stringify({ success: true, message: 'Thanks. Please provide the resolution.' })
       }
@@ -748,134 +711,45 @@ You can omit any numbers you want to leave unset.`
         const { workOrderId, contractChecklistItemId, subLocationId, resolution } = args
         if (!workOrderId || !contractChecklistItemId || !subLocationId || !resolution) return JSON.stringify({ success: false, error: 'Missing required parameters' })
         if (sessionId) {
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
           await updateSessionState(sessionId, { pendingTaskResolution: String(resolution).trim(), taskFlowStage: 'remarks' })
-          if (defer) {
-            const s = await getSessionState(sessionId)
-            const tId = s.currentTaskId
-            if (tId) {
-              const pf = s.pendingFindings || {}
-              pf[tId] = { ...(pf[tId] || {}), resolution: String(resolution).trim() }
-              await updateSessionState(sessionId, { pendingFindings: pf })
-            }
-          }
         }
         return JSON.stringify({ success: true, message: 'Resolution saved. Please enter the remarks for this sub-location.' })
       }
       case 'setSubLocationRemarks': {
         const { workOrderId, contractChecklistItemId, subLocationId, subLocationName, remarks } = args
         if (!workOrderId || !contractChecklistItemId || !subLocationId || !remarks) return JSON.stringify({ success: false, error: 'Missing required parameters' })
-        const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
         let inspectorId: string | null = null
-        let entry
-        if (!sessionId) return JSON.stringify({ success: false, error: 'Session required' })
-        const s = await getSessionState(sessionId)
-        inspectorId = s.inspectorId || (await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId))
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          inspectorId = s.inspectorId || null
+          if (!inspectorId) {
+            inspectorId = await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId)
+          }
+        }
+        // If the current run already created an entry, update it; otherwise create new for this run
         const prefix = subLocationName ? `[${subLocationName}] ` : ''
-
-        if (!defer) {
-          // Existing immediate behavior
-          let entryIdToUse: string | null = s?.currentTaskEntryId || null
-          if (entryIdToUse) {
-            entry = await prisma.itemEntry.update({ where: { id: entryIdToUse }, data: { remarks: `${prefix}${remarks}` } })
-          } else {
-            entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
-          }
-          try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
-          await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
-          const whereName = subLocationName || 'this sub-location'
-          return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media), or type 'skip' to continue.` })
+        let entryIdToUse: string | null = null
+        if (sessionId) {
+          const s = await getSessionState(sessionId)
+          entryIdToUse = s?.currentTaskEntryId || null
         }
-
-        // Deferred mode: create entry, then flush pending state in background if fast mode
-        entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
-
-        const doCommit = async () => {
-          const cur = await getSessionState(sessionId)
-          const pendingList = Array.isArray(cur.pendingConditions) ? cur.pendingConditions : []
-          const block = pendingList.find(e => e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null))
-          const toUpdate = block?.tasks || []
-          const pfAll = cur.pendingFindings || {}
-          for (const u of toUpdate) {
-            try { await prisma.checklistTask.update({ where: { id: u.taskId }, data: { condition: u.condition as any } }) } catch (e) { console.error('setSubLocationRemarks: update task condition failed', e) }
-            try {
-              const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: entry.id, taskId: u.taskId } } as any })
-              const base = existing?.details && typeof existing.details === 'object' ? (existing.details as any) : {}
-              const next = { ...base, condition: u.condition, ...(pfAll[u.taskId] || {}) }
-              if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId: entry.id, taskId: u.taskId } } as any, data: { details: next } })
-              else await prisma.checklistTaskFinding.create({ data: { entryId: entry.id, taskId: u.taskId, details: next } })
-            } catch (e) { console.error('setSubLocationRemarks: upsert finding failed', e) }
-          }
-          const uploadsCur = Array.isArray(cur.pendingMediaUploads) ? cur.pendingMediaUploads : []
-          const relevant = uploadsCur.filter(u => (u.taskItemId === contractChecklistItemId) && ((u.subLocationId || null) === (subLocationId || null)))
-          for (const u of relevant) {
-            try { await saveMediaToItemEntry(entry.id, u.url, u.mediaType, u.caption || undefined, u.taskId || null) } catch (e) { console.error('setSubLocationRemarks: save media failed', e) }
-          }
-          const remainingPending = pendingList.filter(e => !(e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null)))
-          const remainingUploads = uploadsCur.filter(u => !(u.taskItemId === contractChecklistItemId && ((u.subLocationId || null) === (subLocationId || null))))
-          const pfNext: Record<string, { cause?: string; resolution?: string }> = { ...(cur.pendingFindings || {}) }
-          for (const u of toUpdate) delete pfNext[u.taskId]
-          await updateSessionState(sessionId, {
-            pendingConditions: remainingPending.length ? remainingPending : undefined,
-            pendingMediaUploads: remainingUploads.length ? remainingUploads : undefined,
-            pendingFindings: Object.keys(pfNext).length ? pfNext : undefined
-          })
-          try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
-        }
-
-        const fastBg = (process.env.WHATSAPP_FAST_BG ?? 'false').toLowerCase() === 'true'
-        if (fastBg) {
-          // Fire and forget commit
-          doCommit().catch(e => console.error('setSubLocationRemarks: async commit failed', e))
+        let entry
+        if (entryIdToUse) {
+          entry = await prisma.itemEntry.update({ where: { id: entryIdToUse }, data: { remarks: `${prefix}${remarks}` } })
         } else {
-          await doCommit()
+          entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
+          if (sessionId) await updateSessionState(sessionId, { currentTaskEntryId: entry.id })
         }
-        await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
+        try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
+        if (sessionId) {
+          await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
+        }
         const whereName = subLocationName || 'this sub-location'
         return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media), or type 'skip' to continue.` })
       }
       case 'markLocationComplete': {
         const { workOrderId, contractChecklistItemId } = args
         if (!workOrderId || !contractChecklistItemId) return JSON.stringify({ success: false, error: 'Missing location context' })
-        const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
-        // If deferring writes and there are pending sub-location buffers for this item, try to flush them now.
-        if (defer && sessionId) {
-          try {
-            const s = await getSessionState(sessionId)
-            const list = Array.isArray(s.pendingConditions) ? s.pendingConditions : []
-            const uploads = Array.isArray(s.pendingMediaUploads) ? s.pendingMediaUploads : []
-            const blocks = list.filter(e => e.itemId === contractChecklistItemId)
-            for (const block of blocks) {
-              const subLocId = block.subLocationId || undefined
-              let inspectorId = s.inspectorId || null
-              if (!inspectorId) inspectorId = await resolveInspectorIdForSession(sessionId, s as any, workOrderId, s.inspectorPhone || sessionId)
-              const entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocId, remarks: s.pendingTaskRemarks || undefined } as any })
-              const pf = s.pendingFindings || {}
-              for (const t of block.tasks) {
-                try { await prisma.checklistTask.update({ where: { id: t.taskId }, data: { condition: t.condition as any } }) } catch {}
-                try {
-                  const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: entry.id, taskId: t.taskId } } as any })
-                  const base = existing?.details && typeof existing.details === 'object' ? existing.details as any : {}
-                  const next = { ...base, condition: t.condition, ...(pf[t.taskId] || {}) }
-                  if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId: entry.id, taskId: t.taskId } } as any, data: { details: next } })
-                  else await prisma.checklistTaskFinding.create({ data: { entryId: entry.id, taskId: t.taskId, details: next } })
-                } catch {}
-              }
-              const rel = uploads.filter(u => (u.taskItemId === contractChecklistItemId) && ((u.subLocationId || null) === (subLocId || null)))
-              for (const u of rel) { try { await saveMediaToItemEntry(entry.id, u.url, u.mediaType, u.caption || undefined, u.taskId || null) } catch {} }
-            }
-            const usedTaskIds = new Set<string>(blocks.flatMap(b => b.tasks.map(t => t.taskId)))
-            const remainingBlocks = list.filter(b => b.itemId !== contractChecklistItemId)
-            const remainingUploads = uploads.filter(u => u.taskItemId !== contractChecklistItemId)
-            const pfNext: Record<string, { cause?: string; resolution?: string }> = { ...(s.pendingFindings || {}) }
-            for (const id of usedTaskIds) delete pfNext[id]
-            await updateSessionState(sessionId, {
-              pendingConditions: remainingBlocks.length ? remainingBlocks : undefined,
-              pendingMediaUploads: remainingUploads.length ? remainingUploads : undefined,
-              pendingFindings: Object.keys(pfNext).length ? pfNext : undefined
-            })
-          } catch (e) { console.error('markLocationComplete: deferred flush failed', e) }
-        }
         // Validate all tasks complete for this item
         try {
           const tasks = await getTasksByLocation(workOrderId, '', contractChecklistItemId, undefined) as any[]
@@ -1105,13 +979,12 @@ You can omit any numbers you want to leave unset.`
           if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing cause' })
           const causeRaw = String(args.cause ?? args.remarks ?? args.notes ?? '').trim()
           if (!causeRaw) return JSON.stringify({ success: false, error: 'Please provide a brief cause description.' })
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
           try {
             const latest = await getSessionState(sessionId)
             const taskId = latest.currentTaskId
             const taskItemId = latest.currentTaskItemId
             let entryId = latest.currentTaskEntryId
-            if (!defer && taskId && taskItemId) {
+            if (taskId && taskItemId) {
               if (!entryId) {
                 const locId = latest.currentTaskLocationId || latest.currentSubLocationId || undefined
                 const created = await prisma.itemEntry.create({ data: { taskId, itemId: taskItemId, inspectorId: latest.inspectorId || undefined, locationId: locId, condition: (latest.currentTaskCondition as any) || undefined } as any })
@@ -1129,15 +1002,6 @@ You can omit any numbers you want to leave unset.`
             }
           } catch (e) { console.error('Failed to persist cause for task finding', e) }
           await updateSessionState(sessionId, { pendingTaskCause: causeRaw, taskFlowStage: 'resolution' })
-          if (defer) {
-            const s2 = await getSessionState(sessionId)
-            const pf = s2.pendingFindings || {}
-            const tId = s2.currentTaskId || ''
-            if (tId) {
-              pf[tId] = { ...(pf[tId] || {}), cause: causeRaw }
-              await updateSessionState(sessionId, { pendingFindings: pf })
-            }
-          }
           return JSON.stringify({ success: true, taskFlowStage: 'resolution', message: 'Thanks. Please provide the resolution.' })
         }
 
@@ -1145,7 +1009,6 @@ You can omit any numbers you want to leave unset.`
           if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing cause and resolution' })
           const raw = String(args.text ?? args.cause ?? args.remarks ?? '').trim()
           if (!raw) return JSON.stringify({ success: false, error: 'Please provide BOTH cause and resolution in one message.' })
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
           const extract = () => {
             // Prefer explicit labels first
             let causeMatch = /cause\s*[:\-]\s*([^]+?)(?=resolution\s*[:\-]|$)/i.exec(raw)
@@ -1172,16 +1035,6 @@ You can omit any numbers you want to leave unset.`
           const { cause, resolution } = extract()
           if (!cause || !resolution) {
             return JSON.stringify({ success: false, error: 'Please send BOTH in one message using either format:\n• 1: <cause>\n  2: <resolution>\n• Cause: <your cause>\n  Resolution: <your resolution>' })
-          }
-          if (defer) {
-            const latest = await getSessionState(sessionId)
-            const taskId = latest.currentTaskId
-            if (taskId) {
-              const pf = latest.pendingFindings || {}
-              pf[taskId] = { ...(pf[taskId] || {}), cause, resolution }
-              await updateSessionState(sessionId, { pendingFindings: pf, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
-              return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Thanks. Cause and resolution saved. Please send photos/videos for this task (media is required).' })
-            }
           }
           const latest = await getSessionState(sessionId)
           const taskId = latest.currentTaskId
@@ -1217,17 +1070,6 @@ You can omit any numbers you want to leave unset.`
           if (!sessionId) return JSON.stringify({ success: false, error: 'Session required for capturing resolution' })
           const resolutionRaw = String(args.resolution ?? args.remarks ?? args.notes ?? '').trim()
           if (!resolutionRaw) return JSON.stringify({ success: false, error: 'Please provide a brief resolution description.' })
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
-          if (defer) {
-            const latest = await getSessionState(sessionId)
-            const tId = latest.currentTaskId || ''
-            if (tId) {
-              const pf = latest.pendingFindings || {}
-              pf[tId] = { ...(pf[tId] || {}), resolution: resolutionRaw }
-              await updateSessionState(sessionId, { pendingFindings: pf, pendingTaskCause: undefined, pendingTaskResolution: undefined, taskFlowStage: 'media' })
-              return JSON.stringify({ success: true, taskFlowStage: 'media', message: 'Resolution saved. Please send photos/videos for this task (media is required).' })
-            }
-          }
           const latest = await getSessionState(sessionId)
           const taskId = latest.currentTaskId
           const taskItemId = latest.currentTaskItemId
@@ -1285,16 +1127,6 @@ You can omit any numbers you want to leave unset.`
           const condUpper = (session.currentTaskCondition || '').toUpperCase()
           const allowSkip = condUpper === 'NOT_APPLICABLE'
           const shouldSkipRemarks = allowSkip && (!remarks || remarks.toLowerCase() === 'skip' || remarks.toLowerCase() === 'no')
-          const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
-          if (defer) {
-            if (sessionId) {
-              await updateSessionState(sessionId, { taskFlowStage: 'media', pendingTaskRemarks: shouldSkipRemarks ? undefined : (remarks || undefined) })
-            }
-            const nextMsg = allowSkip
-              ? 'Thanks. You can now send photos/videos (captions will be saved per media), or type "skip" to continue.'
-              : 'Thanks. Please send photos/videos now (captions will be saved per media).'
-            return JSON.stringify({ success: true, taskFlowStage: 'media', message: nextMsg })
-          }
 
           let inspectorId = session.inspectorId || null
           if (!inspectorId && sessionId) inspectorId = await resolveInspectorIdForSession(sessionId, session, workOrderId, session.inspectorPhone || sessionId)
@@ -1362,36 +1194,24 @@ You can omit any numbers you want to leave unset.`
           let task = await prisma.checklistTask.findUnique({ where: { id: taskId }, select: { id: true, itemId: true, inspectorId: true, locationId: true, name: true } })
           let targetItemId = task?.itemId || taskItemId
 
-          // Validate required cause+resolution for FAIR / UNSATISFACTORY (deferred mode uses session values)
+          // Validate required cause+resolution for FAIR / UNSATISFACTORY
           try {
             const condUpper = String(condition || '').toUpperCase()
             if (condUpper === 'FAIR' || condUpper === 'UNSATISFACTORY') {
-              const defer = (process.env.WHATSAPP_DEFER_WRITES ?? 'false').toLowerCase() === 'true'
-              if (defer && sessionId) {
-                const latest = await getSessionState(sessionId)
-                const pf = latest.pendingFindings || {}
-                const pending = pf[taskId || ''] || {}
-                const causeOk = typeof pending.cause === 'string' && pending.cause.trim().length > 0 || typeof latest.pendingTaskCause === 'string'
-                const resOk = typeof pending.resolution === 'string' && pending.resolution.trim().length > 0 || typeof latest.pendingTaskResolution === 'string'
-                if (!causeOk || !resOk) {
-                  return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
-                }
-              } else {
-                let checkEntryId = entryId
-                if (!checkEntryId && inspectorId) {
-                  const found = await prisma.itemEntry.findFirst({ where: { taskId, inspectorId }, orderBy: { createdOn: 'desc' } })
-                  checkEntryId = found?.id || null
-                }
-                if (!checkEntryId) {
-                  return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
-                }
-                const finding = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: checkEntryId, taskId } } as any })
-                const details: any = finding?.details || {}
-                const causeOk = typeof details.cause === 'string' && details.cause.trim().length > 0
-                const resOk = typeof details.resolution === 'string' && details.resolution.trim().length > 0
-                if (!causeOk || !resOk) {
-                  return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
-                }
+              let checkEntryId = entryId
+              if (!checkEntryId && inspectorId) {
+                const found = await prisma.itemEntry.findFirst({ where: { taskId, inspectorId }, orderBy: { createdOn: 'desc' } })
+                checkEntryId = found?.id || null
+              }
+              if (!checkEntryId) {
+                return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
+              }
+              const finding = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: checkEntryId, taskId } } as any })
+              const details: any = finding?.details || {}
+              const causeOk = typeof details.cause === 'string' && details.cause.trim().length > 0
+              const resOk = typeof details.resolution === 'string' && details.resolution.trim().length > 0
+              if (!causeOk || !resOk) {
+                return JSON.stringify({ success: false, error: 'Please provide both cause and resolution before marking the task complete.' })
               }
             }
           } catch (e) { console.error('finalize: failed cause/resolution check', e) }
@@ -1561,28 +1381,6 @@ You can omit any numbers you want to leave unset.`
             })
           }
 
-          // Drain any pending media queued for this task (deferred mode)
-          if (sessionId) {
-            try {
-              const latest = await getSessionState(sessionId)
-              const uploads = Array.isArray(latest.pendingMediaUploads) ? latest.pendingMediaUploads : []
-              const taskUploads = uploads.filter(u => u.taskId === taskId)
-              if (taskUploads.length > 0) {
-                // Ensure entry exists
-                if (!entryId) {
-                  const locId = task?.locationId || session.currentTaskLocationId || session.currentSubLocationId || undefined
-                  const created = await prisma.itemEntry.create({ data: { taskId, itemId: targetItemId, inspectorId: inspectorId || undefined, locationId: locId, condition: condition as any, remarks: latest.pendingTaskRemarks || undefined } as any })
-                  entryId = created.id
-                }
-                for (const u of taskUploads) {
-                  try { await saveMediaToItemEntry(entryId!, u.url, u.mediaType, u.caption || undefined, taskId) } catch (e) { console.error('finalize: save pending media failed', e) }
-                }
-                const remaining = uploads.filter(u => u.taskId !== taskId)
-                await updateSessionState(sessionId, { pendingMediaUploads: remaining.length ? remaining : undefined })
-              }
-            } catch (e) { console.error('finalize: draining pending media failed', e) }
-          }
-
           if (sessionId && completed) {
             await updateSessionState(sessionId, {
               taskFlowStage: undefined,
@@ -1631,7 +1429,7 @@ You can omit any numbers you want to leave unset.`
                     pendingTaskIndex: nextIdx,
                     currentTaskId: nextId,
                     currentTaskName: dbNext?.name || undefined,
-                    // keep currentTaskEntryId for the run
+                    currentTaskEntryId: undefined,
                     currentTaskCondition: (dbNext?.condition as any) || undefined,
                     taskFlowStage: ((dbNext?.condition || '').toUpperCase() === 'FAIR' || (dbNext?.condition || '').toUpperCase() === 'UNSATISFACTORY') ? 'cause' : 'media'
                   })
