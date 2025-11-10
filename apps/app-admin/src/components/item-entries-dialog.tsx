@@ -30,6 +30,7 @@ type Props = {
   triggerLabel?: string | ((count: number) => string)
   // Optional: checklist item number used for index labeling (e.g., 6.4.1)
   itemNumber?: number
+  indexLevel?:number
 }
 
 export default function ItemEntriesDialog({
@@ -41,6 +42,7 @@ export default function ItemEntriesDialog({
   itemName,
   triggerLabel,
   itemNumber,
+  indexLevel
 }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -659,7 +661,7 @@ export default function ItemEntriesDialog({
       </DialogTrigger>
       <DialogContent className="sm:max-w-4xl md:max-w-5xl w-full max-h-[82vh] overflow-auto">
         <DialogHeader>
-          <DialogTitle>{itemName ? `${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
+          <DialogTitle>{itemName ? `${indexLevel}.${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
           <DialogDescription>
             Capture notes for subtasks, toggle their reporting status, and manage supporting media.
           </DialogDescription>

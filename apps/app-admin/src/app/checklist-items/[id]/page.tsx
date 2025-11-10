@@ -240,6 +240,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             tasks={dialogTasks}
             locations={Array.isArray(checklistItem.locations) ? checklistItem.locations : []}
             itemName={checklistItem.name}
+            locationTitle={Array.isArray(checklistItem.locations) && checklistItem.locations[0]?.name || null}
+            locationTitleIndex={Array.isArray(checklistItem.locations) ? 1 : null}
             triggerLabel={remarkButtonLabel}
           />
         </div>

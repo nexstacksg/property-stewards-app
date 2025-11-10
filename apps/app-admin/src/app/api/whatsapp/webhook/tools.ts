@@ -787,51 +787,50 @@ You can omit any numbers you want to leave unset.`
           return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media), or type 'skip' to continue.` })
         }
 
-        // Deferred mode: commit all pending state now (conditions, findings, media) and set stage to media for optional more uploads
-        // 1) Create a single ItemEntry for this sub-location with remarks
+        // Deferred mode: create entry, then flush pending state in background if fast mode
         entry = await prisma.itemEntry.create({ data: { itemId: contractChecklistItemId, inspectorId: inspectorId || undefined, locationId: subLocationId, remarks: `${prefix}${remarks}` } as any })
 
-        // 2) Apply pending conditions and findings
-        const pendingList = Array.isArray(s.pendingConditions) ? s.pendingConditions : []
-        const pendingBlock = pendingList.find(e => e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null))
-        const toUpdate = pendingBlock?.tasks || []
-        const pf = s.pendingFindings || {}
-        for (const u of toUpdate) {
-          try { await prisma.checklistTask.update({ where: { id: u.taskId }, data: { condition: u.condition as any } }) } catch (e) { console.error('setSubLocationRemarks: update task condition failed', e) }
-          try {
-            const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: entry.id, taskId: u.taskId } } as any })
-            const base = existing?.details && typeof existing.details === 'object' ? (existing.details as any) : {}
-            const next = { ...base, condition: u.condition, ...(pf[u.taskId] || {}) }
-            if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId: entry.id, taskId: u.taskId } } as any, data: { details: next } })
-            else await prisma.checklistTaskFinding.create({ data: { entryId: entry.id, taskId: u.taskId, details: next } })
-          } catch (e) { console.error('setSubLocationRemarks: upsert finding failed', e) }
+        const doCommit = async () => {
+          const cur = await getSessionState(sessionId)
+          const pendingList = Array.isArray(cur.pendingConditions) ? cur.pendingConditions : []
+          const block = pendingList.find(e => e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null))
+          const toUpdate = block?.tasks || []
+          const pfAll = cur.pendingFindings || {}
+          for (const u of toUpdate) {
+            try { await prisma.checklistTask.update({ where: { id: u.taskId }, data: { condition: u.condition as any } }) } catch (e) { console.error('setSubLocationRemarks: update task condition failed', e) }
+            try {
+              const existing = await prisma.checklistTaskFinding.findUnique({ where: { entryId_taskId: { entryId: entry.id, taskId: u.taskId } } as any })
+              const base = existing?.details && typeof existing.details === 'object' ? (existing.details as any) : {}
+              const next = { ...base, condition: u.condition, ...(pfAll[u.taskId] || {}) }
+              if (existing) await prisma.checklistTaskFinding.update({ where: { entryId_taskId: { entryId: entry.id, taskId: u.taskId } } as any, data: { details: next } })
+              else await prisma.checklistTaskFinding.create({ data: { entryId: entry.id, taskId: u.taskId, details: next } })
+            } catch (e) { console.error('setSubLocationRemarks: upsert finding failed', e) }
+          }
+          const uploadsCur = Array.isArray(cur.pendingMediaUploads) ? cur.pendingMediaUploads : []
+          const relevant = uploadsCur.filter(u => (u.taskItemId === contractChecklistItemId) && ((u.subLocationId || null) === (subLocationId || null)))
+          for (const u of relevant) {
+            try { await saveMediaToItemEntry(entry.id, u.url, u.mediaType, u.caption || undefined, u.taskId || null) } catch (e) { console.error('setSubLocationRemarks: save media failed', e) }
+          }
+          const remainingPending = pendingList.filter(e => !(e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null)))
+          const remainingUploads = uploadsCur.filter(u => !(u.taskItemId === contractChecklistItemId && ((u.subLocationId || null) === (subLocationId || null))))
+          const pfNext: Record<string, { cause?: string; resolution?: string }> = { ...(cur.pendingFindings || {}) }
+          for (const u of toUpdate) delete pfNext[u.taskId]
+          await updateSessionState(sessionId, {
+            pendingConditions: remainingPending.length ? remainingPending : undefined,
+            pendingMediaUploads: remainingUploads.length ? remainingUploads : undefined,
+            pendingFindings: Object.keys(pfNext).length ? pfNext : undefined
+          })
+          try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
         }
 
-        // 3) Drain pending media to this entry (for this item/sub-location)
-        const uploads = Array.isArray(s.pendingMediaUploads) ? s.pendingMediaUploads : []
-        const relevant = uploads.filter(u => (u.taskItemId === contractChecklistItemId) && ((u.subLocationId || null) === (subLocationId || null)))
-        for (const u of relevant) {
-          try { await saveMediaToItemEntry(entry.id, u.url, u.mediaType, u.caption || undefined, u.taskId || null) } catch (e) { console.error('setSubLocationRemarks: save media failed', e) }
+        const fastBg = (process.env.WHATSAPP_FAST_BG ?? 'false').toLowerCase() === 'true'
+        if (fastBg) {
+          // Fire and forget commit
+          doCommit().catch(e => console.error('setSubLocationRemarks: async commit failed', e))
+        } else {
+          await doCommit()
         }
-
-        // 4) Clear pending blocks from session
-        const remainingPending = pendingList.filter(e => !(e.itemId === contractChecklistItemId && (e.subLocationId || null) === (subLocationId || null)))
-        const remainingUploads = uploads.filter(u => !(u.taskItemId === contractChecklistItemId && ((u.subLocationId || null) === (subLocationId || null))))
-        // Remove findings for consumed tasks
-        const pfNext: Record<string, { cause?: string; resolution?: string }> = { ...(s.pendingFindings || {}) }
-        for (const u of toUpdate) delete pfNext[u.taskId]
-        await updateSessionState(sessionId, {
-          currentTaskEntryId: entry.id,
-          currentTaskItemId: contractChecklistItemId,
-          taskFlowStage: 'media',
-          pendingTaskCause: undefined,
-          pendingTaskResolution: undefined,
-          pendingConditions: remainingPending.length ? remainingPending : undefined,
-          pendingMediaUploads: remainingUploads.length ? remainingUploads : undefined,
-          pendingFindings: Object.keys(pfNext).length ? pfNext : undefined
-        })
-
-        try { await refreshChecklistItemCache(contractChecklistItemId) } catch {}
+        await updateSessionState(sessionId, { currentTaskEntryId: entry.id, currentTaskItemId: contractChecklistItemId, taskFlowStage: 'media', pendingTaskCause: undefined, pendingTaskResolution: undefined })
         const whereName = subLocationName || 'this sub-location'
         return JSON.stringify({ success: true, entryId: entry.id, message: `📝 Remarks saved for ${whereName}.\n\nNext: please provide photos/videos (captions will be saved per media), or type 'skip' to continue.` })
       }

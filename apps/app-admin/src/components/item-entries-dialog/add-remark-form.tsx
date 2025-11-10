@@ -126,12 +126,11 @@ export default function AddRemarkForm({
                 // Compute index label: locationIndex.itemNumber.taskIndex
                 const locIdx = Math.max(0, locationOptions.findIndex((l) => l.id === selectedLocationId)) + 1
                 const taskIdx = idx + 1
-                const indexLabel = itemNumber ? `${locIdx}.${itemNumber}.${taskIdx}` : `${locIdx}.${taskIdx}`
                 return (
                   <div key={task.id} className="rounded-md border border-dashed border-muted-foreground/30 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-medium w-60" title={task.name || 'Untitled subtask'}>
-                        {indexLabel} {task.name || 'Untitled subtask'}
+                       {task.name || 'Untitled subtask'}
                       </span>
                       <select
                         className="h-8 w-56 rounded-md border text-sm focus:outline-none focus:ring-0 focus:border-gray-300"
