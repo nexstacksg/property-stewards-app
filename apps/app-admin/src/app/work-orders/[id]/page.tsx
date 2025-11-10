@@ -590,6 +590,8 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 itemName={item.name || item.item}
                                 itemNumber={index + 1}
                                 triggerLabel={remarkLabel}
+                                 indexLevel={index + 1}
+
                               />
                               <Link href={`/checklist-items/${item.id}`} className="flex-1 sm:flex-none">
                                 <Button variant="outline" size="sm" className="w-full sm:w-auto">
@@ -682,6 +684,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                   itemName={item.name || item.item}
                                   itemNumber={index + 1}
                                   triggerLabel={remarkLabel}
+                                  indexLevel={index + 1}
                                 />
                               </TableCell>
                               <TableCell className="align-top">

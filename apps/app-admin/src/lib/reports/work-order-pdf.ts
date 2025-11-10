@@ -739,13 +739,13 @@ async function buildTableRows(
             const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
             const taskId = (m as any)?.taskId || null
             if (!taskId) {
-              // Entry-level photo row; prefix with location number
-              const cap = `• ${locationNumber}${rawCaption ? ` ${rawCaption}` : ''}`
+              // Entry-level photo row; formatted as: 1.1 {Level 2 name}: {Caption}
+              const cap = `${locationNumber} ${group.label}${rawCaption ? `: ${rawCaption}` : ''}`
               entryPhotoRows.push({ url, caption: cap })
             } else if (taskMeta.has(taskId)) {
               const meta = taskMeta.get(taskId)!
-              const base = rawCaption ? ` ${rawCaption}` : (meta.name ? ` ${meta.name}` : '')
-              const cap = `• ${meta.num}${base}`
+              // Task-level photo row; formatted as: 1.1.1 {Level 3 name}: {Caption}
+              const cap = `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}`.trim()
               taskPhotoEntriesList.push({ url, caption: cap })
             }
           }
@@ -859,13 +859,13 @@ async function buildTableRows(
           const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
           const taskId = (m as any)?.taskId || null
           if (!taskId) {
-            mediaNoTask.push({ url, caption: `• ${itemNumber}${rawCaption ? ` ${rawCaption}` : ''}` })
+            // Use item number and name for general entry captions: 1 {Item name}: {Caption}
+            mediaNoTask.push({ url, caption: `${itemNumber} ${itemName}${rawCaption ? `: ${rawCaption}` : ''}` })
           } else if (taskIndex.has(taskId)) {
             const meta = taskIndex.get(taskId)!
-            const base = rawCaption ? ` ${rawCaption}` : (meta.name ? ` ${meta.name}` : '')
-            mediaWithTask.push({ url, caption: `• ${meta.num}${base}` })
+            mediaWithTask.push({ url, caption: `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}` })
           } else {
-            mediaWithTask.push({ url, caption: `• ${rawCaption || ''}`.trim() || null })
+            mediaWithTask.push({ url, caption: `${rawCaption || ''}`.trim() || null })
           }
         }
       }

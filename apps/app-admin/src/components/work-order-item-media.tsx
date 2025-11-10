@@ -51,6 +51,10 @@ export default function WorkOrderItemMedia({
       if (t?.id) taskIndexById.set(t.id, { loc: locPos + 1, idx: tPos + 1, name: t.name })
     })
   })
+  const locationNameById = new Map<string, string | null>()
+  locationOptions.forEach((loc) => {
+    if (loc?.id) locationNameById.set(loc.id, typeof loc.name === 'string' ? loc.name : null)
+  })
   // Resolve location index from a provided location id (for location-level media)
   const locationIndexFromId = (locId?: string | null): number | null => {
     if (!locId) return null
@@ -68,13 +72,25 @@ export default function WorkOrderItemMedia({
     if (!locIdx || !itemNumber) return null
     return `${locIdx}.${itemNumber}`
   }
-  const buildCaption = (att: MediaAttachment, _locSeq?: number | null): string | null => {
+  const buildCaption = (att: MediaAttachment): string | null => {
     const idx = buildIndexLabel(att.taskId, att.locationId ?? defaultLocationId)
-    const taskName = att.taskId ? taskIndexById.get(att.taskId)?.name : undefined
-    const base = att.caption || null
+    const base = (att.caption && att.caption.trim().length > 0) ? att.caption.trim() : null
+    if (att.taskId) {
+      const info = taskIndexById.get(att.taskId)
+      const tName = (info?.name && info.name.trim().length > 0) ? info.name.trim() : null
+      if (idx && tName && base) return `${idx} ${tName}: ${base}`
+      if (idx && tName) return `${idx} ${tName}`
+      if (idx && base) return `${idx} ${base}`
+      return idx || base || null
+    }
+    // Location-level (no task id)
+    const locId = att.locationId ?? defaultLocationId
+    const locNameRaw = locId ? locationNameById.get(locId) : undefined
+    const locName = (typeof locNameRaw === 'string' && locNameRaw.trim().length > 0) ? locNameRaw.trim() : null
+    if (idx && locName && base) return `${idx} ${locName}: ${base}`
+    if (idx && locName) return `${idx} ${locName}`
     if (idx && base) return `${idx} ${base}`
-    if (idx) return idx
-    return base ?? null
+    return idx || base || null
   }
 
   // Sort media: entry media first, then task media, then item media
@@ -170,11 +186,11 @@ export default function WorkOrderItemMedia({
                     >
                       <img
                         src={photo.url}
-                        alt={(buildCaption(photo, null) || `Photo ${index + 1}`) + ` (Photo ${index + 1})`}
+                        alt={(buildCaption(photo) || `Photo ${index + 1}`) + ` (Photo ${index + 1})`}
                         className="h-48 w-full rounded object-cover border"
                       />
                     </a>
-                    {(() => { const c = buildCaption(photo, null); return c ? (<p className="text-xs text-muted-foreground">{c}</p>) : null })()}
+                    {(() => { const c = buildCaption(photo); return c ? (<p className="text-xs text-muted-foreground">{c}</p>) : null })()}
                   </div>
                   ))
                 })()}
@@ -189,7 +205,7 @@ export default function WorkOrderItemMedia({
                   return sortedVideos.map((video, index) => (
                   <div key={video.url} className="space-y-2">
                     <video src={video.url} controls className="w-full h-64 md:h-80 rounded border" />
-                    {(() => { const c = buildCaption(video, null); return c ? (<p className="text-xs text-muted-foreground">{c}</p>) : null })()}
+                    {(() => { const c = buildCaption(video); return c ? (<p className="text-xs text-muted-foreground">{c}</p>) : null })()}
                   </div>
                   ))
                 })()}
