@@ -49,6 +49,7 @@ async function getWorkOrder(id: string) {
               items: {
                 include: {
                   contributions: {
+                    orderBy: { createdOn: 'asc' },
                     include: {
                       inspector: true,
                       user: {
@@ -576,7 +577,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 enableUpload
                                 uploadTarget={uploadTarget}
                                 itemNumber={index + 1}
-                                locationOptions={(item.locations || []).map((l: any) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t: any) => ({ id: t.id, name: t.name })) }))}
+                                locationOptions={(item.locations || []).map((l: any) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t: any) => ({ id: t.id, name: t.name, condition: t.condition })) }))}
                                 defaultLocationId={(item.locations && item.locations[0]?.id) || undefined}
                               />
                             </div>
@@ -590,8 +591,6 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 itemName={item.name || item.item}
                                 itemNumber={index + 1}
                                 triggerLabel={remarkLabel}
-                                 indexLevel={index + 1}
-
                               />
                               <Link href={`/checklist-items/${item.id}`} className="flex-1 sm:flex-none">
                                 <Button variant="outline" size="sm" className="w-full sm:w-auto">
@@ -670,7 +669,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                   enableUpload
                                   uploadTarget={uploadTarget}
                                   itemNumber={index + 1}
-                                  locationOptions={(item.locations || []).map((l: any) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t: any) => ({ id: t.id, name: t.name })) }))}
+                                  locationOptions={(item.locations || []).map((l: any) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t: any) => ({ id: t.id, name: t.name, condition: t.condition })) }))}
                                   defaultLocationId={(item.locations && item.locations[0]?.id) || undefined}
                                 />
                               </TableCell>
@@ -684,7 +683,6 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                   itemName={item.name || item.item}
                                   itemNumber={index + 1}
                                   triggerLabel={remarkLabel}
-                                  indexLevel={index + 1}
                                 />
                               </TableCell>
                               <TableCell className="align-top">

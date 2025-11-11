@@ -619,7 +619,17 @@ export default function ItemEntriesDialog({
   }
 
   const displayEntries: DisplayEntry[] = useMemo(() => {
-    return localEntries.map((entry) => {
+    // Build quick lookup maps for ordering by index: locIdx then taskIdx
+    const locOrder = new Map<string, number>()
+    const taskOrder = new Map<string, number>()
+    locationOptions.forEach((loc, locPos) => {
+      if (loc?.id) locOrder.set(loc.id, locPos + 1)
+      ;(loc.tasks || []).forEach((t, tPos) => {
+        if (t?.id && !taskOrder.has(t.id)) taskOrder.set(t.id, tPos + 1)
+      })
+    })
+
+    const withTask = localEntries.map((entry) => {
       const task = localTasks.find((task) => (task.entries || []).some((linked) => linked.id === entry.id))
       return {
         ...entry,
@@ -634,7 +644,20 @@ export default function ItemEntriesDialog({
         ]),
       } as any
     })
-  }, [localEntries, localTasks])
+
+    // Sort by location index then task index to match 1.1, 1.2, 1.3...
+    return withTask.sort((a: any, b: any) => {
+      const aLocId = (a as any)?.location?.id || a.task?.location?.id || (a as any)?.locationId || 'zzz'
+      const bLocId = (b as any)?.location?.id || b.task?.location?.id || (b as any)?.locationId || 'zzz'
+      const aLoc = locOrder.get(aLocId) ?? Number.MAX_SAFE_INTEGER
+      const bLoc = locOrder.get(bLocId) ?? Number.MAX_SAFE_INTEGER
+      if (aLoc !== bLoc) return aLoc - bLoc
+      const aTaskIdx = a.task?.id ? (taskOrder.get(a.task.id) ?? Number.MAX_SAFE_INTEGER) : 0
+      const bTaskIdx = b.task?.id ? (taskOrder.get(b.task.id) ?? Number.MAX_SAFE_INTEGER) : 0
+      if (aTaskIdx !== bTaskIdx) return aTaskIdx - bTaskIdx
+      return String(a.id).localeCompare(String(b.id))
+    })
+  }, [localEntries, localTasks, locationOptions])
 
 
   const remarkCount = displayEntries.length

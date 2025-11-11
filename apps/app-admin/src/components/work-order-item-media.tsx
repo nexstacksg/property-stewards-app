@@ -17,7 +17,7 @@ interface Props {
   uploadTarget?: 'item' | 'task'
   // Optional indexing context for captions (location.task indexes)
   itemNumber?: number
-  locationOptions?: Array<{ id: string; name?: string | null; tasks?: Array<{ id: string; name?: string | null }> }>
+  locationOptions?: Array<{ id: string; name?: string | null; tasks?: Array<{ id: string; name?: string | null; condition?: string | null }> }>
   // For remark (ItemEntry) viewer: use this when media has no taskId
   defaultLocationId?: string
 }
@@ -45,10 +45,10 @@ export default function WorkOrderItemMedia({
   const openPhotos = () => { if (!hasPhotos) return; setMode('photos'); setOpen(true) }
   const openVideos = () => { if (!hasVideos) return; setMode('videos'); setOpen(true) }
 
-  const taskIndexById = new Map<string, { loc: number; idx: number; name?: string | null }>()
+  const taskIndexById = new Map<string, { loc: number; idx: number; name?: string | null; condition?: string | null }>()
   locationOptions.forEach((loc, locPos) => {
     (loc.tasks || []).forEach((t, tPos) => {
-      if (t?.id) taskIndexById.set(t.id, { loc: locPos + 1, idx: tPos + 1, name: t.name })
+      if (t?.id) taskIndexById.set(t.id, { loc: locPos + 1, idx: tPos + 1, name: t.name, condition: (t as any)?.condition })
     })
   })
   const locationNameById = new Map<string, string | null>()
@@ -72,37 +72,41 @@ export default function WorkOrderItemMedia({
     if (!locIdx || !itemNumber) return null
     return `${itemNumber}.${locIdx}`
   }
-  const buildCaption = (att: MediaAttachment): string | null => {
+  const buildCaption = (att: MediaAttachment): { text: string | null; color?: string } => {
     const idx = buildIndexLabel(att.taskId, att.locationId ?? defaultLocationId)
     const base = (att.caption && att.caption.trim().length > 0) ? att.caption.trim() : null
     if (att.taskId) {
       const info = taskIndexById.get(att.taskId)
       const tName = (info?.name && info.name.trim().length > 0) ? info.name.trim() : null
-      if (idx && tName && base) return `${idx} ${tName}: ${base}`
-      if (idx && tName) return `${idx} ${tName}`
-      if (idx && base) return `${idx} ${base}`
-      return idx || base || null
+      const cnd = (info?.condition || '').toUpperCase()
+      const color = cnd === 'GOOD' ? 'text-green-600'
+        : (cnd === 'FAIR' || cnd === 'UNSATISFACTORY') ? 'text-red-600'
+        : undefined // Un-observable / Not Applicable: default text
+      if (idx && tName && base) return { text: `${idx} ${tName}\n${base}`, color }
+      if (idx && tName) return { text: `${idx} ${tName}`, color }
+      if (idx && base) return { text: `${idx}\n${base}`, color }
+      return { text: idx || base || null, color }
     }
     // Location-level (no task id)
     const locId = att.locationId ?? defaultLocationId
     const locNameRaw = locId ? locationNameById.get(locId) : undefined
     const locName = (typeof locNameRaw === 'string' && locNameRaw.trim().length > 0) ? locNameRaw.trim() : null
-    if (idx && locName && base) return `${idx} ${locName}: ${base}`
-    if (idx && locName) return `${idx} ${locName}`
-    if (idx && base) return `${idx} ${base}`
-    return idx || base || null
+    if (idx && locName && base) return { text: `${idx} ${locName}\n${base}` }
+    if (idx && locName) return { text: `${idx} ${locName}` }
+    if (idx && base) return { text: `${idx}\n${base}` }
+    return { text: idx || base || null }
   }
 
-  // Sort media: entry media first, then task media, then item media
+  // Sort media: by index (loc, task), then bucket, then order
   const sortKey = (att: MediaAttachment): [number, number, number, number, string] => {
-    // If we are in remarks context, force: ItemEntry media first, then task, then item
+    // For a single remark view, we still keep entry media ahead of task media
     if (contributionId) {
       const bucketForced = att.taskId ? 1 : 0
       const idxF = att.taskId ? taskIndexById.get(att.taskId as string) : undefined
-      const locF = idxF?.loc ?? Number.MAX_SAFE_INTEGER
-      const taskF = idxF?.idx ?? Number.MAX_SAFE_INTEGER
+      const locF = idxF?.loc ?? (locationIndexFromId(att.locationId ?? defaultLocationId) ?? Number.MAX_SAFE_INTEGER)
+      const taskF = att.taskId ? (idxF?.idx ?? Number.MAX_SAFE_INTEGER) : 0
       const orderF = typeof att.order === 'number' ? att.order : Number.MAX_SAFE_INTEGER
-      return [bucketForced, locF, taskF, orderF, att.url]
+      return [locF, taskF, bucketForced, orderF, att.url]
     }
     const src = (att as any).source as ('entry'|'task'|'item'|undefined)
     let bucket = 2
@@ -112,9 +116,10 @@ export default function WorkOrderItemMedia({
     else bucket = att.taskId ? 1 : 2
     const order = typeof att.order === 'number' ? att.order : Number.MAX_SAFE_INTEGER
     const idx = att.taskId ? taskIndexById.get(att.taskId as string) : undefined
-    const loc = idx?.loc ?? Number.MAX_SAFE_INTEGER
-    const task = idx?.idx ?? Number.MAX_SAFE_INTEGER
-    return [bucket, loc, task, order, att.url]
+    const loc = idx?.loc ?? (locationIndexFromId(att.locationId ?? defaultLocationId) ?? Number.MAX_SAFE_INTEGER)
+    const task = att.taskId ? (idx?.idx ?? Number.MAX_SAFE_INTEGER) : 0
+    // Primary sort by location/task index so 2.1.. precedes 2.11.. regardless of source
+    return [loc, task, bucket, order, att.url]
   }
   const sortedPhotos = [...normalizedPhotos].sort((a, b) => {
     const ka = sortKey(a); const kb = sortKey(b)
@@ -186,11 +191,16 @@ export default function WorkOrderItemMedia({
                     >
                       <img
                         src={photo.url}
-                        alt={(buildCaption(photo) || `Photo ${index + 1}`) + ` (Photo ${index + 1})`}
+                        alt={(() => { const bc = buildCaption(photo); return (bc.text || `Photo ${index + 1}`) + ` (Photo ${index + 1})` })()}
                         className="h-48 w-full rounded object-cover border"
                       />
                     </a>
-                    {(() => { const c = buildCaption(photo); return c ? (<p className="text-xs text-muted-foreground">{c}</p>) : null })()}
+                    {(() => {
+                      const cap = buildCaption(photo)
+                      if (!cap.text) return null
+                      const colorClass = cap.color ? cap.color : 'text-foreground'
+                      return (<p className={`text-xs whitespace-pre-line ${colorClass}`}>{cap.text}</p>)
+                    })()}
                   </div>
                   ))
                 })()}
@@ -205,7 +215,12 @@ export default function WorkOrderItemMedia({
                   return sortedVideos.map((video, index) => (
                   <div key={video.url} className="space-y-2">
                     <video src={video.url} controls className="w-full h-64 md:h-80 rounded border" />
-                    {(() => { const c = buildCaption(video); return c ? (<p className="text-xs text-muted-foreground">{c}</p>) : null })()}
+                    {(() => {
+                      const cap = buildCaption(video)
+                      if (!cap.text) return null
+                      const colorClass = cap.color ? cap.color : 'text-foreground'
+                      return (<p className={`text-xs whitespace-pre-line ${colorClass}`}>{cap.text}</p>)
+                    })()}
                   </div>
                   ))
                 })()}
