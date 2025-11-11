@@ -714,7 +714,7 @@ async function buildTableRows(
       })()
 
       {
-        // Group per entry by recorded date and recorder; render two rows per group (heading once)
+        // Group media rows by recorded date and author per entry (separate rows)
         const taskMeta = new Map<string, { num: string; name: string }>()
         for (let tIndex = 0; tIndex < locationTasks.length; tIndex += 1) {
           const t = locationTasks[tIndex]
@@ -723,11 +723,13 @@ async function buildTableRows(
           if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName })
         }
 
-        type G = { key: string; title: string; noTask: Array<{ url: string; caption: string | null }>; task: Array<{ url: string; caption: string | null }> }
-        const groups: Map<string, G> = new Map()
-        const keyFor = (e: any) => {
-          const dateOnly = formatDate(e?.createdOn) || ''
-          const by = resolveEntryAuthor(e)
+        type Group = { key: string; title: string; photos: Array<{ url: string; caption: string | null }> }
+        const noTaskGroups: Map<string, Group> = new Map()
+        const taskGroups: Map<string, Group> = new Map()
+
+        const buildGroupKeyAndTitle = (entry: any) => {
+          const dateOnly = formatDate(entry?.createdOn) || ''
+          const by = resolveEntryAuthor(entry)
           const title = dateOnly ? `Recorded on: ${dateOnly}${by ? `, recorded by ${by}` : ''}` : (by ? `Recorded by ${by}` : 'Recorded')
           const key = `${dateOnly}|${by}`
           return { key, title }
@@ -738,40 +740,51 @@ async function buildTableRows(
           const photos = media
             .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
             .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
-          const { key, title } = keyFor(e)
-          if (!groups.has(key)) groups.set(key, { key, title, noTask: [], task: [] })
+          const { key, title } = buildGroupKeyAndTitle(e)
           for (const m of photos) {
             const url = String(m.url).trim()
             const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
             const taskId = (m as any)?.taskId || null
             if (!taskId) {
               const cap = `${locationNumber} ${group.label}${rawCaption ? `: ${rawCaption}` : ''}`
-              groups.get(key)!.noTask.push({ url, caption: cap })
+              if (!noTaskGroups.has(key)) noTaskGroups.set(key, { key, title, photos: [] })
+              noTaskGroups.get(key)!.photos.push({ url, caption: cap })
             } else if (taskMeta.has(taskId)) {
               const meta = taskMeta.get(taskId)!
               const cap = `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}`.trim()
-              groups.get(key)!.task.push({ url, caption: cap })
+              if (!taskGroups.has(key)) taskGroups.set(key, { key, title, photos: [] })
+              taskGroups.get(key)!.photos.push({ url, caption: cap })
             }
           }
         }
 
-        if (includePhotos) {
+        const renderGroupedIntoSingleRow = async (groups: Map<string, Group>) => {
+          if (!includePhotos) return
           const ordered = Array.from(groups.values()).sort((a, b) => a.key.localeCompare(b.key))
+          const segs: CellSegment[] = []
           for (const g of ordered) {
-            if (g.noTask.length > 0) {
-              const seg1 = await buildRemarkSegment({ text: g.title, photoEntries: g.noTask, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
-              if (seg1 && (seg1.photos?.length || seg1.videos?.length)) {
-                rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg1, mediaOnly: true })
-              }
-            }
-            if (g.task.length > 0) {
-              const seg2 = await buildRemarkSegment({ text: undefined, photoEntries: g.task, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
-              if (seg2 && (seg2.photos?.length || seg2.videos?.length)) {
-                rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg2, mediaOnly: true })
-              }
-            }
+            if (g.photos.length === 0) continue
+            const seg = await buildRemarkSegment({
+              text: g.title,
+              photoEntries: g.photos,
+              videoUrls: [],
+              imageCache,
+              seenPhotos: seenItemPhotos,
+              seenVideos: seenItemVideos
+            })
+            if (seg) segs.push(seg)
+          }
+          if (segs.length > 0) {
+            rows.push({
+              cells: [ { text: '' }, { text: '' }, { text: '' }, { text: '' } ],
+              summaryMedia: segs,
+              mediaOnly: true
+            })
           }
         }
+
+        await renderGroupedIntoSingleRow(noTaskGroups)
+        await renderGroupedIntoSingleRow(taskGroups)
       }
 
       if (combinedGroupEntries.length > 0) {
@@ -853,16 +866,20 @@ async function buildTableRows(
       }
       if (includePhotos) {
         const ordered = Array.from(groups.values()).sort((a, b) => a.key.localeCompare(b.key))
+        const segsNoTask: CellSegment[] = []
+        const segsTask: CellSegment[] = []
         for (const g of ordered) {
           if (g.noTask.length > 0) {
             const s1 = await buildRemarkSegment({ text: g.title, photoEntries: g.noTask, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
-            if (s1 && (s1.photos?.length || s1.videos?.length)) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: s1, mediaOnly: true })
+            if (s1) segsNoTask.push(s1)
           }
           if (g.task.length > 0) {
-            const s2 = await buildRemarkSegment({ text: undefined, photoEntries: g.task, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
-            if (s2 && (s2.photos?.length || s2.videos?.length)) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: s2, mediaOnly: true })
+            const s2 = await buildRemarkSegment({ text: g.title, photoEntries: g.task, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+            if (s2) segsTask.push(s2)
           }
         }
+        if (segsNoTask.length > 0) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: segsNoTask, mediaOnly: true })
+        if (segsTask.length > 0) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: segsTask, mediaOnly: true })
       }
 
       const entrySegments: (CellSegment | null)[] = []
@@ -1238,12 +1255,37 @@ function calculateMediaBlocksHeight(doc: any, segments?: CellSegment | CellSegme
   return total
 }
 
-function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | CellSegment[]): number {
+function drawMediaBlocks(
+  doc: any,
+  startY: number,
+  segments?: CellSegment | CellSegment[],
+  edges?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean }
+): number {
   const normalized = normalizeSegments(segments)
   if (normalized.length === 0) return 0
 
   const contentWidth = getTableWidth(doc) - CELL_PADDING * 2
   let currentY = startY
+
+  // Draw one outer border for the combined media block so there is a single
+  // table-like border but no horizontal dividers between grouped segments.
+  const totalBlockHeight = calculateMediaBlocksHeight(doc, segments)
+  if (totalBlockHeight > 0) {
+    doc.lineWidth(0.7)
+    if (!edges) {
+      // Default behavior: full rectangle stroke
+      doc.rect(TABLE_MARGIN, startY, getTableWidth(doc), totalBlockHeight).stroke()
+    } else {
+      const x1 = TABLE_MARGIN
+      const x2 = TABLE_MARGIN + getTableWidth(doc)
+      const y1 = startY
+      const y2 = startY + totalBlockHeight
+      if (edges.left) { doc.moveTo(x1, y1).lineTo(x1, y2).stroke() }
+      if (edges.right) { doc.moveTo(x2, y1).lineTo(x2, y2).stroke() }
+      if (edges.top) { doc.moveTo(x1, y1).lineTo(x2, y1).stroke() }
+      if (edges.bottom) { doc.moveTo(x1, y2).lineTo(x2, y2).stroke() }
+    }
+  }
 
   normalized.forEach((segment, index) => {
     const photos = segment.photos || []
@@ -1283,8 +1325,9 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       blockHeight += MEDIA_GUTTER
     }
 
-    doc.lineWidth(0.7)
-    doc.rect(TABLE_MARGIN, currentY, getTableWidth(doc), blockHeight).stroke()
+    // Do not draw a border box around each media segment.
+    // Borders at row level are handled by the table; segment-level boxes
+    // create unwanted horizontal lines between groups.
 
     let contentY = currentY + CELL_PADDING
 
@@ -1553,6 +1596,7 @@ export async function appendWorkOrderSection(
       const normalizedSegments = normalizeSegments(rowInfo.summaryMedia)
 
       // Iterate each segment and paginate it if necessary
+      let firstChunkOnPage = true
       for (let segIndex = 0; segIndex < normalizedSegments.length; segIndex += 1) {
         const original = normalizedSegments[segIndex]
         let remainingPhotos = Array.isArray(original.photos) ? original.photos.slice() : []
@@ -1566,6 +1610,7 @@ export async function appendWorkOrderSection(
           y = TABLE_MARGIN
           const headerAgainHeight = drawTableRow(doc, y, headerRow, { header: true })
           y += headerAgainHeight
+          firstChunkOnPage = true
         }
 
         while (includeText || remainingPhotos.length > 0 || videos.length > 0) {
@@ -1618,35 +1663,45 @@ export async function appendWorkOrderSection(
             photosToTake = Math.min(remainingPhotos.length, rowsToTake * MEDIA_PER_ROW)
           }
 
-          // If no photos can fit but we still have text, render text-only chunk once
-          if (photosToTake === 0 && textHeight > 0 && remainingSpace >= basePadding + textHeight) {
-            const chunk: CellSegment = {
-              text: textValue,
-              photos: [],
-              photoCaptions: [],
-              videos: []
-            }
-            const chunkHeight = calculateMediaBlocksHeight(doc, chunk)
-            if (chunkHeight > remainingSpace) {
-              // Even text alone doesn't fit—move to next page
-              ensureNewPageWithHeader()
+          // Keep the heading (text) with at least one media row.
+          // If there are photos/videos remaining but none can fit with the text,
+          // go to a new page instead of rendering a text-only chunk at the bottom.
+          const hasMediaPending = hasPhotosRemaining || hasVideosRemaining
+          if (!hasMediaPending) {
+            // No media to follow: allow a text-only chunk if it fits.
+            if (textHeight > 0 && remainingSpace >= basePadding + textHeight) {
+              const chunk: CellSegment = {
+                text: textValue,
+                photos: [],
+                photoCaptions: [],
+                videos: []
+              }
+              const chunkHeight = calculateMediaBlocksHeight(doc, chunk)
+              if (chunkHeight > remainingSpace) {
+                // Even text alone doesn't fit—move to next page
+                ensureNewPageWithHeader()
+                continue
+              }
+              // Background paint
+              if (currentTaskBackground) {
+                doc.save()
+                try {
+                  doc.fillColor(currentTaskBackground)
+                  if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
+                  doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
+                } finally {
+                  if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+                  doc.restore()
+                }
+              }
+              const consumed = drawMediaBlocks(doc, y, chunk)
+              y += consumed
+              includeText = false
               continue
             }
-            // Background paint
-            if (currentTaskBackground) {
-              doc.save()
-              try {
-            doc.fillColor(currentTaskBackground)
-            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
-            doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
-          } finally {
-            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-            doc.restore()
-          }
-            }
-            const consumed = drawMediaBlocks(doc, y, chunk)
-            y += consumed
-            includeText = false
+          } else if (photosToTake === 0) {
+            // Media exists but can't fit any row with the text on this page → new page
+            ensureNewPageWithHeader()
             continue
           }
 
@@ -1688,10 +1743,32 @@ export async function appendWorkOrderSection(
           }
           }
 
-          // Draw and advance pointers
-          const consumed = drawMediaBlocks(doc, y, chunk)
+          // Determine if more content remains after this chunk (across all segments)
+          const willHaveMoreInThisSegment = (remainingPhotos.length - photosToTake) > 0 || videos.length > 0
+          let moreSegmentsAhead = false
+          for (let j = segIndex + 1; j < normalizedSegments.length; j += 1) {
+            const s = normalizedSegments[j]
+            const hasText = Boolean(s.text && s.text.trim())
+            const hasPhotos = Array.isArray(s.photos) && s.photos.length > 0
+            const hasVideos = Array.isArray(s.videos) && s.videos.length > 0
+            if (hasText || hasPhotos || hasVideos) { moreSegmentsAhead = true; break }
+          }
+          const moreContentOverall = willHaveMoreInThisSegment || moreSegmentsAhead
+
+          // Determine if this chunk ends the current page
+          const willEndPage = (remainingSpace - chunkHeight) <= 16
+
+          // Draw and advance pointers, stroking edges to avoid lines between groups
+          const consumed = drawMediaBlocks(doc, y, chunk, {
+            left: true,
+            right: true,
+            top: firstChunkOnPage,
+            // Close at end-of-page even if more content continues on next page
+            bottom: !moreContentOverall || willEndPage,
+          })
           y += consumed
           includeText = false
+          firstChunkOnPage = false
           remainingPhotos = remainingPhotos.slice(photosToTake)
           remainingCaptions = remainingCaptions.slice(photosToTake)
         }
