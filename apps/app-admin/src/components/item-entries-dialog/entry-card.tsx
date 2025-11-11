@@ -127,9 +127,9 @@ export default function EntryCard({
     const { locationIdx: locIdxFromTask, taskIdx } = findTaskIndex(task.id)
     const loc = locationIdx || locIdxFromTask
     if (loc && itemNumber && taskIdx) indexLabel = `${loc}.${itemNumber}.${taskIdx}`
-    else if (loc && taskIdx) indexLabel = `${loc}.${taskIdx}`
+    else if (loc && taskIdx) indexLabel = `${taskIdx}.${loc}`
   } else {
-    if (locationIdx && itemNumber) indexLabel = `${locationIdx}.${itemNumber}`
+    if (locationIdx && itemNumber) indexLabel = `${itemNumber}.${locationIdx}`
     else if (locationIdx) indexLabel = `${locationIdx}`
   }
 
@@ -206,8 +206,8 @@ export default function EntryCard({
                 // Per-task index label for summary lines (use taskId from summary)
                 const ti = findTaskIndex(f.taskId)
                 const lineIndex = (ti.locationIdx && itemNumber && ti.taskIdx)
-                  ? `${ti.locationIdx}.${itemNumber}.${ti.taskIdx}`
-                  : (ti.locationIdx && ti.taskIdx) ? `${ti.locationIdx}.${ti.taskIdx}` : null
+                  ? `${itemNumber}.${ti.locationIdx}.${ti.taskIdx}`
+                  : (ti.locationIdx && ti.taskIdx) ? `${ti.taskIdx}.${ti.locationIdx}` : null
                 return (
                   <div key={idx} className="text-sm text-muted-foreground">
                     <p>
