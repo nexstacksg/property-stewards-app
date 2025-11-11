@@ -253,7 +253,10 @@ export async function refreshChecklistItemCache(itemId: string) {
         status: true,
         condition: true,
         checklistTasks: {
-          orderBy: { createdOn: 'asc' },
+          orderBy: [
+            { order: 'asc' },
+            { createdOn: 'asc' }
+          ],
           select: {
             id: true,
             name: true,
@@ -272,7 +275,10 @@ export async function refreshChecklistItemCache(itemId: string) {
             status: true,
             order: true,
             tasks: {
-              orderBy: { createdOn: 'asc' },
+              orderBy: [
+                { order: 'asc' },
+                { createdOn: 'asc' }
+              ],
               select: {
                 id: true,
                 name: true,
@@ -371,7 +377,10 @@ export async function refreshChecklistItemsForWorkOrder(workOrderId: string) {
         status: true,
         condition: true,
         checklistTasks: {
-          orderBy: { createdOn: 'asc' },
+          orderBy: [
+            { order: 'asc' },
+            { createdOn: 'asc' }
+          ],
           select: {
             id: true,
             name: true,
@@ -390,7 +399,10 @@ export async function refreshChecklistItemsForWorkOrder(workOrderId: string) {
             status: true,
             order: true,
             tasks: {
-              orderBy: { createdOn: 'asc' },
+              orderBy: [
+                { order: 'asc' },
+                { createdOn: 'asc' }
+              ],
               select: {
                 id: true,
                 name: true,
@@ -1084,7 +1096,10 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
           enteredOn: true,
           enteredById: true,
           checklistTasks: {
-            orderBy: { createdOn: 'asc' },
+            orderBy: [
+              { order: 'asc' },
+              { createdOn: 'asc' }
+            ],
             select: {
               id: true,
               name: true,
@@ -1120,7 +1135,10 @@ export async function getTasksByLocation(workOrderId: string, location: string, 
               status: true,
               order: true,
               tasks: {
-                orderBy: { createdOn: 'asc' },
+                orderBy: [
+                  { order: 'asc' },
+                  { createdOn: 'asc' }
+                ],
                 select: {
                   id: true,
                   name: true,

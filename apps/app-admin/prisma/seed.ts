@@ -687,13 +687,15 @@ async function main() {
       })
       locationRecords.push({ id: location.id, name: locationSeed.name })
 
-      for (const subtask of locationSeed.subtasks || []) {
+      for (let tIdx = 0; tIdx < (locationSeed.subtasks || []).length; tIdx++) {
+        const subtask = (locationSeed.subtasks || [])[tIdx]
         await prisma.checklistTask.create({
           data: {
             itemId: item.id,
             locationId: location.id,
             name: subtask.name,
             status: subtask.status,
+            order: tIdx + 1,
             photos: subtask.photos ?? [],
             videos: subtask.videos ?? [],
           },
@@ -744,6 +746,7 @@ async function main() {
             inspectorId: entrySeed.inspectorId ?? undefined,
             name: task.name,
             status: task.status,
+            order: 1,
             photos: task.photos ?? [],
             videos: task.videos ?? [],
             entries: {

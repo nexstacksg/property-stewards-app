@@ -188,11 +188,12 @@ export async function POST(
             })
 
             // Batch insert tasks for this location to minimize transaction time
-            const tasksData = seed.subtasks.map((subtaskName) => ({
+            const tasksData = seed.subtasks.map((subtaskName, idx) => ({
               itemId: createdItem.id,
               locationId: location.id,
               name: subtaskName,
               status: 'PENDING' as const,
+              order: idx + 1,
             }))
             if (tasksData.length > 0) {
               await tx.checklistTask.createMany({ data: tasksData })
@@ -299,11 +300,12 @@ export async function PUT(
           })
 
           // Batch insert tasks for this location
-          const tasksData = seed.subtasks.map((subtaskName) => ({
+          const tasksData = seed.subtasks.map((subtaskName, idx) => ({
             itemId: createdItem.id,
             locationId: location.id,
             name: subtaskName,
             status: 'PENDING' as const,
+            order: idx + 1,
           }))
           if (tasksData.length > 0) {
             await tx.checklistTask.createMany({ data: tasksData })
@@ -319,7 +321,10 @@ export async function PUT(
             orderBy: { order: 'asc' },
             include: {
               checklistTasks: {
-                orderBy: { createdOn: 'asc' },
+                orderBy: [
+                  { order: 'asc' },
+                  { createdOn: 'asc' }
+                ],
                 include: {
                   location: true,
                 },
@@ -328,7 +333,10 @@ export async function PUT(
                 orderBy: { order: 'asc' },
                 include: {
                   tasks: {
-                    orderBy: { createdOn: 'asc' }
+                    orderBy: [
+                      { order: 'asc' },
+                      { createdOn: 'asc' }
+                    ]
                   }
                 }
               }

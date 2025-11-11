@@ -265,8 +265,8 @@ async function persistMediaForContext(params: PersistMediaParams): Promise<strin
   if (isTaskFlowMedia && (activeTaskId || currentTaskEntryId)) {
     try {
       if (!currentTaskEntryId && activeTaskItemId) {
-        const locId = currentSubLocationId || activeTaskLocationId || undefined
-        // For a new run, create a new entry explicitly
+        const locId = currentSubLocationId || (metadata.currentTaskLocationId as string | undefined) || undefined
+        // New inspection run without a bound entry → create a fresh ItemEntry
         const created = await prisma.itemEntry.create({ data: { itemId: activeTaskItemId, inspectorId: resolvedInspectorId || undefined, locationId: (locId as any), condition: (metadata.currentTaskCondition as any) || undefined, remarks: mediaRemark || undefined } as any })
         currentTaskEntryId = created.id
         await updateSessionState(phoneNumber, { currentTaskEntryId })

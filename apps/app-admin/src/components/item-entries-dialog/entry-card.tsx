@@ -14,6 +14,7 @@ type Props = {
   itemId: string
   workOrderId: string
   itemName?: string
+  itemNumber?: number
   locationOptions: LocationOption[]
   isEditing: boolean
   submitting: boolean
@@ -56,6 +57,7 @@ export default function EntryCard({
   itemId,
   workOrderId,
   itemName,
+  itemNumber,
   locationOptions,
   isEditing,
   submitting,
@@ -103,8 +105,36 @@ export default function EntryCard({
   const fallbackLocationName = !locationName && (task || locationFromEntry) ? (itemName ? `${itemName} — General` : 'General') : null
   locationName = locationName || fallbackLocationName
 
+  // Index helpers: locationIndex.itemNumber.taskIndex (if task), e.g., 6.4.1
+  const findLocationIndex = (locId?: string | null): number | null => {
+    if (!locId) return null
+    const idx = locationOptions.findIndex((l) => l.id === locId)
+    return idx >= 0 ? idx + 1 : null
+  }
+  const findTaskIndex = (tid?: string | null): { locationIdx: number | null; taskIdx: number | null } => {
+    if (!tid) return { locationIdx: null, taskIdx: null }
+    for (let i = 0; i < locationOptions.length; i++) {
+      const loc = locationOptions[i]
+      const pos = (loc.tasks || []).findIndex((t) => t?.id === tid)
+      if (pos >= 0) return { locationIdx: i + 1, taskIdx: pos + 1 }
+    }
+    return { locationIdx: null, taskIdx: null }
+  }
+  const resolvedLocationId = (locationFromEntry?.id || locationFromTask?.id || locationIdFromEntry) as string | undefined
+  const locationIdx = findLocationIndex(resolvedLocationId)
+  let indexLabel: string | null = null
+  if (task?.id) {
+    const { locationIdx: locIdxFromTask, taskIdx } = findTaskIndex(task.id)
+    const loc = locationIdx || locIdxFromTask
+    if (loc && itemNumber && taskIdx) indexLabel = `${loc}.${itemNumber}.${taskIdx}`
+    else if (loc && taskIdx) indexLabel = `${taskIdx}.${loc}`
+  } else {
+    if (locationIdx && itemNumber) indexLabel = `${itemNumber}.${locationIdx}`
+    else if (locationIdx) indexLabel = `${locationIdx}`
+  }
+
   // Build per-entry finding summaries from ChecklistTaskFinding.details, not from ChecklistTask.condition
-  type FindingSummary = { taskName: string; conditionLabel: string | null; cause?: string | null; resolution?: string | null }
+  type FindingSummary = { taskId: string; taskName: string; conditionLabel: string | null; cause?: string | null; resolution?: string | null }
   let findingSummaries: FindingSummary[] | null = null
   const entryFindings = (entry as any)?.findings as Array<{ taskId: string; details?: any | null }> | undefined
   if (Array.isArray(entryFindings) && entryFindings.length > 0) {
@@ -114,20 +144,45 @@ export default function EntryCard({
         if (t?.id) taskNameById.set(t.id, t.name || 'Subtask')
       })
     })
-    findingSummaries = entryFindings.map((f) => {
+    const rawSummaries = entryFindings.map((f) => {
       const name = taskNameById.get(f.taskId) || 'Subtask'
       const details = (f?.details && typeof f.details === 'object') ? f.details as any : {}
       const condRaw: string | null = typeof details.condition === 'string' ? details.condition : null
       const condLabel = condRaw ? formatCondition(condRaw) : null
       const cause = typeof details.cause === 'string' && details.cause.trim().length > 0 ? details.cause.trim() : null
       const resolution = typeof details.resolution === 'string' && details.resolution.trim().length > 0 ? details.resolution.trim() : null
-      return { taskName: name, conditionLabel: condLabel, cause, resolution }
+      return { taskId: f.taskId, taskName: name, conditionLabel: condLabel, cause, resolution }
     })
+
+    // Sort summaries by the contract checklist subtask order for this location
+    const sortLocationId = (entry as any)?.location?.id || entry.task?.location?.id || locationIdFromEntry
+    let loc = locationOptions.find((l) => l.id === sortLocationId)
+    if (!loc) {
+      // Infer location by best overlap between entryFinding taskIds and location.tasks
+      const findingIds = new Set(entryFindings.map((f) => f.taskId).filter(Boolean))
+      let best: { loc: typeof locationOptions[number] | null; score: number } = { loc: null, score: -1 }
+      locationOptions.forEach((candidate) => {
+        const ids = new Set((candidate.tasks || []).map((t) => t.id))
+        let score = 0
+        findingIds.forEach((id) => { if (ids.has(id)) score++ })
+        if (score > best.score) best = { loc: candidate, score }
+      })
+      if (best.loc && best.score > 0) loc = best.loc
+    }
+    if (loc && Array.isArray(loc.tasks) && loc.tasks.length > 0) {
+      const orderIndex = new Map<string, number>()
+      loc.tasks.forEach((t, idx) => { if (t?.id) orderIndex.set(t.id, idx) })
+      const pairs = entryFindings.map((f, i) => ({ s: rawSummaries[i], idx: orderIndex.get(f.taskId) ?? Number.MAX_SAFE_INTEGER }))
+      findingSummaries = pairs.sort((a, b) => a.idx - b.idx).map(p => p.s)
+    } else {
+      findingSummaries = rawSummaries
+    }
   }
 
   const createdBy = entry.inspector?.name || entry.user?.username || entry.user?.email || null
   const headlineBase = task?.name || createdBy || 'Remark'
-  const headline = locationName ? `${locationName} — ${headlineBase}` : headlineBase
+  const headlineCore = locationName ? `${locationName} — ${headlineBase}` : headlineBase
+  const headline = indexLabel ? `${indexLabel} · ${headlineCore}` : headlineCore
   const mediaContext = task?.name || locationName || createdBy || null
   const mediaLabel = buildMediaLabel(itemName, mediaContext)
   const cardClasses = `rounded-md border p-3 ${isEditing ? 'border-primary/60 bg-primary/5' : ''}`
@@ -136,17 +191,28 @@ export default function EntryCard({
     <div className={cardClasses}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm font-medium">{headline}</p>
+          <p className="text-md font-medium">{headline}</p>
           {locationName ? (
-            <p className="text-xs text-muted-foreground mt-0.5">Location: {locationName}</p>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {indexLabel ? (
+                <span className="mr-1"> {indexLabel}</span>
+              ) : null}
+              Item: {locationName}
+            </p>
           ) : null}
           {Array.isArray(findingSummaries) && findingSummaries.length > 0 ? (
             <div className="mt-0.5 space-y-1">
-              {findingSummaries.map((f, idx) => (
-                <div key={idx} className="text-xs text-muted-foreground">
-                  <p>
-                    {f.taskName}: {f.conditionLabel || '—'}
-                  </p>
+              {findingSummaries.map((f, idx) => {
+                // Per-task index label for summary lines (use taskId from summary)
+                const ti = findTaskIndex(f.taskId)
+                const lineIndex = (ti.locationIdx && itemNumber && ti.taskIdx)
+                  ? `${itemNumber}.${ti.locationIdx}.${ti.taskIdx}`
+                  : (ti.locationIdx && ti.taskIdx) ? `${ti.taskIdx}.${ti.locationIdx}` : null
+                return (
+                  <div key={idx} className="text-sm text-muted-foreground">
+                    <p>
+                      {lineIndex ? `${lineIndex} ${f.taskName}` : f.taskName}: {f.conditionLabel || '—'}
+                    </p>
                   {(f.cause || f.resolution) ? (
                     <div className="mt-0.5 ml-3 space-y-0.5">
                       {f.cause ? (
@@ -157,8 +223,9 @@ export default function EntryCard({
                       ) : null}
                     </div>
                   ) : null}
-                </div>
-              ))}
+                  </div>
+                )
+              })}
             </div>
           ) : null}
         </div>
@@ -238,6 +305,7 @@ export default function EntryCard({
           updateAddedTaskVideoCaption={(taskId, index, caption) => setEditingAddedTaskVideos((prev) => ({ ...prev, [taskId]: (prev[taskId] || []).map((e, i) => i === index ? { ...e, caption } : e) }))}
           removeAddedTaskPhotoAt={(taskId, index) => setEditingAddedTaskPhotos((prev) => ({ ...prev, [taskId]: (prev[taskId] || []).filter((_, i) => i !== index) }))}
           removeAddedTaskVideoAt={(taskId, index) => setEditingAddedTaskVideos((prev) => ({ ...prev, [taskId]: (prev[taskId] || []).filter((_, i) => i !== index) }))}
+          itemNumber={itemNumber}
         />
       ) : entry.remarks ? (
         <p className="text-sm text-muted-foreground mt-2">
@@ -252,6 +320,9 @@ export default function EntryCard({
           videos={entry.videos}
           itemName={mediaLabel}
           contributionId={entry.id}
+          itemNumber={itemNumber}
+          locationOptions={locationOptions.map((l) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t) => ({ id: t.id, name: t.name, condition: t.condition })) }))}
+          defaultLocationId={resolvedLocationId}
         />
       </div>
     </div>

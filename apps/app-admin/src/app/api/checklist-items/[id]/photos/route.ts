@@ -57,7 +57,10 @@ export async function POST(
       include: {
         checklistTasks: {
           include: { entries: { select: { id: true } } },
-          orderBy: { createdOn: 'asc' }
+          orderBy: [
+            { order: 'asc' },
+            { createdOn: 'asc' }
+          ]
         },
         contractChecklist: { select: { contract: { select: { id: true } } } }
       }
@@ -86,7 +89,8 @@ export async function POST(
         data: {
           itemId: item.id,
           name: item.name || 'General inspection',
-          status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING'
+          status: item.status === 'COMPLETED' ? 'COMPLETED' : 'PENDING',
+          order: 1,
         }
       })
     }

@@ -13,7 +13,7 @@ import {
 import AddRemarkForm from "@/components/item-entries-dialog/add-remark-form"
 import EntryCard from "@/components/item-entries-dialog/entry-card"
 import { DisplayEntry, Entry, PendingMediaFile, Task } from "@/components/item-entries-dialog/types"
-import { extractEntryMedia, mergeMediaLists, stringsToAttachments } from "@/lib/media-utils"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments, stringsToAttachmentsWithTask } from "@/lib/media-utils"
 import { useRouter } from "next/navigation"
 
 type Props = {
@@ -28,6 +28,9 @@ type Props = {
   }>
   itemName?: string
   triggerLabel?: string | ((count: number) => string)
+  // Optional: checklist item number used for index labeling (e.g., 6.4.1)
+  itemNumber?: number
+  indexLevel?:number
 }
 
 export default function ItemEntriesDialog({
@@ -38,6 +41,8 @@ export default function ItemEntriesDialog({
   locations = [],
   itemName,
   triggerLabel,
+  itemNumber,
+  indexLevel
 }: Props) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -614,22 +619,45 @@ export default function ItemEntriesDialog({
   }
 
   const displayEntries: DisplayEntry[] = useMemo(() => {
-    return localEntries.map((entry) => {
+    // Build quick lookup maps for ordering by index: locIdx then taskIdx
+    const locOrder = new Map<string, number>()
+    const taskOrder = new Map<string, number>()
+    locationOptions.forEach((loc, locPos) => {
+      if (loc?.id) locOrder.set(loc.id, locPos + 1)
+      ;(loc.tasks || []).forEach((t, tPos) => {
+        if (t?.id && !taskOrder.has(t.id)) taskOrder.set(t.id, tPos + 1)
+      })
+    })
+
+    const withTask = localEntries.map((entry) => {
       const task = localTasks.find((task) => (task.entries || []).some((linked) => linked.id === entry.id))
       return {
         ...entry,
         task,
         photos: mergeMediaLists([
           extractEntryMedia(entry, 'PHOTO'),
-          stringsToAttachments(task?.photos)
+          stringsToAttachmentsWithTask(task?.photos, task?.id)
         ]),
         videos: mergeMediaLists([
           extractEntryMedia(entry, 'VIDEO'),
-          stringsToAttachments(task?.videos)
+          stringsToAttachmentsWithTask(task?.videos, task?.id)
         ]),
       } as any
     })
-  }, [localEntries, localTasks])
+
+    // Sort by location index then task index to match 1.1, 1.2, 1.3...
+    return withTask.sort((a: any, b: any) => {
+      const aLocId = (a as any)?.location?.id || a.task?.location?.id || (a as any)?.locationId || 'zzz'
+      const bLocId = (b as any)?.location?.id || b.task?.location?.id || (b as any)?.locationId || 'zzz'
+      const aLoc = locOrder.get(aLocId) ?? Number.MAX_SAFE_INTEGER
+      const bLoc = locOrder.get(bLocId) ?? Number.MAX_SAFE_INTEGER
+      if (aLoc !== bLoc) return aLoc - bLoc
+      const aTaskIdx = a.task?.id ? (taskOrder.get(a.task.id) ?? Number.MAX_SAFE_INTEGER) : 0
+      const bTaskIdx = b.task?.id ? (taskOrder.get(b.task.id) ?? Number.MAX_SAFE_INTEGER) : 0
+      if (aTaskIdx !== bTaskIdx) return aTaskIdx - bTaskIdx
+      return String(a.id).localeCompare(String(b.id))
+    })
+  }, [localEntries, localTasks, locationOptions])
 
 
   const remarkCount = displayEntries.length
@@ -654,9 +682,9 @@ export default function ItemEntriesDialog({
           {triggerText}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl max-h-[72vh] overflow-auto">
+      <DialogContent className="sm:max-w-4xl md:max-w-5xl w-full max-h-[82vh] overflow-auto">
         <DialogHeader>
-          <DialogTitle>{itemName ? `${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
+          <DialogTitle>{itemName ? `${itemNumber}.${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
           <DialogDescription>
             Capture notes for subtasks, toggle their reporting status, and manage supporting media.
           </DialogDescription>
@@ -729,6 +757,7 @@ export default function ItemEntriesDialog({
               setTaskCauseById={(updater) => setTaskCauseById((prev) => updater(prev))}
               taskResolutionById={taskResolutionById}
               setTaskResolutionById={(updater) => setTaskResolutionById((prev) => updater(prev))}
+              itemNumber={itemNumber}
             />
           ) : null}
 
@@ -743,6 +772,7 @@ export default function ItemEntriesDialog({
                     itemId={itemId}
                     workOrderId={workOrderId}
                     itemName={itemName}
+                    itemNumber={itemNumber}
                     locationOptions={locationOptions}
                     isEditing={isEditing}
                     submitting={submitting}

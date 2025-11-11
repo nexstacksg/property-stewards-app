@@ -63,8 +63,8 @@ function normaliseSubTasks(fallbackName: string, fallbackSource?: string | strin
 }
 
 async function ensureLocationsForItem(itemId: string, fallbackName: string, seeds?: LocationSeed[]) {
-  const locationDelegate = (prisma as any).contractChecklistLocation
-  const taskDelegate = (prisma as any).checklistTask
+      const locationDelegate = (prisma as any).contractChecklistLocation
+      const taskDelegate = (prisma as any).checklistTask
 
   if (!locationDelegate || !taskDelegate) {
     throw new Error('Checklist location/task delegates unavailable. Run `pnpm prisma generate`.')
@@ -104,27 +104,29 @@ async function ensureLocationsForItem(itemId: string, fallbackName: string, seed
       data: { locationId: primaryLocation.id },
     })
 
-    for (const seed of remainingSeeds) {
-      const location = await locationDelegate.create({
-        data: {
-          itemId,
-          name: seed.name,
-          status: 'PENDING',
-          order: order++,
-        },
-      })
-
-      for (const subtaskName of seed.subtasks) {
-        await taskDelegate.create({
+      for (const seed of remainingSeeds) {
+        const location = await locationDelegate.create({
           data: {
             itemId,
-            locationId: location.id,
-            name: subtaskName,
+            name: seed.name,
             status: 'PENDING',
+            order: order++,
           },
         })
+
+        for (let sidx = 0; sidx < seed.subtasks.length; sidx++) {
+          const subtaskName = seed.subtasks[sidx]
+          await taskDelegate.create({
+            data: {
+              itemId,
+              locationId: location.id,
+              name: subtaskName,
+              status: 'PENDING',
+              order: sidx + 1,
+            },
+          })
+        }
       }
-    }
 
     return
   }
@@ -433,13 +435,15 @@ export async function POST(request: NextRequest) {
                       },
                     })
 
-                    for (const subtaskName of seed.subtasks) {
+                    for (let sidx = 0; sidx < seed.subtasks.length; sidx++) {
+                      const subtaskName = seed.subtasks[sidx]
                       await tx.checklistTask.create({
                         data: {
                           itemId: createdItem.id,
                           locationId: location.id,
                           name: subtaskName,
                           status: 'PENDING',
+                          order: sidx + 1,
                         },
                       })
                     }
@@ -476,12 +480,18 @@ export async function POST(request: NextRequest) {
                               orderBy: { order: 'asc' },
                               include: {
                                 tasks: {
-                                  orderBy: { createdOn: 'asc' },
+                                  orderBy: [
+                                    { order: 'asc' },
+                                    { createdOn: 'asc' }
+                                  ],
                                 },
                               },
                             },
                             checklistTasks: {
-                              orderBy: { createdOn: 'asc' },
+                              orderBy: [
+                                { order: 'asc' },
+                                { createdOn: 'asc' }
+                              ],
                               include: {
                                 location: true,
                               },
