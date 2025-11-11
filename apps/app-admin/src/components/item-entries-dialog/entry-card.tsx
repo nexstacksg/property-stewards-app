@@ -321,7 +321,7 @@ export default function EntryCard({
           itemName={mediaLabel}
           contributionId={entry.id}
           itemNumber={itemNumber}
-          locationOptions={locationOptions.map((l) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t) => ({ id: t.id, name: t.name })) }))}
+          locationOptions={locationOptions.map((l) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t) => ({ id: t.id, name: t.name, condition: t.condition })) }))}
           defaultLocationId={resolvedLocationId}
         />
       </div>

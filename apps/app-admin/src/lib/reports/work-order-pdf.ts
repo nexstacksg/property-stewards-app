@@ -35,6 +35,9 @@ const PHOTO_HEIGHT = 100
 const PHOTO_CAPTION_GAP = 2
 const PHOTO_CAPTION_FONT_SIZE = 8
 const PHOTO_CAPTION_COLOR = "#475569"
+const CAPTION_GREEN = "#16a34a" // Good
+const CAPTION_RED = "#dc2626"   // Fair / Un-Satisfactory
+const CAPTION_BLACK = "#111827" // Un-observable / Not applicable / fallback
 const VIDEO_HEIGHT = 64
 const MAX_MEDIA_LINKS = 9999
 const MEDIA_PER_ROW = 4
@@ -163,6 +166,7 @@ type CellSegment = {
   text?: string
   photos?: Buffer[]
   photoCaptions?: (string | null)[]
+  photoCaptionColors?: (string | null)[]
   videos?: VideoItem[]
 }
 
@@ -171,6 +175,7 @@ type TableCell = {
   bold?: boolean
   photos?: Buffer[]
   photoCaptions?: (string | null)[]
+  photoCaptionColors?: (string | null)[]
   videos?: VideoItem[]
   segments?: CellSegment[]
 }
@@ -196,6 +201,15 @@ function normalizeConditionValue(value: unknown): string | null {
   const text = String(value).trim()
   if (!text) return null
   return text.toUpperCase()
+}
+
+function captionColorForCondition(value?: unknown): string {
+  const v = normalizeConditionValue(value)
+  if (!v) return CAPTION_BLACK
+  if (v === 'GOOD') return CAPTION_GREEN
+  if (v === 'FAIR' || v === 'UNSATISFACTORY' || v === 'UN_SATISFACTORY') return CAPTION_RED
+  if (v === 'UN_OBSERVABLE' || v === 'NOT_APPLICABLE') return CAPTION_BLACK
+  return CAPTION_BLACK
 }
 
 function isConditionAllowed(value: unknown, allowed?: Set<string>): boolean {
@@ -334,6 +348,7 @@ async function buildRemarkSegment({
   photoEntries?: {
     url?: string | null
     caption?: string | null
+    color?: string | null
   }[]
   videoUrls?: string[]
   imageCache: Map<string, Buffer>
@@ -350,6 +365,7 @@ async function buildRemarkSegment({
     .map((entry) => ({
       url: typeof entry?.url === 'string' ? entry.url.trim() : '',
       caption: typeof entry?.caption === 'string' ? entry.caption.trim() : null,
+      color: typeof entry?.color === 'string' ? entry.color : null,
     }))
     .filter((entry) => entry.url.length > 0)
 
@@ -373,6 +389,7 @@ async function buildRemarkSegment({
 
   const images: Buffer[] = []
   const photoCaptions: (string | null)[] = []
+  const photoCaptionColors: (string | null)[] = []
 
   for (const source of uniquePhotoSources) {
     if (!source.url) continue
@@ -392,6 +409,7 @@ async function buildRemarkSegment({
         ? source.caption.trim()
         : null
       photoCaptions.push(caption)
+      photoCaptionColors.push(source.color ?? null)
     }
   }
 
@@ -411,6 +429,7 @@ async function buildRemarkSegment({
     text: lines.length > 0 ? lines.join("\n") : undefined,
     photos: images,
     photoCaptions,
+    photoCaptionColors,
     videos: videoItems
   }
 }
@@ -715,15 +734,15 @@ async function buildTableRows(
 
       {
         // Group media rows by recorded date and author per entry (separate rows)
-        const taskMeta = new Map<string, { num: string; name: string }>()
+        const taskMeta = new Map<string, { num: string; name: string; condition?: string | null }>()
         for (let tIndex = 0; tIndex < locationTasks.length; tIndex += 1) {
           const t = locationTasks[tIndex]
           const tNum = `${locationNumber}.${tIndex + 1}`
           const tName = typeof t?.name === 'string' ? t.name.trim() : ''
-          if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName })
+          if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName, condition: (t as any)?.condition ?? null })
         }
 
-        type Group = { key: string; title: string; photos: Array<{ url: string; caption: string | null }> }
+        type Group = { key: string; title: string; photos: Array<{ url: string; caption: string | null; color?: string | null }> }
         const noTaskGroups: Map<string, Group> = new Map()
         const taskGroups: Map<string, Group> = new Map()
 
@@ -746,14 +765,17 @@ async function buildTableRows(
             const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
             const taskId = (m as any)?.taskId || null
             if (!taskId) {
-              const cap = `${locationNumber} ${group.label}${rawCaption ? `: ${rawCaption}` : ''}`
+              const base = `${locationNumber} ${group.label}`
+              const cap = rawCaption ? `${base}\n${rawCaption}` : base
               if (!noTaskGroups.has(key)) noTaskGroups.set(key, { key, title, photos: [] })
-              noTaskGroups.get(key)!.photos.push({ url, caption: cap })
+              noTaskGroups.get(key)!.photos.push({ url, caption: cap, color: CAPTION_BLACK })
             } else if (taskMeta.has(taskId)) {
               const meta = taskMeta.get(taskId)!
-              const cap = `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}`.trim()
+              const base = `${meta.num} ${meta.name}`.trim()
+              const cap = rawCaption ? `${base}\n${rawCaption}` : base
               if (!taskGroups.has(key)) taskGroups.set(key, { key, title, photos: [] })
-              taskGroups.get(key)!.photos.push({ url, caption: cap })
+              const color = captionColorForCondition(meta.condition)
+              taskGroups.get(key)!.photos.push({ url, caption: cap, color })
             }
           }
         }
@@ -834,7 +856,7 @@ async function buildTableRows(
         if (t?.id) taskIndex.set(t.id, { num, name: tName })
       }
 
-      type G = { key: string; title: string; noTask: Array<{ url: string; caption: string | null }>; task: Array<{ url: string; caption: string | null }> }
+      type G = { key: string; title: string; noTask: Array<{ url: string; caption: string | null; color?: string | null }>; task: Array<{ url: string; caption: string | null; color?: string | null }> }
       const groups: Map<string, G> = new Map()
       const keyFor = (e: any) => {
         const dateOnly = formatDate(e?.createdOn) || ''
@@ -855,12 +877,17 @@ async function buildTableRows(
           const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
           const taskId = (m as any)?.taskId || null
           if (!taskId) {
-            groups.get(key)!.noTask.push({ url, caption: `${itemNumber} ${itemName}${rawCaption ? `: ${rawCaption}` : ''}` })
+            const base = `${itemNumber} ${itemName}`
+            const cap = rawCaption ? `${base}\n${rawCaption}` : base
+            groups.get(key)!.noTask.push({ url, caption: cap, color: CAPTION_BLACK })
           } else if (taskIndex.has(taskId)) {
             const meta = taskIndex.get(taskId)!
-            groups.get(key)!.task.push({ url, caption: `${meta.num} ${meta.name}${rawCaption ? `: ${rawCaption}` : ''}` })
+            const color = captionColorForCondition((tasks.find(t => t?.id === (m as any)?.taskId) as any)?.condition)
+            const base = `${meta.num} ${meta.name}`
+            const cap = rawCaption ? `${base}\n${rawCaption}` : base
+            groups.get(key)!.task.push({ url, caption: cap, color })
           } else {
-            groups.get(key)!.task.push({ url, caption: (rawCaption || '').trim() || null })
+            groups.get(key)!.task.push({ url, caption: (rawCaption || '').trim() || null, color: CAPTION_BLACK })
           }
         }
       }
@@ -1037,7 +1064,7 @@ function drawTableRow(
 
     let contentTop = y + CELL_PADDING
 
-    const drawPhotos = (startY: number, photos?: Buffer[], captions?: (string | null)[]) => {
+    const drawPhotos = (startY: number, photos?: Buffer[], captions?: (string | null)[], captionColors?: (string | null)[]) => {
       if (!photos || photos.length === 0) return 0
       const availableWidth = width - CELL_PADDING * 2
       const { tileWidth, rowHeights, totalHeight } = prepareGridLayout(doc, photos.length, captions, availableWidth, PHOTO_HEIGHT)
@@ -1084,7 +1111,10 @@ function drawTableRow(
         const caption = typeof captionValue === 'string' ? captionValue.trim() : ''
         if (caption) {
           doc.save()
-          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(PHOTO_CAPTION_COLOR)
+          const color = captionColors && captionColors.length > index && captionColors[index]
+            ? String(captionColors[index])
+            : PHOTO_CAPTION_COLOR
+          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(color)
           doc.text(caption, drawX, drawY + PHOTO_HEIGHT + PHOTO_CAPTION_GAP, {
             width: tileWidth,
             align: 'center'
@@ -1155,7 +1185,7 @@ function drawTableRow(
         })
       }
 
-      const photoHeight = drawPhotos(segmentTop, photos, photoCaptions)
+      const photoHeight = drawPhotos(segmentTop, photos, photoCaptions, (segment as any).photoCaptionColors)
       if (photoHeight > 0) {
         segmentTop += photoHeight
       }
@@ -1344,7 +1374,7 @@ function drawMediaBlocks(
       contentY += MEDIA_GUTTER
     }
 
-    const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof prepareGridLayout>) => {
+    const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof prepareGridLayout>, captionColors?: (string | null)[]) => {
       if (!hasPhotos || layout.rowHeights.length === 0) return 0
       const { tileWidth, rowHeights } = layout
       const rowStartYs: number[] = []
@@ -1388,7 +1418,10 @@ function drawMediaBlocks(
         const caption = typeof captionValue === 'string' ? captionValue.trim() : ''
         if (caption) {
           doc.save()
-          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(PHOTO_CAPTION_COLOR)
+          const color = captionColors && captionColors.length > photoIndex && captionColors[photoIndex]
+            ? String(captionColors[photoIndex])
+            : PHOTO_CAPTION_COLOR
+          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(color)
           doc.text(caption, drawX, drawY + PHOTO_HEIGHT + PHOTO_CAPTION_GAP, {
             width: tileWidth,
             align: 'center'
@@ -1439,7 +1472,7 @@ function drawMediaBlocks(
     }
 
     if (hasPhotos && photoLayout) {
-      drawFullWidthPhotos(contentY, photoLayout)
+      drawFullWidthPhotos(contentY, photoLayout, (segment as any).photoCaptionColors)
       contentY += photoHeight
     }
 
@@ -1601,6 +1634,7 @@ export async function appendWorkOrderSection(
         const original = normalizedSegments[segIndex]
         let remainingPhotos = Array.isArray(original.photos) ? original.photos.slice() : []
         let remainingCaptions = Array.isArray(original.photoCaptions) ? original.photoCaptions.slice() : []
+        let remainingCaptionColors = Array.isArray((original as any).photoCaptionColors) ? (original as any).photoCaptionColors.slice() : []
         let includeText = Boolean(original.text && original.text.trim())
         const videos = Array.isArray(original.videos) ? original.videos.slice() : []
 
@@ -1670,12 +1704,12 @@ export async function appendWorkOrderSection(
           if (!hasMediaPending) {
             // No media to follow: allow a text-only chunk if it fits.
             if (textHeight > 0 && remainingSpace >= basePadding + textHeight) {
-              const chunk: CellSegment = {
-                text: textValue,
-                photos: [],
-                photoCaptions: [],
-                videos: []
-              }
+            const chunk: CellSegment = {
+              text: textValue,
+              photos: [],
+              photoCaptions: [],
+              videos: []
+            }
               const chunkHeight = calculateMediaBlocksHeight(doc, chunk)
               if (chunkHeight > remainingSpace) {
                 // Even text alone doesn't fit—move to next page
@@ -1720,6 +1754,7 @@ export async function appendWorkOrderSection(
             text: includeText ? textValue : undefined,
             photos: chunkPhotos,
             photoCaptions: chunkCaptions,
+            photoCaptionColors: remainingCaptionColors.slice(0, photosToTake),
             videos: []
           }
           let chunkHeight = calculateMediaBlocksHeight(doc, chunk)
@@ -1771,6 +1806,7 @@ export async function appendWorkOrderSection(
           firstChunkOnPage = false
           remainingPhotos = remainingPhotos.slice(photosToTake)
           remainingCaptions = remainingCaptions.slice(photosToTake)
+          remainingCaptionColors = remainingCaptionColors.slice(photosToTake)
         }
       }
     }
