@@ -65,12 +65,12 @@ export default function WorkOrderItemMedia({
     if (taskId) {
       const match = taskIndexById.get(taskId)
       if (!match) return null
-      return itemNumber ? `${match.loc}.${itemNumber}.${match.idx}` : `${match.loc}.${match.idx}`
+      return itemNumber ? `${itemNumber}.${match.loc}.${match.idx}` : `${match.idx}.${match.loc}.`
     }
     // location-level numbering style: "loc.item location N"
     const locIdx = locationIndexFromId(locIdForNoTask || defaultLocationId)
     if (!locIdx || !itemNumber) return null
-    return `${locIdx}.${itemNumber}`
+    return `${itemNumber}.${locIdx}`
   }
   const buildCaption = (att: MediaAttachment): string | null => {
     const idx = buildIndexLabel(att.taskId, att.locationId ?? defaultLocationId)
