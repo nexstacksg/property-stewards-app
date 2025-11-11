@@ -684,7 +684,7 @@ export default function ItemEntriesDialog({
       </DialogTrigger>
       <DialogContent className="sm:max-w-4xl md:max-w-5xl w-full max-h-[82vh] overflow-auto">
         <DialogHeader>
-          <DialogTitle>{itemName ? `${indexLevel}.${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
+          <DialogTitle>{itemName ? `${itemNumber}.${itemName} — Remarks` : "Item Remarks"}</DialogTitle>
           <DialogDescription>
             Capture notes for subtasks, toggle their reporting status, and manage supporting media.
           </DialogDescription>
