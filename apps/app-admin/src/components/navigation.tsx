@@ -11,7 +11,8 @@ import {
   Calendar,
   Settings,
   Menu,
-  X
+  X,
+  User
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -31,6 +32,11 @@ const navigationItems = [
     href: "/",
     label: "Dashboard",
     icon: Home
+  },
+  {
+    href: "/users",
+    label: "Users",
+    icon: User
   },
   {
     href: "/customers",

@@ -35,6 +35,9 @@ const PHOTO_HEIGHT = 100
 const PHOTO_CAPTION_GAP = 2
 const PHOTO_CAPTION_FONT_SIZE = 8
 const PHOTO_CAPTION_COLOR = "#475569"
+const CAPTION_GREEN = "#16a34a" // Good
+const CAPTION_RED = "#dc2626"   // Fair / Un-Satisfactory
+const CAPTION_BLACK = "#111827" // Un-observable / Not applicable / fallback
 const VIDEO_HEIGHT = 64
 const MAX_MEDIA_LINKS = 9999
 const MEDIA_PER_ROW = 4
@@ -163,6 +166,7 @@ type CellSegment = {
   text?: string
   photos?: Buffer[]
   photoCaptions?: (string | null)[]
+  photoCaptionColors?: (string | null)[]
   videos?: VideoItem[]
 }
 
@@ -171,6 +175,7 @@ type TableCell = {
   bold?: boolean
   photos?: Buffer[]
   photoCaptions?: (string | null)[]
+  photoCaptionColors?: (string | null)[]
   videos?: VideoItem[]
   segments?: CellSegment[]
 }
@@ -196,6 +201,15 @@ function normalizeConditionValue(value: unknown): string | null {
   const text = String(value).trim()
   if (!text) return null
   return text.toUpperCase()
+}
+
+function captionColorForCondition(value?: unknown): string {
+  const v = normalizeConditionValue(value)
+  if (!v) return CAPTION_BLACK
+  if (v === 'GOOD') return CAPTION_GREEN
+  if (v === 'FAIR' || v === 'UNSATISFACTORY' || v === 'UN_SATISFACTORY') return CAPTION_RED
+  if (v === 'UN_OBSERVABLE' || v === 'NOT_APPLICABLE') return CAPTION_BLACK
+  return CAPTION_BLACK
 }
 
 function isConditionAllowed(value: unknown, allowed?: Set<string>): boolean {
@@ -334,6 +348,7 @@ async function buildRemarkSegment({
   photoEntries?: {
     url?: string | null
     caption?: string | null
+    color?: string | null
   }[]
   videoUrls?: string[]
   imageCache: Map<string, Buffer>
@@ -350,6 +365,7 @@ async function buildRemarkSegment({
     .map((entry) => ({
       url: typeof entry?.url === 'string' ? entry.url.trim() : '',
       caption: typeof entry?.caption === 'string' ? entry.caption.trim() : null,
+      color: typeof entry?.color === 'string' ? entry.color : null,
     }))
     .filter((entry) => entry.url.length > 0)
 
@@ -373,6 +389,7 @@ async function buildRemarkSegment({
 
   const images: Buffer[] = []
   const photoCaptions: (string | null)[] = []
+  const photoCaptionColors: (string | null)[] = []
 
   for (const source of uniquePhotoSources) {
     if (!source.url) continue
@@ -392,6 +409,7 @@ async function buildRemarkSegment({
         ? source.caption.trim()
         : null
       photoCaptions.push(caption)
+      photoCaptionColors.push(source.color ?? null)
     }
   }
 
@@ -411,6 +429,7 @@ async function buildRemarkSegment({
     text: lines.length > 0 ? lines.join("\n") : undefined,
     photos: images,
     photoCaptions,
+    photoCaptionColors,
     videos: videoItems
   }
 }
@@ -714,90 +733,80 @@ async function buildTableRows(
       })()
 
       {
-        // Build two separate media rows under this location group:
-        // 1) ItemEntry media (location-level remarks)
-        // 2) ChecklistTask media (subtask-level)
-        // Gather photos from ItemEntryMedia only
-        const entryPhotoRows: Array<{ url: string; caption: string | null }> = []
-        const taskPhotoEntriesList: Array<{ url: string; caption: string | null }> = []
-        // Map task id -> numbering and name for captions
-        const taskMeta = new Map<string, { num: string; name: string }>()
+        // Group media rows by recorded date and author per entry (separate rows)
+        const taskMeta = new Map<string, { num: string; name: string; condition?: string | null }>()
         for (let tIndex = 0; tIndex < locationTasks.length; tIndex += 1) {
           const t = locationTasks[tIndex]
           const tNum = `${locationNumber}.${tIndex + 1}`
           const tName = typeof t?.name === 'string' ? t.name.trim() : ''
-          if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName })
+          if (t?.id) taskMeta.set(t.id, { num: tNum, name: tName, condition: (t as any)?.condition ?? null })
         }
-        // Flatten ItemEntry.media and split by taskId presence
+
+        type Group = { key: string; title: string; photos: Array<{ url: string; caption: string | null; color?: string | null }> }
+        const noTaskGroups: Map<string, Group> = new Map()
+        const taskGroups: Map<string, Group> = new Map()
+
+        const buildGroupKeyAndTitle = (entry: any) => {
+          const dateOnly = formatDate(entry?.createdOn) || ''
+          const by = resolveEntryAuthor(entry)
+          const title = dateOnly ? `Recorded on: ${dateOnly}${by ? `, recorded by ${by}` : ''}` : (by ? `Recorded by ${by}` : 'Recorded')
+          const key = `${dateOnly}|${by}`
+          return { key, title }
+        }
+
         for (const e of combinedGroupEntries as any[]) {
           const media = Array.isArray((e as any)?.media) ? (e as any).media : []
           const photos = media
             .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
             .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
+          const { key, title } = buildGroupKeyAndTitle(e)
           for (const m of photos) {
             const url = String(m.url).trim()
             const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
             const taskId = (m as any)?.taskId || null
             if (!taskId) {
-              // Entry-level photo row; prefix with location number
-              const cap = `• ${locationNumber}${rawCaption ? ` ${rawCaption}` : ''}`
-              entryPhotoRows.push({ url, caption: cap })
+              const base = `${locationNumber} ${group.label}`
+              const cap = rawCaption ? `${base}\n${rawCaption}` : base
+              if (!noTaskGroups.has(key)) noTaskGroups.set(key, { key, title, photos: [] })
+              noTaskGroups.get(key)!.photos.push({ url, caption: cap, color: CAPTION_BLACK })
             } else if (taskMeta.has(taskId)) {
               const meta = taskMeta.get(taskId)!
-              const base = rawCaption ? ` ${rawCaption}` : (meta.name ? ` ${meta.name}` : '')
-              const cap = `• ${meta.num}${base}`
-              taskPhotoEntriesList.push({ url, caption: cap })
+              const base = `${meta.num} ${meta.name}`.trim()
+              const cap = rawCaption ? `${base}\n${rawCaption}` : base
+              if (!taskGroups.has(key)) taskGroups.set(key, { key, title, photos: [] })
+              const color = captionColorForCondition(meta.condition)
+              taskGroups.get(key)!.photos.push({ url, caption: cap, color })
             }
           }
         }
 
-        // Build and append rows only when there are photos
-        if (includePhotos && entryPhotoRows.length > 0) {
-          const title = `${group.label} — Remarks & Media`
-          const entryMediaSegment = await buildRemarkSegment({
-            text: title,
-            photoEntries: includePhotos ? entryPhotoRows : [],
-            videoUrls: [],
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
-          if (entryMediaSegment && (entryMediaSegment.photos?.length || entryMediaSegment.videos?.length)) {
+        const renderGroupedIntoSingleRow = async (groups: Map<string, Group>) => {
+          if (!includePhotos) return
+          const ordered = Array.from(groups.values()).sort((a, b) => a.key.localeCompare(b.key))
+          const segs: CellSegment[] = []
+          for (const g of ordered) {
+            if (g.photos.length === 0) continue
+            const seg = await buildRemarkSegment({
+              text: g.title,
+              photoEntries: g.photos,
+              videoUrls: [],
+              imageCache,
+              seenPhotos: seenItemPhotos,
+              seenVideos: seenItemVideos
+            })
+            if (seg) segs.push(seg)
+          }
+          if (segs.length > 0) {
             rows.push({
-              cells: [
-                { text: '' },
-                { text: '' },
-                { text: '' },
-                { text: '' }
-              ],
-              summaryMedia: entryMediaSegment,
+              cells: [ { text: '' }, { text: '' }, { text: '' }, { text: '' } ],
+              summaryMedia: segs,
               mediaOnly: true
             })
           }
         }
 
-        if (includePhotos && taskPhotoEntriesList.length > 0) {
-          const taskMediaSegment = await buildRemarkSegment({
-            text: undefined,
-            photoEntries: includePhotos ? taskPhotoEntriesList : [],
-            videoUrls: [],
-            imageCache,
-            seenPhotos: seenItemPhotos,
-            seenVideos: seenItemVideos
-          })
-          if (taskMediaSegment && (taskMediaSegment.photos?.length || taskMediaSegment.videos?.length)) {
-            rows.push({
-              cells: [
-                { text: '' },
-                { text: '' },
-                { text: '' },
-                { text: '' }
-              ],
-              summaryMedia: taskMediaSegment,
-              mediaOnly: true
-            })
-          }
-        }
+        await renderGroupedIntoSingleRow(noTaskGroups)
+        await renderGroupedIntoSingleRow(taskGroups)
       }
 
       if (combinedGroupEntries.length > 0) {
@@ -837,10 +846,7 @@ async function buildTableRows(
       ? (reportEntries as any[]).filter((e: any) => !e?.locationId && !(e?.location && e.location?.id))
       : []
     if (generalEntries.length > 0) {
-      // Split general photos into two rows: without taskId first, then with taskId
-      const mediaNoTask: Array<{ url: string; caption: string | null }> = []
-      const mediaWithTask: Array<{ url: string; caption: string | null }> = []
-      // Build task index across all item tasks for numbering (fallback only)
+      // Group general entry photos by recorded date/author; render heading once then task photos
       const allTasks = tasks
       const taskIndex = new Map<string, { num: string; name: string }>()
       for (let tIdx = 0; tIdx < allTasks.length; tIdx += 1) {
@@ -849,51 +855,58 @@ async function buildTableRows(
         const tName = typeof t?.name === 'string' ? t.name.trim() : ''
         if (t?.id) taskIndex.set(t.id, { num, name: tName })
       }
+
+      type G = { key: string; title: string; noTask: Array<{ url: string; caption: string | null; color?: string | null }>; task: Array<{ url: string; caption: string | null; color?: string | null }> }
+      const groups: Map<string, G> = new Map()
+      const keyFor = (e: any) => {
+        const dateOnly = formatDate(e?.createdOn) || ''
+        const by = resolveEntryAuthor(e)
+        const title = dateOnly ? `Recorded on: ${dateOnly}${by ? `, recorded by ${by}` : ''}` : (by ? `Recorded by ${by}` : 'Recorded')
+        const key = `${dateOnly}|${by}`
+        return { key, title }
+      }
       for (const e of generalEntries as any[]) {
         const med = Array.isArray((e as any)?.media) ? (e as any).media : []
         const photos = med
           .filter((m: any) => m && m.type === 'PHOTO' && typeof m.url === 'string' && m.url.trim().length > 0)
           .sort((a: any, b: any) => (a?.order ?? 0) - (b?.order ?? 0))
+        const { key, title } = keyFor(e)
+        if (!groups.has(key)) groups.set(key, { key, title, noTask: [], task: [] })
         for (const m of photos) {
           const url = String(m.url).trim()
           const rawCaption = typeof m.caption === 'string' ? m.caption.trim() : ''
           const taskId = (m as any)?.taskId || null
           if (!taskId) {
-            mediaNoTask.push({ url, caption: `• ${itemNumber}${rawCaption ? ` ${rawCaption}` : ''}` })
+            const base = `${itemNumber} ${itemName}`
+            const cap = rawCaption ? `${base}\n${rawCaption}` : base
+            groups.get(key)!.noTask.push({ url, caption: cap, color: CAPTION_BLACK })
           } else if (taskIndex.has(taskId)) {
             const meta = taskIndex.get(taskId)!
-            const base = rawCaption ? ` ${rawCaption}` : (meta.name ? ` ${meta.name}` : '')
-            mediaWithTask.push({ url, caption: `• ${meta.num}${base}` })
+            const color = captionColorForCondition((tasks.find(t => t?.id === (m as any)?.taskId) as any)?.condition)
+            const base = `${meta.num} ${meta.name}`
+            const cap = rawCaption ? `${base}\n${rawCaption}` : base
+            groups.get(key)!.task.push({ url, caption: cap, color })
           } else {
-            mediaWithTask.push({ url, caption: `• ${rawCaption || ''}`.trim() || null })
+            groups.get(key)!.task.push({ url, caption: (rawCaption || '').trim() || null, color: CAPTION_BLACK })
           }
         }
       }
-      if (includePhotos && mediaNoTask.length > 0) {
-        const seg = await buildRemarkSegment({
-          text: 'General — Remarks & Media',
-          photoEntries: includePhotos ? mediaNoTask : [],
-          videoUrls: [],
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (seg && (seg.photos?.length || seg.videos?.length)) {
-          rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg, mediaOnly: true })
+      if (includePhotos) {
+        const ordered = Array.from(groups.values()).sort((a, b) => a.key.localeCompare(b.key))
+        const segsNoTask: CellSegment[] = []
+        const segsTask: CellSegment[] = []
+        for (const g of ordered) {
+          if (g.noTask.length > 0) {
+            const s1 = await buildRemarkSegment({ text: g.title, photoEntries: g.noTask, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+            if (s1) segsNoTask.push(s1)
+          }
+          if (g.task.length > 0) {
+            const s2 = await buildRemarkSegment({ text: g.title, photoEntries: g.task, videoUrls: [], imageCache, seenPhotos: seenItemPhotos, seenVideos: seenItemVideos })
+            if (s2) segsTask.push(s2)
+          }
         }
-      }
-      if (includePhotos && mediaWithTask.length > 0) {
-        const seg2 = await buildRemarkSegment({
-          text: undefined,
-          photoEntries: includePhotos ? mediaWithTask : [],
-          videoUrls: [],
-          imageCache,
-          seenPhotos: seenItemPhotos,
-          seenVideos: seenItemVideos
-        })
-        if (seg2 && (seg2.photos?.length || seg2.videos?.length)) {
-          rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: seg2, mediaOnly: true })
-        }
+        if (segsNoTask.length > 0) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: segsNoTask, mediaOnly: true })
+        if (segsTask.length > 0) rows.push({ cells: [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], summaryMedia: segsTask, mediaOnly: true })
       }
 
       const entrySegments: (CellSegment | null)[] = []
@@ -1051,7 +1064,7 @@ function drawTableRow(
 
     let contentTop = y + CELL_PADDING
 
-    const drawPhotos = (startY: number, photos?: Buffer[], captions?: (string | null)[]) => {
+    const drawPhotos = (startY: number, photos?: Buffer[], captions?: (string | null)[], captionColors?: (string | null)[]) => {
       if (!photos || photos.length === 0) return 0
       const availableWidth = width - CELL_PADDING * 2
       const { tileWidth, rowHeights, totalHeight } = prepareGridLayout(doc, photos.length, captions, availableWidth, PHOTO_HEIGHT)
@@ -1098,7 +1111,10 @@ function drawTableRow(
         const caption = typeof captionValue === 'string' ? captionValue.trim() : ''
         if (caption) {
           doc.save()
-          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(PHOTO_CAPTION_COLOR)
+          const color = captionColors && captionColors.length > index && captionColors[index]
+            ? String(captionColors[index])
+            : PHOTO_CAPTION_COLOR
+          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(color)
           doc.text(caption, drawX, drawY + PHOTO_HEIGHT + PHOTO_CAPTION_GAP, {
             width: tileWidth,
             align: 'center'
@@ -1169,7 +1185,7 @@ function drawTableRow(
         })
       }
 
-      const photoHeight = drawPhotos(segmentTop, photos, photoCaptions)
+      const photoHeight = drawPhotos(segmentTop, photos, photoCaptions, (segment as any).photoCaptionColors)
       if (photoHeight > 0) {
         segmentTop += photoHeight
       }
@@ -1269,12 +1285,37 @@ function calculateMediaBlocksHeight(doc: any, segments?: CellSegment | CellSegme
   return total
 }
 
-function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | CellSegment[]): number {
+function drawMediaBlocks(
+  doc: any,
+  startY: number,
+  segments?: CellSegment | CellSegment[],
+  edges?: { top?: boolean; bottom?: boolean; left?: boolean; right?: boolean }
+): number {
   const normalized = normalizeSegments(segments)
   if (normalized.length === 0) return 0
 
   const contentWidth = getTableWidth(doc) - CELL_PADDING * 2
   let currentY = startY
+
+  // Draw one outer border for the combined media block so there is a single
+  // table-like border but no horizontal dividers between grouped segments.
+  const totalBlockHeight = calculateMediaBlocksHeight(doc, segments)
+  if (totalBlockHeight > 0) {
+    doc.lineWidth(0.7)
+    if (!edges) {
+      // Default behavior: full rectangle stroke
+      doc.rect(TABLE_MARGIN, startY, getTableWidth(doc), totalBlockHeight).stroke()
+    } else {
+      const x1 = TABLE_MARGIN
+      const x2 = TABLE_MARGIN + getTableWidth(doc)
+      const y1 = startY
+      const y2 = startY + totalBlockHeight
+      if (edges.left) { doc.moveTo(x1, y1).lineTo(x1, y2).stroke() }
+      if (edges.right) { doc.moveTo(x2, y1).lineTo(x2, y2).stroke() }
+      if (edges.top) { doc.moveTo(x1, y1).lineTo(x2, y1).stroke() }
+      if (edges.bottom) { doc.moveTo(x1, y2).lineTo(x2, y2).stroke() }
+    }
+  }
 
   normalized.forEach((segment, index) => {
     const photos = segment.photos || []
@@ -1314,8 +1355,9 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       blockHeight += MEDIA_GUTTER
     }
 
-    doc.lineWidth(0.7)
-    doc.rect(TABLE_MARGIN, currentY, getTableWidth(doc), blockHeight).stroke()
+    // Do not draw a border box around each media segment.
+    // Borders at row level are handled by the table; segment-level boxes
+    // create unwanted horizontal lines between groups.
 
     let contentY = currentY + CELL_PADDING
 
@@ -1332,7 +1374,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
       contentY += MEDIA_GUTTER
     }
 
-    const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof prepareGridLayout>) => {
+    const drawFullWidthPhotos = (start: number, layout: ReturnType<typeof prepareGridLayout>, captionColors?: (string | null)[]) => {
       if (!hasPhotos || layout.rowHeights.length === 0) return 0
       const { tileWidth, rowHeights } = layout
       const rowStartYs: number[] = []
@@ -1376,7 +1418,10 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
         const caption = typeof captionValue === 'string' ? captionValue.trim() : ''
         if (caption) {
           doc.save()
-          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(PHOTO_CAPTION_COLOR)
+          const color = captionColors && captionColors.length > photoIndex && captionColors[photoIndex]
+            ? String(captionColors[photoIndex])
+            : PHOTO_CAPTION_COLOR
+          doc.font("Helvetica").fontSize(PHOTO_CAPTION_FONT_SIZE).fillColor(color)
           doc.text(caption, drawX, drawY + PHOTO_HEIGHT + PHOTO_CAPTION_GAP, {
             width: tileWidth,
             align: 'center'
@@ -1427,7 +1472,7 @@ function drawMediaBlocks(doc: any, startY: number, segments?: CellSegment | Cell
     }
 
     if (hasPhotos && photoLayout) {
-      drawFullWidthPhotos(contentY, photoLayout)
+      drawFullWidthPhotos(contentY, photoLayout, (segment as any).photoCaptionColors)
       contentY += photoHeight
     }
 
@@ -1584,10 +1629,12 @@ export async function appendWorkOrderSection(
       const normalizedSegments = normalizeSegments(rowInfo.summaryMedia)
 
       // Iterate each segment and paginate it if necessary
+      let firstChunkOnPage = true
       for (let segIndex = 0; segIndex < normalizedSegments.length; segIndex += 1) {
         const original = normalizedSegments[segIndex]
         let remainingPhotos = Array.isArray(original.photos) ? original.photos.slice() : []
         let remainingCaptions = Array.isArray(original.photoCaptions) ? original.photoCaptions.slice() : []
+        let remainingCaptionColors = Array.isArray((original as any).photoCaptionColors) ? (original as any).photoCaptionColors.slice() : []
         let includeText = Boolean(original.text && original.text.trim())
         const videos = Array.isArray(original.videos) ? original.videos.slice() : []
 
@@ -1597,6 +1644,7 @@ export async function appendWorkOrderSection(
           y = TABLE_MARGIN
           const headerAgainHeight = drawTableRow(doc, y, headerRow, { header: true })
           y += headerAgainHeight
+          firstChunkOnPage = true
         }
 
         while (includeText || remainingPhotos.length > 0 || videos.length > 0) {
@@ -1649,35 +1697,45 @@ export async function appendWorkOrderSection(
             photosToTake = Math.min(remainingPhotos.length, rowsToTake * MEDIA_PER_ROW)
           }
 
-          // If no photos can fit but we still have text, render text-only chunk once
-          if (photosToTake === 0 && textHeight > 0 && remainingSpace >= basePadding + textHeight) {
+          // Keep the heading (text) with at least one media row.
+          // If there are photos/videos remaining but none can fit with the text,
+          // go to a new page instead of rendering a text-only chunk at the bottom.
+          const hasMediaPending = hasPhotosRemaining || hasVideosRemaining
+          if (!hasMediaPending) {
+            // No media to follow: allow a text-only chunk if it fits.
+            if (textHeight > 0 && remainingSpace >= basePadding + textHeight) {
             const chunk: CellSegment = {
               text: textValue,
               photos: [],
               photoCaptions: [],
               videos: []
             }
-            const chunkHeight = calculateMediaBlocksHeight(doc, chunk)
-            if (chunkHeight > remainingSpace) {
-              // Even text alone doesn't fit—move to next page
-              ensureNewPageWithHeader()
+              const chunkHeight = calculateMediaBlocksHeight(doc, chunk)
+              if (chunkHeight > remainingSpace) {
+                // Even text alone doesn't fit—move to next page
+                ensureNewPageWithHeader()
+                continue
+              }
+              // Background paint
+              if (currentTaskBackground) {
+                doc.save()
+                try {
+                  doc.fillColor(currentTaskBackground)
+                  if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
+                  doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
+                } finally {
+                  if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
+                  doc.restore()
+                }
+              }
+              const consumed = drawMediaBlocks(doc, y, chunk)
+              y += consumed
+              includeText = false
               continue
             }
-            // Background paint
-            if (currentTaskBackground) {
-              doc.save()
-              try {
-            doc.fillColor(currentTaskBackground)
-            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(0.6)
-            doc.rect(TABLE_MARGIN, y, getTableWidth(doc), chunkHeight).fill()
-          } finally {
-            if (typeof (doc as any).opacity === 'function') (doc as any).opacity(1)
-            doc.restore()
-          }
-            }
-            const consumed = drawMediaBlocks(doc, y, chunk)
-            y += consumed
-            includeText = false
+          } else if (photosToTake === 0) {
+            // Media exists but can't fit any row with the text on this page → new page
+            ensureNewPageWithHeader()
             continue
           }
 
@@ -1696,6 +1754,7 @@ export async function appendWorkOrderSection(
             text: includeText ? textValue : undefined,
             photos: chunkPhotos,
             photoCaptions: chunkCaptions,
+            photoCaptionColors: remainingCaptionColors.slice(0, photosToTake),
             videos: []
           }
           let chunkHeight = calculateMediaBlocksHeight(doc, chunk)
@@ -1719,12 +1778,35 @@ export async function appendWorkOrderSection(
           }
           }
 
-          // Draw and advance pointers
-          const consumed = drawMediaBlocks(doc, y, chunk)
+          // Determine if more content remains after this chunk (across all segments)
+          const willHaveMoreInThisSegment = (remainingPhotos.length - photosToTake) > 0 || videos.length > 0
+          let moreSegmentsAhead = false
+          for (let j = segIndex + 1; j < normalizedSegments.length; j += 1) {
+            const s = normalizedSegments[j]
+            const hasText = Boolean(s.text && s.text.trim())
+            const hasPhotos = Array.isArray(s.photos) && s.photos.length > 0
+            const hasVideos = Array.isArray(s.videos) && s.videos.length > 0
+            if (hasText || hasPhotos || hasVideos) { moreSegmentsAhead = true; break }
+          }
+          const moreContentOverall = willHaveMoreInThisSegment || moreSegmentsAhead
+
+          // Determine if this chunk ends the current page
+          const willEndPage = (remainingSpace - chunkHeight) <= 16
+
+          // Draw and advance pointers, stroking edges to avoid lines between groups
+          const consumed = drawMediaBlocks(doc, y, chunk, {
+            left: true,
+            right: true,
+            top: firstChunkOnPage,
+            // Close at end-of-page even if more content continues on next page
+            bottom: !moreContentOverall || willEndPage,
+          })
           y += consumed
           includeText = false
+          firstChunkOnPage = false
           remainingPhotos = remainingPhotos.slice(photosToTake)
           remainingCaptions = remainingCaptions.slice(photosToTake)
+          remainingCaptionColors = remainingCaptionColors.slice(photosToTake)
         }
       }
     }

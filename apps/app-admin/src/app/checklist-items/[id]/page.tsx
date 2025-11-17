@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import prisma from '@/lib/prisma'
 import ItemEntriesDialog from '@/components/item-entries-dialog'
-import { extractEntryMedia, mergeMediaLists, stringsToAttachments, type MediaAttachment } from '@/lib/media-utils'
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments, stringsToAttachmentsWithTask, type MediaAttachment } from '@/lib/media-utils'
 import {
   ArrowLeft,
   Camera,
@@ -41,6 +41,10 @@ async function getChecklistItem(id: string) {
                 }
               }
             }
+          },
+          items: {
+            select: { id: true, order: true },
+            orderBy: { order: 'asc' }
           }
         }
       },
@@ -54,10 +58,15 @@ async function getChecklistItem(id: string) {
                 orderBy: { order: 'asc' }
               }
             },
-            orderBy: { createdOn: 'asc' }
+            orderBy: [
+              { createdOn: 'asc' }
+            ]
           }as any
         },
-        orderBy: { createdOn: 'asc' }
+        orderBy: [
+          { order: 'asc' },
+          { createdOn: 'asc' }
+        ]
       },
       locations: {
         include: {
@@ -67,7 +76,10 @@ async function getChecklistItem(id: string) {
                 select: { id: true }
               }
             },
-            orderBy: { createdOn: 'asc' }
+            orderBy: [
+              { order: 'asc' },
+              { createdOn: 'asc' }
+            ]
           }
         },
         orderBy: { order: 'asc' }
@@ -84,7 +96,8 @@ async function getChecklistItem(id: string) {
               id: true
             }
           },
-          location: true
+          location: true,
+          findings: true
         }as any
       }
     }
@@ -102,6 +115,12 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
   }
 
   const contract = checklistItem.contractChecklist?.contract
+  const itemNumber = (() => {
+    const items = (checklistItem.contractChecklist as any)?.items as Array<{ id: string }>|undefined
+    if (!Array.isArray(items)) return undefined
+    const pos = items.findIndex((it) => it.id === checklistItem.id)
+    return pos >= 0 ? pos + 1 : undefined
+  })()
   const tasks = Array.isArray(checklistItem.checklistTasks) ? checklistItem.checklistTasks : []
   const subtaskNames = tasks
     .map((task: any) => (typeof task.name === 'string' ? task.name.trim() : ''))
@@ -133,12 +152,12 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
       0
     ) + standaloneEntries.length
 
-  const taskPhotoAttachments = mergeMediaLists(tasks.map((task: any) => stringsToAttachments(task.photos)))
-  const taskVideoAttachments = mergeMediaLists(tasks.map((task: any) => stringsToAttachments(task.videos)))
+  const taskPhotoAttachments = mergeMediaLists(tasks.map((task: any) => stringsToAttachmentsWithTask(task.photos, task.id)))
+  const taskVideoAttachments = mergeMediaLists(tasks.map((task: any) => stringsToAttachmentsWithTask(task.videos, task.id)))
   const entryPhotoAttachments = mergeMediaLists(allEntries.map((entry: any) => extractEntryMedia(entry, 'PHOTO')))
   const entryVideoAttachments = mergeMediaLists(allEntries.map((entry: any) => extractEntryMedia(entry, 'VIDEO')))
-  const entryTaskPhotoAttachments = mergeMediaLists(allEntries.map((entry: any) => stringsToAttachments(entry.task?.photos)))
-  const entryTaskVideoAttachments = mergeMediaLists(allEntries.map((entry: any) => stringsToAttachments(entry.task?.videos)))
+  const entryTaskPhotoAttachments = mergeMediaLists(allEntries.map((entry: any) => stringsToAttachmentsWithTask(entry.task?.photos, entry.task?.id)))
+  const entryTaskVideoAttachments = mergeMediaLists(allEntries.map((entry: any) => stringsToAttachmentsWithTask(entry.task?.videos, entry.task?.id)))
 
   const combinedItemPhotos = mergeMediaLists([itemPhotos, taskPhotoAttachments, entryPhotoAttachments, entryTaskPhotoAttachments])
   const combinedItemVideos = mergeMediaLists([itemVideos, taskVideoAttachments, entryVideoAttachments, entryTaskVideoAttachments])
@@ -147,6 +166,57 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
   const displayItemVideos = combinedItemVideos.length > 0 ? combinedItemVideos : itemVideos
 
   const totalMedia = displayItemPhotos.length + displayItemVideos.length
+
+  // Build location-centric view: group tasks and remarks by location
+  const locations: Array<{ id: string; name?: string | null; tasks: any[] }> = Array.isArray(checklistItem.locations)
+    ? checklistItem.locations.map((loc: any) => ({ id: loc.id, name: loc.name, tasks: Array.isArray(loc.tasks) ? loc.tasks : [] }))
+    : []
+  const locationIndexById = new Map<string, number>()
+  locations.forEach((loc, idx) => locationIndexById.set(loc.id, idx + 1))
+  const taskById = new Map<string, any>()
+  const taskIndexById = new Map<string, { loc: number; idx: number; name?: string | null }>()
+  tasks.forEach((t: any) => { if (t?.id) taskById.set(t.id, t) })
+  locations.forEach((loc) => {
+    (loc.tasks || []).forEach((t: any, tpos: number) => {
+      if (t?.id) taskIndexById.set(t.id, { loc: locationIndexById.get(loc.id) || 0, idx: tpos + 1, name: t.name })
+    })
+  })
+  type LocGroup = { id: string; name?: string | null; tasks: any[]; entries: any[] }
+  const locGroups = new Map<string, LocGroup>()
+  locations.forEach((loc) => locGroups.set(loc.id, { id: loc.id, name: loc.name, tasks: loc.tasks || [], entries: [] }))
+  allEntries.forEach((entry: any) => {
+    let locId: string | undefined = entry?.location?.id || entry?.locationId || undefined
+    if (!locId && entry?.task?.id) {
+      const t = taskById.get(entry.task.id)
+      locId = t?.location?.id
+    }
+    if (locId && locGroups.has(locId)) {
+      locGroups.get(locId)!.entries.push(entry)
+    }
+  })
+
+  // Helpers to build index + caption + finding summaries
+  const buildIndex = (att: MediaAttachment): string | null => {
+    const tid = (att as any).taskId as string | undefined
+    if (tid && taskIndexById.has(tid)) {
+      const idx = taskIndexById.get(tid)!
+      if (itemNumber) return `${idx.loc}.${itemNumber}.${idx.idx}`
+      return `${idx.loc}.${idx.idx}`
+    }
+    const locId = (att as any).locationId as string | undefined
+    const locIdx = locId ? locationIndexById.get(locId) : undefined
+    if (locIdx && itemNumber) return `${locIdx}.${itemNumber}`
+    return null
+  }
+  const buildCaption = (att: MediaAttachment): string | null => {
+    const idx = buildIndex(att)
+    const tid = (att as any).taskId as string | undefined
+    const taskName = tid ? (taskIndexById.get(tid)?.name || null) : null
+    const base = att.caption || taskName || null
+    if (idx && base) return `${idx} ${base}`
+    if (idx) return idx
+    return base
+  }
 
   return (
     <div className="space-y-6 bg-slate-50/60 p-6">
@@ -170,6 +240,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
             tasks={dialogTasks}
             locations={Array.isArray(checklistItem.locations) ? checklistItem.locations : []}
             itemName={checklistItem.name}
+            locationTitle={Array.isArray(checklistItem.locations) && checklistItem.locations[0]?.name || null}
+            locationTitleIndex={Array.isArray(checklistItem.locations) ? 1 : null}
             triggerLabel={remarkButtonLabel}
           />
         </div>
@@ -271,14 +343,14 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
               {displayItemPhotos.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs uppercase text-muted-foreground">Photos</p>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
                     {displayItemPhotos.map((photo: MediaAttachment, index: number) => (
                       <div key={`${photo.url}-${index}`} className="group space-y-2 overflow-hidden rounded-lg border bg-background shadow-sm">
                         <a href={photo.url} target="_blank" rel="noopener noreferrer" className="block">
                           <img
                             src={photo.url}
                             alt={photo.caption ? `${photo.caption} (Photo ${index + 1})` : `Item photo ${index + 1}`}
-                            className="h-40 w-full object-cover transition duration-200 group-hover:scale-105"
+                            className="h-30 w-full object-cover transition duration-200 group-hover:scale-105"
                           />
                         </a>
                         {photo.caption ? (
@@ -309,127 +381,161 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
         </CardContent>
       </Card>
 
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">Subtasks</h2>
-            <p className="text-sm text-muted-foreground">Detailed breakdown with remarks, photos, and videos.</p>
+      {/* By Location view: show all subtasks and remarks per sub-location */}
+      {locations.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold">Locations</h2>
+              <p className="text-sm text-muted-foreground">Tasks, conditions and remarks grouped by sub-location.</p>
+            </div>
+            <Badge variant="outline">{locations.length} location(s)</Badge>
           </div>
-          <Badge variant="outline">{tasks.length} total</Badge>
-        </div>
 
-        {tasks.length === 0 ? (
-          <Card className="border-dashed bg-white/60">
-            <CardContent className="py-10 text-center text-muted-foreground">
-              No subtasks available for this checklist item yet.
-            </CardContent>
-          </Card>
-        ) : (
           <div className="space-y-4">
-            {tasks.map((task: any) => {
-              const entries = Array.isArray(task.entries) ? task.entries : []
-
+            {locations.map((loc: any) => {
+              const group = locGroups.get(loc.id)
+              const locTasks = group?.tasks || []
+              const locEntries = group?.entries || []
               return (
-                <Card key={task.id} className="border border-slate-200/80 bg-white shadow-sm">
-                  <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="h-4 w-4 text-muted-foreground" />
-                        <CardTitle className="text-lg font-semibold">{task.name || 'Subtask'}</CardTitle>
-                      </div>
-                      <CardDescription>
-                        Created {formatDateTime(task.createdOn)}
-                      </CardDescription>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant={task.status === 'COMPLETED' ? 'success' : 'secondary'}>
-                        {task.status}
-                      </Badge>
-                      {task.condition && <Badge variant="outline">Condition: {task.condition}</Badge>}
-                    </div>
+                <Card key={loc.id} className="border border-slate-200/80 bg-white shadow-sm">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg">{loc.name || 'Location'}</CardTitle>
+                    <CardDescription>Subtasks and remarks for this location</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {entries.length === 0 ? (
-                      <div className="rounded-md border border-dashed bg-muted/40 py-4 text-center text-sm text-muted-foreground">
-                        No remarks recorded for this subtask yet.
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {entries.map((entry: any) => {
-                          const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || 'Team member'
-                          const remarkPhotos = mergeMediaLists([
-                            extractEntryMedia(entry, 'PHOTO'),
-                            stringsToAttachments(entry.task?.photos)
-                          ])
-                          const remarkVideos = mergeMediaLists([
-                            extractEntryMedia(entry, 'VIDEO'),
-                            stringsToAttachments(entry.task?.videos)
-                          ])
-                          return (
-                            <div key={entry.id} className="rounded-lg border bg-white/80 p-4 shadow-sm">
-                              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                <div className="flex items-center gap-2 text-sm font-medium">
-                                  <User className="h-4 w-4" />
-                                  {reporter}
+                    {/* Tasks & conditions */}
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase text-muted-foreground">Subtasks</p>
+                      {locTasks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No subtasks under this location.</p>
+                      ) : (
+                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {locTasks.map((t: any) => (
+                            <div key={t.id} className="rounded border bg-accent/40 px-3 py-2 text-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate" title={t.name || 'Subtask'}>{t.name || 'Subtask'}</span>
+                                <Badge variant={t.status === 'COMPLETED' ? 'success' : 'secondary'} className="shrink-0">{t.status}</Badge>
+                              </div>
+                              {t.condition ? (
+                                <p className="mt-1 text-xs text-muted-foreground">Condition: {t.condition}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Remarks in this location */}
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase text-muted-foreground">Remarks</p>
+                      {locEntries.length === 0 ? (
+                        <div className="rounded-md border border-dashed bg-muted/40 py-4 text-center text-sm text-muted-foreground">
+                          No remarks recorded for this location yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {locEntries.map((entry: any) => {
+                            const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || 'Team member'
+                            const remarkPhotos = mergeMediaLists([
+                              extractEntryMedia(entry, 'PHOTO'),
+                              stringsToAttachmentsWithTask(entry.task?.photos, entry.task?.id)
+                            ])
+                            const remarkVideos = mergeMediaLists([
+                              extractEntryMedia(entry, 'VIDEO'),
+                              stringsToAttachmentsWithTask(entry.task?.videos, entry.task?.id)
+                            ])
+                            return (
+                              <div key={entry.id} className="rounded-lg border bg-white/80 p-4 shadow-sm">
+                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                  <div className="flex items-center gap-2 text-sm font-medium">
+                                    <User className="h-4 w-4" />
+                                    {reporter}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs">
+                                    {entry.condition ? <Badge variant="secondary">Condition: {entry.condition}</Badge> : null}
+                                    <span className="text-muted-foreground">{formatDateTime(entry.createdOn)}</span>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2 text-xs">
-                                  {entry.condition && <Badge variant="secondary">Condition: {(entry.condition)}</Badge>}
-                                  <span className="text-muted-foreground">{formatDateTime(entry.createdOn)}</span>
+                                {entry.remarks ? (
+                                  <p className="mt-2 text-sm text-muted-foreground">{entry.remarks}</p>
+                                ) : null}
+                                {(remarkPhotos.length > 0 || remarkVideos.length > 0) && (
+                                  <div className="mt-3 space-y-2">
+                                    {remarkPhotos.length > 0 && (
+                                      <div>
+                                        <p className="text-xs uppercase text-muted-foreground">Photos</p>
+                                        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+                                          {remarkPhotos.map((photo: MediaAttachment, idx: number) => (
+                                            <div key={photo.url + idx} className="space-y-1">
+                                              <a href={photo.url} target="_blank" rel="noopener noreferrer" className="group block overflow-hidden rounded-md border bg-background">
+                                                <img src={photo.url} alt={buildCaption(photo) || `Remark photo ${idx + 1}`} className="h-30 w-full object-cover transition duration-200 group-hover:scale-105" />
+                                              </a>
+                                              {(() => { const c = buildCaption(photo); return c ? (<p className="text-[11px] text-muted-foreground">{c}</p>) : null })()}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {remarkVideos.length > 0 && (
+                                      <div>
+                                        <p className="text-xs uppercase text-muted-foreground">Videos</p>
+                                        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                          {remarkVideos.map((video: MediaAttachment, idx: number) => (
+                                            <div key={video.url + idx} className="space-y-1">
+                                              <video src={video.url} controls className="h-48 w-full rounded-md border bg-black/70" />
+                                              {(() => { const c = buildCaption(video); return c ? (<p className="text-[11px] text-muted-foreground">{c}</p>) : null })()}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Cause / Resolution per finding */}
+                    {locEntries.length > 0 && (
+                      <div className="space-y-2 pt-2">
+                        <p className="text-xs uppercase text-muted-foreground">Findings</p>
+                        <div className="space-y-2">
+                          {locEntries.map((entry: any) => {
+                            const fList = Array.isArray(entry.findings) ? entry.findings : []
+                            if (fList.length === 0) return null
+                            return (
+                              <div key={'f-' + entry.id} className="rounded-md border bg-white/70 p-3">
+                                <p className="text-xs text-muted-foreground">Entry by {entry.inspector?.name || entry.user?.username || 'Team'}</p>
+                                <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                                  {fList.map((f: any, i: number) => {
+                                    const tid = f.taskId as string | undefined
+                                    const details = (f.details || {}) as any
+                                    const idx = tid && taskIndexById.has(tid) ? (itemNumber ? `${taskIndexById.get(tid)!.loc}.${itemNumber}.${taskIndexById.get(tid)!.idx}` : `${taskIndexById.get(tid)!.loc}.${taskIndexById.get(tid)!.idx}`) : null
+                                    const tname = tid ? (taskIndexById.get(tid)?.name || 'Subtask') : 'Subtask'
+                                    const cond = typeof details.condition === 'string' ? details.condition : null
+                                    const cause = typeof details.cause === 'string' && details.cause.trim().length > 0 ? details.cause : null
+                                    const resolution = typeof details.resolution === 'string' && details.resolution.trim().length > 0 ? details.resolution : null
+                                    return (
+                                      <div key={i} className="rounded border bg-accent/30 px-3 py-2 text-sm">
+                                        <p className="font-medium">{idx ? `${idx} ${tname}` : tname} {cond ? (<span className="ml-1 text-xs text-muted-foreground">({cond})</span>) : null}</p>
+                                        {(cause || resolution) ? (
+                                          <div className="mt-1 text-xs text-muted-foreground space-y-1">
+                                            {cause ? (<p>Cause: {cause}</p>) : null}
+                                            {resolution ? (<p>Resolution: {resolution}</p>) : null}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    )
+                                  })}
                                 </div>
                               </div>
-                              {entry.remarks ? (
-                                <p className="mt-2 text-sm text-muted-foreground">{entry.remarks}</p>
-                              ) : (
-                                <p className="mt-2 text-sm text-muted-foreground">No written remarks.</p>
-                              )}
-                              {(remarkPhotos.length > 0 || remarkVideos.length > 0) && (
-                                <div className="mt-3 space-y-2">
-                                  {remarkPhotos.length > 0 && (
-                                    <div>
-                                      <p className="text-xs uppercase text-muted-foreground">Photos</p>
-                                      <div className="mt-2 flex flex-wrap gap-2">
-                                        {remarkPhotos.map((photo: MediaAttachment, index: number) => (
-                                          <div key={`${photo.url}-${index}`} className="group w-36 space-y-2 overflow-hidden rounded-md border bg-background">
-                                            <a
-                                              href={photo.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="block"
-                                            >
-                                              <img
-                                                src={photo.url}
-                                                alt={photo.caption ? `${photo.caption} (Remark photo ${index + 1})` : `Remark photo ${index + 1}`}
-                                                className="h-28 w-full object-cover transition duration-200 group-hover:scale-105"
-                                              />
-                                            </a>
-                                            {photo.caption ? (
-                                              <p className="px-2 pb-2 text-[11px] text-muted-foreground">{photo.caption}</p>
-                                            ) : null}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {remarkVideos.length > 0 && (
-                                    <div>
-                                      <p className="text-xs uppercase text-muted-foreground">Videos</p>
-                                      <div className="mt-2 flex flex-wrap gap-2">
-                                        {remarkVideos.map((video: MediaAttachment, index: number) => (
-                                          <div key={`${video.url}-${index}`} className="space-y-2">
-                                            <video src={video.url} controls className="h-32 w-48 rounded-md border bg-black/70" />
-                                            {video.caption ? (
-                                              <p className="text-[11px] text-muted-foreground">{video.caption}</p>
-                                            ) : null}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
+                            )
+                          })}
+                        </div>
                       </div>
                     )}
                   </CardContent>
@@ -437,81 +543,8 @@ export default async function ChecklistItemDetailsPage({ params }: { params: Pro
               )
             })}
           </div>
-        )}
-      </section>
-
-      {standaloneEntries.length > 0 && (
-        <section className="space-y-4">
-          <Card className="shadow-sm">
-            <CardHeader>
-              <CardTitle>Additional Remarks</CardTitle>
-              <CardDescription>Remarks attached directly to the checklist item.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-            {standaloneEntries.map((entry: any) => {
-              const reporter = entry.inspector?.name || entry.user?.username || entry.user?.email || 'Team member'
-                const remarkPhotos = Array.isArray(entry.photos) ? entry.photos : []
-                const remarkVideos = Array.isArray(entry.videos) ? entry.videos : []
-                return (
-                  <div key={entry.id} className="rounded-lg border bg-white/80 p-4 shadow-sm">
-                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <User className="h-4 w-4" />
-                        {reporter}
-                      </div>
-                      <div className="flex items-center gap-2 text-xs">
-                        {entry.includeInReport ? <Badge variant="outline">In report · {reporter}</Badge> : null}
-                        <span className="text-muted-foreground">{formatDateTime(entry.createdOn)}</span>
-                      </div>
-                    </div>
-                    {entry.remarks ? (
-                      <p className="mt-2 text-sm text-muted-foreground">{entry.remarks}</p>
-                    ) : (
-                      <p className="mt-2 text-sm text-muted-foreground">No remarks provided.</p>
-                    )}
-                    {(remarkPhotos.length > 0 || remarkVideos.length > 0) && (
-                      <div className="mt-3 space-y-2">
-                        {remarkPhotos.length > 0 && (
-                          <div>
-                            <p className="text-xs uppercase text-muted-foreground">Photos</p>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {remarkPhotos.map((url: string, index: number) => (
-                                <a
-                                  key={url + index}
-                                  href={url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="group block overflow-hidden rounded-md border bg-background"
-                                >
-                                  <img
-                                    src={url}
-                                    alt={`Remark photo ${index + 1}`}
-                                    className="h-28 w-36 object-cover transition duration-200 group-hover:scale-105"
-                                  />
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {remarkVideos.length > 0 && (
-                          <div>
-                            <p className="text-xs uppercase text-muted-foreground">Videos</p>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {remarkVideos.map((url: string, index: number) => (
-                                <video key={url + index} src={url} controls className="h-32 w-48 rounded-md border bg-black/70" />
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </CardContent>
-          </Card>
         </section>
-      )}
+      )} 
     </div>
   )
 }

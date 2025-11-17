@@ -21,7 +21,7 @@ import {
 } from "lucide-react"
 import prisma from "@/lib/prisma"
 import WorkOrderItemMedia from "@/components/work-order-item-media"
-import { extractEntryMedia, mergeMediaLists, stringsToAttachments, type MediaAttachment } from "@/lib/media-utils"
+import { extractEntryMedia, mergeMediaLists, stringsToAttachments, stringsToAttachmentsWithTask, type MediaAttachment } from "@/lib/media-utils"
 import ItemEntriesDialog from "@/components/item-entries-dialog"
 import EditChecklistItemDialog from "@/components/edit-checklist-item-dialog"
 
@@ -49,6 +49,7 @@ async function getWorkOrder(id: string) {
               items: {
                 include: {
                   contributions: {
+                    orderBy: { createdOn: 'asc' },
                     include: {
                       inspector: true,
                       user: {
@@ -62,6 +63,7 @@ async function getWorkOrder(id: string) {
                         orderBy: { order: 'asc' }
                       },
                       findings: true,
+                      location: true,
                       task: {
                         select: {
                           id: true,
@@ -75,6 +77,10 @@ async function getWorkOrder(id: string) {
                     }
                   },
                   checklistTasks: {
+                    orderBy: [
+                      { order: 'asc' },
+                      { createdOn: 'asc' }
+                    ],
                     include: {
                       entries: {
                         select: { id: true }
@@ -86,7 +92,10 @@ async function getWorkOrder(id: string) {
                     orderBy: { order: 'asc' },
                     include: {
                       tasks: {
-                        orderBy: { createdOn: 'asc' }
+                        orderBy: [
+                          { order: 'asc' },
+                          { createdOn: 'asc' }
+                        ]
                       }
                     }
                   }
@@ -214,13 +223,13 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
 
     const taskPhotosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
     const taskPhotoAttachments = mergeMediaLists(
-      taskPhotosSource.map((task: any) => stringsToAttachments(task?.photos))
+      taskPhotosSource.map((task: any) => stringsToAttachmentsWithTask(task?.photos, task?.id))
     )
     const contributionPhotoAttachments = mergeMediaLists(
       (item.contributions || []).map((entry: any) =>
         mergeMediaLists([
           extractEntryMedia(entry, 'PHOTO'),
-          stringsToAttachments(entry?.task?.photos)
+          stringsToAttachmentsWithTask(entry?.task?.photos, entry?.task?.id)
         ])
       )
     )
@@ -232,13 +241,13 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
 
     const taskVideosSource = locationTasks.length > 0 ? locationTasks : fallbackTasks
     const taskVideoAttachments = mergeMediaLists(
-      taskVideosSource.map((task: any) => stringsToAttachments(task?.videos))
+      taskVideosSource.map((task: any) => stringsToAttachmentsWithTask(task?.videos, task?.id))
     )
     const contributionVideoAttachments = mergeMediaLists(
       (item.contributions || []).map((entry: any) =>
         mergeMediaLists([
           extractEntryMedia(entry, 'VIDEO'),
-          stringsToAttachments(entry?.task?.videos)
+          stringsToAttachmentsWithTask(entry?.task?.videos, entry?.task?.id)
         ])
       )
     )
@@ -567,6 +576,9 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 itemName={item.name || item.item}
                                 enableUpload
                                 uploadTarget={uploadTarget}
+                                itemNumber={index + 1}
+                                locationOptions={(item.locations || []).map((l: any) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t: any) => ({ id: t.id, name: t.name, condition: t.condition })) }))}
+                                defaultLocationId={(item.locations && item.locations[0]?.id) || undefined}
                               />
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
@@ -577,6 +589,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                 tasks={item.checklistTasks || []}
                                 locations={item.locations || []}
                                 itemName={item.name || item.item}
+                                itemNumber={index + 1}
                                 triggerLabel={remarkLabel}
                               />
                               <Link href={`/checklist-items/${item.id}`} className="flex-1 sm:flex-none">
@@ -604,7 +617,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                         <TableHeader>
                           <TableRow>
                             <TableHead className="w-16">#</TableHead>
-                            <TableHead>Item</TableHead>
+                            <TableHead>Locations</TableHead>
                             <TableHead className="w-40">Status</TableHead>
                             <TableHead className="w-48">Media</TableHead>
                             <TableHead className="w-40">Remarks</TableHead>
@@ -655,6 +668,9 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                   itemName={item.name || item.item}
                                   enableUpload
                                   uploadTarget={uploadTarget}
+                                  itemNumber={index + 1}
+                                  locationOptions={(item.locations || []).map((l: any) => ({ id: l.id, name: l.name, tasks: (l.tasks || []).map((t: any) => ({ id: t.id, name: t.name, condition: t.condition })) }))}
+                                  defaultLocationId={(item.locations && item.locations[0]?.id) || undefined}
                                 />
                               </TableCell>
                               <TableCell className="align-top">
@@ -665,6 +681,7 @@ export default async function WorkOrderDetailPage({ params }: { params: Promise<
                                   tasks={item.checklistTasks || []}
                                   locations={item.locations || []}
                                   itemName={item.name || item.item}
+                                  itemNumber={index + 1}
                                   triggerLabel={remarkLabel}
                                 />
                               </TableCell>
