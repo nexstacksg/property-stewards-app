@@ -10,26 +10,26 @@
 - Tests — `src/__tests__` with `*.test.ts(x)`.
 
 ## Build, Test, and Development Commands
-- `pnpm dev` — Start the local Next.js dev server.
+- `pnpm dev` — Start local Next.js dev server.
 - `pnpm build` — Generate Prisma client and build the app.
-- `pnpm start` — Run the production server (after build).
+- `pnpm start` — Run production server (after build).
 - `pnpm lint` — Lint with Next.js/TypeScript rules.
 - Database: `pnpm db:migrate`, `pnpm db:push`, `pnpm db:seed`, `pnpm db:studio`.
-- Example: after schema changes run `pnpm db:migrate && pnpm build`.
+- After schema changes: `pnpm db:migrate && pnpm build`.
 
 ## Coding Style & Naming Conventions
 - TypeScript `strict: true`; 2-space indentation.
 - Imports use `@/*` paths (see `tsconfig.json`).
-- Components: files kebab-case (e.g., `add-checklist-button.tsx`), exported symbols PascalCase.
+- Components: filenames kebab-case (e.g., `add-checklist-button.tsx`); exported symbols PascalCase.
 - Routes: App Router; `page.tsx` for pages, `route.ts` for APIs.
 - Styles: TailwindCSS v4; prefer utility-first classes.
 - Fix all ESLint issues before opening PRs.
 
 ## Testing Guidelines
-- No runner configured yet; prefer Jest or Vitest when adding tests.
-- Place unit tests in `src/__tests__`; name files `*.test.ts` or `*.test.tsx`.
+- Preferred runners: Jest or Vitest (not configured yet).
+- Place unit tests in `src/__tests__`; name `*.test.ts` or `*.test.tsx`.
 - Prioritize coverage for `src/lib` utilities and `src/app/api/*/route.ts` handlers.
-- When added, run tests via `pnpm test` and keep them deterministic.
+- When added, run tests via `pnpm test`; keep tests deterministic.
 
 ## Commit & Pull Request Guidelines
 - Commits: concise, imperative subject (≤72 chars), optional scope.
